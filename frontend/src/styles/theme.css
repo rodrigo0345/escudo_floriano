@@ -1,0 +1,25 @@
+/* Design tokens: the only place colors live. Components reference these variables, never raw hex. */
+:root {
+  --bg: #0e1013;
+  --panel: #171a1f;
+  --panel2: #1f232a;
+  --line: #2b3038;
+  --fg: #ece8df;
+  --mut: #9aa0a8;
+  --acc: #ff6a1a;
+  --bad: #ff3b3b;
+  --ok: #38c172;
+  --warn: #f5b301;
+  --blue: #4c8dff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #e9e6df;
+    --panel: #fbfaf7;
+    --panel2: #f0ede6;
+    --line: #d9d5ca;
+    --fg: #1d1d1b;
+    --mut: #6b6b66;
+  }
+}
