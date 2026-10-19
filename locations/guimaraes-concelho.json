@@ -1,0 +1,37 @@
+{
+  // Concelho de Guimarães e arredores: ~22 × 22 km, com vários quartéis e postos GNR (Guimarães, Taipas, Vizela, Fafe, Felgueiras, Riba d'Ave, Vila das Aves, Joane)
+  "id": "guimaraes-concelho",
+  "name": "Concelho de Guimarães (22 km)",
+  "center": { "lat": 41.44, "lon": -8.30 },
+  "widthCells": 360,
+  "heightCells": 360,
+  "cellM": 60,
+  "renderCellM": 40,
+  "weatherPoint": { "lat": 41.44, "lon": -8.30 },
+  // mosaico Sentinel-2 só como recurso (z14 ≈ 7 m/px); a imagem principal é a ortofoto DGT 2021 em 3×3 blocos de 2048 px (≈3,5 m/px)
+  "imageryZoom": 14,
+  "imageryPixels": 2048,
+  "orthoTiles": 3,
+  "orthoTilePixels": 2048,
+  "landCoverSource": "worldcover-2021",
+  "curatedFacilities": [],
+
+  // Ignições hipotéticas junto a cumes reais (OSM natural=peak), em zonas diferentes do concelho, com meteorologia real de cada data.
+  "incidents": [
+    { "id": "penha", "name": "Penha (centro-sul) — pior hora do verão de 2026", "lat": 41.4298, "lon": -8.2686,
+      "start": "2026-08-17T15:00:00+01:00", "durationMinutes": 240, "historical": false,
+      "notes": "Cume da Penha, junto à cidade. Meteorologia real ERA5 de 17 ago 2026 (35 °C, humidade 17%, vento de NNW). Ignição hipotética." },
+    { "id": "falperra", "name": "Serra da Falperra (noroeste)", "lat": 41.5143, "lon": -8.3947,
+      "start": "2026-08-17T15:00:00+01:00", "durationMinutes": 240, "historical": false,
+      "notes": "Perto de Santa Marta das Cortiças, zona de eucaliptal e matas junto a Braga e às Taipas. Ignição hipotética." },
+    { "id": "santa-marinha", "name": "Santa Marinha / Lustoso (nordeste)", "lat": 41.5032, "lon": -8.2247,
+      "start": "2026-08-17T15:00:00+01:00", "durationMinutes": 240, "historical": false,
+      "notes": "Zona de serra a nordeste, longe de quartéis. Ignição hipotética." },
+    { "id": "sao-sabagudo", "name": "São Sabagudo (sudeste)", "lat": 41.4105, "lon": -8.1818,
+      "start": "2026-08-17T15:00:00+01:00", "durationMinutes": 240, "historical": false,
+      "notes": "Zona entre Fafe e Felgueiras. Ignição hipotética." },
+    { "id": "sao-bento", "name": "São Bento das Peras (sul)", "lat": 41.3858, "lon": -8.2875,
+      "start": "2026-08-17T15:00:00+01:00", "durationMinutes": 240, "historical": false,
+      "notes": "Zona sul, entre Guimarães e Vizela. Ignição hipotética." }
+  ]
+}

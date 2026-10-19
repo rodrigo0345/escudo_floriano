@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything that comes from third-party APIs (OpenStreetMap, Open-Meteo, terrain/imagery/land-cover services): fetched once, stored locally (PostGIS + files), read from there afterwards. Also the `ingest` command line. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>FireTrace.ExternalData</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
+    <PackageReference Include="Dapper" Version="2.1.89" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Npgsql.NetTopologySuite" Version="10.0.3" />
+    <PackageReference Include="SkiaSharp" Version="4.153.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Store/Migrations/*.sql" />
+    <Content Include="externaldata.settings.json" CopyToOutputDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="FireTrace.Tests" />
+  </ItemGroup>
+
+</Project>
