@@ -1,0 +1,34 @@
+{
+  "name": "@escudo-floriano/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Operator console for the FireTrace Coordination API: 3D GPU terrain/fire viewer, playback and decision panels.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host --port 4173",
+    "typecheck": "tsc -b --noEmit",
+    "generate:api-types": "openapi-typescript ../api-spec/openapi.json -o src/api/schema.ts"
+  },
+  "dependencies": {
+    "axios": "1.7.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three": "0.160.0",
+    "zustand": "4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/three": "0.160.0",
+    "@vitejs/plugin-react": "4.3.3",
+    "openapi-typescript": "7.4.3",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  }
+}

@@ -27,3 +27,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  frontend:
+    build:
+      context: .                        # repo root: the build also needs api-spec/ for the typed client
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8080  # where nginx proxies /api/ and /swagger (the FireTrace Coordination API)
+    ports:
+      - "8081:80"                       # http://localhost:8081
+    # no depends_on: nginx resolves the backend lazily, so the UI starts (and shows a clear error) even before backend/ exists
+volumes:
+  pgdata:

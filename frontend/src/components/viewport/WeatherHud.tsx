@@ -1,0 +1,68 @@
+import { useEffect, useMemo, useRef } from 'react';
+
+import { humidityColorVar, windColorCss } from '@/domain/colors';
+import { compass } from '@/domain/georef';
+import { sampleWeatherAt } from '@/domain/weather';
+import { useEngine } from '@/engine/EngineContext';
+import { useAppStore } from '@/store/appStore';
+
+import styles from './viewport.module.css';
+
+/**
+ * Weather card over the map: wind arrow (rotates with the camera), speed and gust, bearing,
+ * temperature, air humidity and fine-fuel moisture. Values follow the playback minute; only
+ * the arrow rotation is driven per frame (straight on the DOM, no React re-render).
+ */
+export function WeatherHud() {
+  const engine = useEngine();
+  const run = useAppStore((s) => s.run);
+  const t = useAppStore((s) => s.t);
+  const arrow = useRef<SVGGElement>(null);
+  const windToDeg = useRef(0);
+
+  const weather = useMemo(() => (run ? sampleWeatherAt(run.weather, run.startMs, t) : null), [run, t]);
+  windToDeg.current = weather ? (weather.windFromDeg + 180) % 360 : 0;
+
+  useEffect(() => {
+    if (!engine) return;
+    return engine.onFrame((_ts, azimuth) => {
+      arrow.current?.setAttribute('transform', `rotate(${windToDeg.current - (azimuth * 180) / Math.PI})`);
+    });
+  }, [engine]);
+
+  if (!weather) return null;
+  const to = (weather.windFromDeg + 180) % 360;
+  const color = windColorCss(weather.windKmh);
+
+  return (
+    <div className={styles.hud}>
+      <svg className={styles.dial} viewBox="-32 -32 64 64" aria-hidden="true">
+        <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".25" />
+        <text y="-19" textAnchor="middle" fontSize="8" fill="currentColor" opacity=".7">
+          N
+        </text>
+        <g ref={arrow} style={{ color }}>
+          <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
+        </g>
+      </svg>
+      <div className={styles.hudMain}>
+        <b style={{ color }}>{Math.round(weather.windKmh)} km/h</b>
+        <small>
+          de {compass(weather.windFromDeg)} · {Math.round(weather.windFromDeg)}° (sopra para {compass(to)})
+        </small>
+        <small>{weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}</small>
+      </div>
+      <div className={styles.hudRows}>
+        <span>Temperatura</span>
+        <b>{Math.round(weather.tempC)} °C</b>
+        <span>Humidade do ar</span>
+        <b>{Math.round(weather.humidityPct)} %</b>
+        <i className={styles.bar}>
+          <i style={{ width: `${Math.min(weather.humidityPct, 100)}%`, background: humidityColorVar(weather.humidityPct) }} />
+        </i>
+        <span title="Humidade do combustível morto fino em equilíbrio com o ar: quanto mais baixa, mais depressa arde">Comb. fino</span>
+        <b>{weather.fineFuelMoisturePct != null ? `${weather.fineFuelMoisturePct.toFixed(1)} %` : '—'}</b>
+      </div>
+    </div>
+  );
+}

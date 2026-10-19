@@ -1,0 +1,9 @@
+# GDAL clássico (<3.11): o Fortran do ELMFIRE chama gdal_translate/gdalinfo/gdalsrsinfo por nome
+name: elmfire
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - gdal>=3.8,<3.11
+  - rasterio

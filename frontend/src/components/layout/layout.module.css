@@ -1,0 +1,150 @@
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.main {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 0;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 17px;
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.brand small {
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.logo {
+  color: var(--acc);
+}
+
+.selects {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.selects select {
+  max-width: 260px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--panel2);
+  padding: 3px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+}
+
+.tabs button {
+  border: 0;
+  background: transparent;
+}
+
+.tabs button.on {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.badge {
+  background: var(--acc);
+  color: #fff;
+  border-radius: 99px;
+  padding: 0 6px;
+  font-size: 11px;
+  margin-left: 3px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.apiLink {
+  color: var(--mut);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 11px;
+  font-size: 13px;
+}
+
+.apiLink:hover {
+  color: var(--fg);
+  border-color: var(--mut);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.play {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  font-size: 16px;
+  padding: 0;
+}
+
+.clock {
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.clock b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.jumps {
+  display: flex;
+  gap: 5px;
+}
+
+.jumps button {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.scrub {
+  flex: 1;
+  accent-color: var(--acc);
+}
+
+@media (max-width: 900px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 55vh auto;
+  }
+}

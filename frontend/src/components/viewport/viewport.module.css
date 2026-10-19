@@ -1,0 +1,342 @@
+.view {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvasHost {
+  position: absolute;
+  inset: 0;
+}
+
+.canvasHost canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.compass {
+  cursor: pointer;
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.needle {
+  text-align: center;
+  line-height: 1;
+  color: var(--acc);
+  font-size: 15px;
+}
+
+.needle small {
+  color: var(--fg);
+  font-size: 10px;
+}
+
+.readout {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  text-align: right;
+  text-shadow: 0 1px 3px #000;
+  color: #e8e6df;
+  pointer-events: none;
+  line-height: 1.5;
+}
+
+.scaleBar {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.scaleLine {
+  height: 4px;
+  border: 1px solid #fff;
+  border-top: 0;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  box-shadow: 0 1px 2px #000;
+}
+
+.scaleLabel {
+  font-size: 11px;
+  color: #f2f0ea;
+  text-shadow: 0 1px 3px #000;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hint {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  background: var(--acc);
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 99px;
+  z-index: 4;
+}
+
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 56px;
+  transform: translateX(-50%);
+  max-width: min(560px, 90%);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 9px 14px;
+  border-radius: 10px;
+  color: #fff;
+  z-index: 6;
+  box-shadow: 0 4px 18px #0006;
+}
+
+.banner.error {
+  background: var(--bad);
+}
+
+.banner.warn {
+  background: var(--warn);
+  color: #222;
+}
+
+.banner button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--mut);
+  z-index: 8;
+}
+
+.tip {
+  position: fixed;
+  background: #000c;
+  color: #fff;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 9;
+}
+
+.attrib {
+  position: absolute;
+  left: 8px;
+  bottom: 36px;
+  font-size: 10px;
+  opacity: 0.75;
+  max-width: 55%;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+  color: #ddd;
+}
+
+/* weather HUD */
+.hud {
+  position: absolute;
+  left: 14px;
+  top: 80px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  width: 236px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  border: 1px solid var(--line);
+  z-index: 3;
+}
+
+.dial {
+  width: 56px;
+  height: 56px;
+  color: var(--fg);
+}
+
+.hudMain {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.hudMain b {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hudMain small {
+  font-size: 11px;
+}
+
+.hudRows {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  font-size: 12px;
+}
+
+.hudRows span {
+  color: var(--mut);
+}
+
+.hudRows b {
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  display: block;
+  grid-column: 1 / -1;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  transition: width 0.3s;
+}
+
+/* right-hand stack: view mode, base layers, overlays, legends */
+.layers {
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 3;
+}
+
+.box {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 12px;
+  max-width: 290px;
+  line-height: 1.5;
+}
+
+.box .mut {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.overlayRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.overlayRow input {
+  margin: 0;
+}
+
+.overlayLegend {
+  margin: 2px 0 6px 22px;
+}
+
+.ramp {
+  height: 10px;
+  border-radius: 5px;
+  margin: 6px 0 2px;
+}
+
+.rampLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--mut);
+}
+
+.lg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 0;
+}
+
+.lg i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.lg span {
+  flex: 1;
+}
+
+.lg small {
+  font-size: 11px;
+}
+
+.waterKind {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.waterKind input {
+  margin: 0;
+}
+
+.waterKind i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  border: 2px solid #fff;
+  box-sizing: border-box;
+}
+
+.waterKind span {
+  flex: 1;
+}
+
+.waterKind small {
+  font-size: 11px;
+  opacity: 0.7;
+}
