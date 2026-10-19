@@ -7669,6 +7669,11 @@
             "type": "number",
             "minimum": 0
           },
+          "fuelCapacityL": {
+            "type": "number",
+            "description": "Capacidade do depósito de combustível, em litros (com `state.fuelPct` dá o combustível que resta).",
+            "minimum": 0
+          },
           "capabilities": {
             "type": "array",
             "uniqueItems": true,
@@ -7766,8 +7771,13 @@
       },
       "CrewStatus": {
         "type": "object",
-        "description": "Cansaço e turno de uma equipa: depois de trabalhar muito tempo tem de descansar.",
+        "description": "Cansaço, turno e baixas de uma equipa: depois de trabalhar muito tempo tem de descansar, e quem fica apanhado pelo fogo é baixa.",
         "properties": {
+          "casualties": {
+            "type": "integer",
+            "description": "Pessoas desta viatura que já são baixas (apanhadas pelo fogo). `state.crewOnboard` já as desconta.",
+            "minimum": 0
+          },
           "workedMinutes": {
             "type": "integer",
             "minimum": 0
@@ -8191,6 +8201,11 @@
           },
           "rangeKm": {
             "type": "number",
+            "minimum": 0
+          },
+          "fuelCapacityL": {
+            "type": "number",
+            "description": "Capacidade do depósito de combustível, em litros (com `state.fuelPct` dá o combustível que resta).",
             "minimum": 0
           },
           "capabilities": {
@@ -10491,6 +10506,45 @@
           }
         }
       },
+      "CrewExposure": {
+        "type": "object",
+        "description": "Uma equipa (viatura de uma ação do plano) que passa tempo numa célula a arder, a caminho ou no local de trabalho. Baixas = `casualtyPctPerMinuteInFire` × minutos, no máximo a equipa toda.",
+        "properties": {
+          "actionId": {
+            "type": "string"
+          },
+          "vehicleId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "personnel": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "firstMinute": {
+            "type": "integer",
+            "description": "Primeiro minuto (desde o início do cenário) em que a equipa está no fogo."
+          },
+          "minutesInFire": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "casualties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "where": {
+            "$ref": "#/components/schemas/LatLon"
+          }
+        },
+        "required": [
+          "actionId",
+          "vehicleId",
+          "personnel",
+          "firstMinute",
+          "minutesInFire",
+          "casualties"
+        ]
+      },
       "SimulationStats": {
         "type": "object",
         "properties": {
@@ -10505,6 +10559,10 @@
           },
           "buildingsAffected": {
             "type": "integer"
+          },
+          "crewCasualties": {
+            "type": "integer",
+            "description": "Só nas simulações de um plano: pessoas das equipas do plano apanhadas pelo fogo (ver `crewExposures` da simulação)."
           },
           "roadsCut": {
             "type": "integer"
@@ -10587,6 +10645,13 @@
               },
               "locationId": {
                 "$ref": "#/components/schemas/Id"
+              },
+              "crewExposures": {
+                "type": "array",
+                "description": "Só nas simulações de um plano: onde as equipas do plano ficam apanhadas pelo fogo (a conta de `stats.crewCasualties`). O agente usa-a para recolocar meios; o motor não decide onde pôr ninguém.",
+                "items": {
+                  "$ref": "#/components/schemas/CrewExposure"
+                }
               },
               "progress": {
                 "$ref": "#/components/schemas/SimulationProgress"
@@ -11481,7 +11546,8 @@
             "type": "number"
           },
           "widthM": {
-            "type": "number"
+            "type": "number",
+            "description": "Não passa em troços mais estreitos (quando a largura do troço é conhecida)."
           },
           "weightT": {
             "type": "number"
@@ -11491,6 +11557,11 @@
           },
           "speedKmh": {
             "type": "number"
+          },
+          "maxSlopePercent": {
+            "type": "number",
+            "description": "Declive máximo que a viatura vence; acima disto o troço não é transitável. Por omissão usa `rules.movement.slopePenalty.maxSlopeDefaultPercent`.",
+            "minimum": 0
           }
         }
       },
@@ -15395,6 +15466,10 @@
                     "type": "number",
                     "description": "Abaixo disto o meio vai reabastecer."
                   },
+                  "shuttleMinutes": {
+                    "type": "number",
+                    "description": "Tempo de ida e volta até ao ponto de água (min), somado ao `setupMinutes`: durante este tempo a viatura não combate."
+                  },
                   "sources": {
                     "type": "array",
                     "description": "Pontos onde uma autotanque pode reabastecer.",
@@ -15424,6 +15499,10 @@
               "minimumEffectivenessPct": {
                 "type": "number",
                 "description": "Eficácia mínima de uma equipa muito cansada."
+              },
+              "casualtyPctPerMinuteInFire": {
+                "type": "number",
+                "description": "Percentagem da equipa que fica baixa por cada minuto em que está numa célula a arder (apanhada pelo fogo)."
               }
             }
           },
@@ -15529,6 +15608,14 @@
               "zoneRadiusM": {
                 "type": "number",
                 "description": "Raio da zona onde uma equipa atua (m)."
+              },
+              "fullEffectUpToKwm": {
+                "type": "number",
+                "description": "Ataque direto (equipas e largadas): eficácia total até esta intensidade da frente (kW/m)."
+              },
+              "noEffectFromKwm": {
+                "type": "number",
+                "description": "A partir desta intensidade (kW/m) o ataque direto já não trava o fogo; entre as duas desce de forma linear."
               }
             }
           }

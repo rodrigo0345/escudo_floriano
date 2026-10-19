@@ -24,7 +24,7 @@ public static class CapabilityCatalog
         },
         Interventions: new[]
         {
-            Yes("fire_line", "aplica-se desde o início da simulação"), Yes("fuel_removal", "muda o combustível da faixa (sem copado, sem sub-bosque ou solo nu); aplica-se desde o início"), Yes("crew_deployment", "aplica-se desde o início da simulação"), Yes("aerial_drop", "aplica-se desde o início da simulação"),
+            Yes("fire_line", "trava a propagação a partir da hora de início mais o tempo que as equipas levam a abri-la (comprimento / pessoas × ritmo); com o ELMFIRE, desde o início"), Yes("fuel_removal", "muda o combustível da faixa (sem copado, sem sub-bosque ou solo nu); aplica-se desde o início"), Yes("crew_deployment", "trava a propagação só enquanto a equipa combate (chegada, água, reabastecimento e cansaço) e menos com chamas muito intensas; com o ELMFIRE, desde o início"), Yes("aerial_drop", "efeito temporário a partir da largada; com o ELMFIRE, desde o início"),
             Yes("structure_protection", "reduz os edifícios contados como afetados"), Yes("road_closure", "afeta acessos e rotas, não o fogo"), Yes("evacuation", "afeta a população exposta, não o fogo"),
             No("backfire", "ainda não modelado"),
         },

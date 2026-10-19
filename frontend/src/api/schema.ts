@@ -1886,6 +1886,8 @@ export interface components {
             /** @description Velocidade média em estrada, usada nas estimativas de chegada. */
             cruiseSpeedKmh?: number;
             rangeKm?: number;
+            /** @description Capacidade do depósito de combustível, em litros (com `state.fuelPct` dá o combustível que resta). */
+            fuelCapacityL?: number;
             capabilities?: components["schemas"]["VehicleCapability"][];
             aerial?: components["schemas"]["AerialSpec"];
             /**
@@ -1912,8 +1914,10 @@ export interface components {
             refillEtaMinutes?: number | null;
             emptyAtMinute?: (number | null) & unknown;
         };
-        /** @description Cansaço e turno de uma equipa: depois de trabalhar muito tempo tem de descansar. */
+        /** @description Cansaço, turno e baixas de uma equipa: depois de trabalhar muito tempo tem de descansar, e quem fica apanhado pelo fogo é baixa. */
         CrewStatus: {
+            /** @description Pessoas desta viatura que já são baixas (apanhadas pelo fogo). `state.crewOnboard` já as desconta. */
+            casualties?: number;
             workedMinutes?: number;
             fatiguePct?: number;
             shiftEndsAt?: components["schemas"]["Timestamp"];
@@ -1998,6 +2002,8 @@ export interface components {
             /** @description Velocidade média em estrada, usada nas estimativas de chegada. */
             cruiseSpeedKmh?: number;
             rangeKm?: number;
+            /** @description Capacidade do depósito de combustível, em litros (com `state.fuelPct` dá o combustível que resta). */
+            fuelCapacityL?: number;
             capabilities?: components["schemas"]["VehicleCapability"][];
             aerial?: components["schemas"]["AerialSpec"];
             /**
@@ -2622,11 +2628,24 @@ export interface components {
             /** Format: uri-reference */
             grids?: string;
         };
+        /** @description Uma equipa (viatura de uma ação do plano) que passa tempo numa célula a arder, a caminho ou no local de trabalho. Baixas = `casualtyPctPerMinuteInFire` × minutos, no máximo a equipa toda. */
+        CrewExposure: {
+            actionId: string;
+            vehicleId: components["schemas"]["Id"];
+            personnel: number;
+            /** @description Primeiro minuto (desde o início do cenário) em que a equipa está no fogo. */
+            firstMinute: number;
+            minutesInFire: number;
+            casualties: number;
+            where?: components["schemas"]["LatLon"];
+        };
         SimulationStats: {
             burnedHa?: number;
             crownFireHa?: number;
             maxIntensityKwm?: number;
             buildingsAffected?: number;
+            /** @description Só nas simulações de um plano: pessoas das equipas do plano apanhadas pelo fogo (ver `crewExposures` da simulação). */
+            crewCasualties?: number;
             roadsCut?: number;
             populationExposed?: number;
             perimeterKm?: number;
@@ -2641,6 +2660,8 @@ export interface components {
             planId?: components["schemas"]["Id"] | null;
             parentSimulationId?: (components["schemas"]["Id"] | null) & unknown;
             locationId: components["schemas"]["Id"];
+            /** @description Só nas simulações de um plano: onde as equipas do plano ficam apanhadas pelo fogo (a conta de `stats.crewCasualties`). O agente usa-a para recolocar meios; o motor não decide onde pôr ninguém. */
+            crewExposures?: components["schemas"]["CrewExposure"][];
             progress?: components["schemas"]["SimulationProgress"];
             stats?: components["schemas"]["SimulationStats"] & unknown;
             error?: components["schemas"]["Problem"] & unknown;
@@ -2843,10 +2864,13 @@ export interface components {
         VehicleProfile: {
             vehicleType?: components["schemas"]["VehicleType"];
             heightM?: number;
+            /** @description Não passa em troços mais estreitos (quando a largura do troço é conhecida). */
             widthM?: number;
             weightT?: number;
             offRoad?: boolean;
             speedKmh?: number;
+            /** @description Declive máximo que a viatura vence; acima disto o troço não é transitável. Por omissão usa `rules.movement.slopePenalty.maxSlopeDefaultPercent`. */
+            maxSlopePercent?: number;
         };
         /** @description Indique `from` **ou** `fromStationId`. */
         RouteRequest: {
@@ -3915,6 +3939,8 @@ export interface components {
                     hydrantFlowLpm?: number;
                     /** @description Abaixo disto o meio vai reabastecer. */
                     retreatBelowPct?: number;
+                    /** @description Tempo de ida e volta até ao ponto de água (min), somado ao `setupMinutes`: durante este tempo a viatura não combate. */
+                    shuttleMinutes?: number;
                     /** @description Pontos onde uma autotanque pode reabastecer. */
                     sources?: components["schemas"]["WaterPointKind"][];
                 };
@@ -3926,6 +3952,8 @@ export interface components {
                 fatiguePctPerHour?: number;
                 /** @description Eficácia mínima de uma equipa muito cansada. */
                 minimumEffectivenessPct?: number;
+                /** @description Percentagem da equipa que fica baixa por cada minuto em que está numa célula a arder (apanhada pelo fogo). */
+                casualtyPctPerMinuteInFire?: number;
             };
             aerial?: {
                 helicopter?: {
@@ -3961,6 +3989,10 @@ export interface components {
                 waterBonusPerThousandL?: number;
                 /** @description Raio da zona onde uma equipa atua (m). */
                 zoneRadiusM?: number;
+                /** @description Ataque direto (equipas e largadas): eficácia total até esta intensidade da frente (kW/m). */
+                fullEffectUpToKwm?: number;
+                /** @description A partir desta intensidade (kW/m) o ataque direto já não trava o fogo; entre as duas desce de forma linear. */
+                noEffectFromKwm?: number;
             };
         };
         LocationPage: {

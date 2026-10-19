@@ -20,7 +20,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
     {
         var loc = map.Locations.Get(req.LocationId);
         var net = await map.GetRoadsAsync(req.LocationId, ct);
-        var graph = RoadGraph.For(net);
+        var graph = RoadGraph.For(net).WithSlopes(RoadSlopes.Of(net, await map.GetTerrainAsync(req.LocationId, ct)));
         var from = req.From ?? (req.FromStationId is { } sid ? (await stations.GetAsync(sid, ct) ?? throw new NotFoundException($"Posto '{sid}'")).Position
             : throw new ValidationException("Indique `from` ou `fromStationId`.", "/from"));
         Anchor A(string k, LatLon p) { var (x, y) = net.Spec.ToCell(p.Lat, p.Lon); return new Anchor(k, x, y); }
@@ -28,7 +28,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         var at = req.At;
         var closed = avoid.ActiveClosures ? await ClosedEdges(req.LocationId, at, req.EmergencyVehicle, ct) : new Dictionary<int, string>();
         var run = avoid.PredictedFire && req.SimulationId is { } simId ? await runs.GetAsync(simId, ct) ?? throw new NotFoundException($"Resultados da simulação '{simId}'") : null;
-        RoadCuts? cuts = run is null ? null : (await cutsCache.ForPercentileAsync(run, avoid.Percentile, ct)).Cuts;
+        RoadCuts? cuts = run is null ? null : (await cutsCache.ForPercentileAsync(run, avoid.Percentile, avoid.BufferM ?? speeds.Movement.FireClearanceM, ct)).Cuts;
         double startMin = run is not null && at is { } t0 ? (t0 - run.Start).TotalMinutes : 0;
         var profile = (req.Vehicle ?? new VehicleProfile()).ToTravel(speeds, routing, req.EmergencyVehicle);
 
@@ -37,7 +37,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         {
             var path = graph.Route(A("from", from), A("to", req.To), profile, e => blocked.Contains(e) || closed.ContainsKey(net.Edges[e].Id));
             if (path is null) return new RoutePlan(false, BlockedBy: reasons, Warnings: new List<ValidationIssue> { new("warning", "no_route", "Não há caminho entre os dois pontos com estas restrições.") });
-            var fresh = FireConflicts(net, path, cuts, startMin, profile).Where(c => blocked.Add(c.Edge)).ToList();
+            var fresh = FireConflicts(net, graph, path, cuts, startMin, profile).Where(c => blocked.Add(c.Edge)).ToList();
             if (fresh.Count == 0)
             {
                 reasons.AddRange(closed.Where(c => path.EdgeIds.Contains(c.Key)).Select(c => new BlockedRoad(MapIds.Road(c.Key), "closure", c.Value)));
@@ -50,7 +50,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
     }
 
     /// <summary>Troços do percurso que o fogo previsto corta enquanto a viatura os atravessa.</summary>
-    static IEnumerable<(int Edge, double AtMinute)> FireConflicts(RoadNetwork net, PathResult path, RoadCuts? cuts, double startMin, TravelProfile profile)
+    static IEnumerable<(int Edge, double AtMinute)> FireConflicts(RoadNetwork net, RoadGraph graph, PathResult path, RoadCuts? cuts, double startMin, TravelProfile profile)
     {
         if (cuts is null) yield break;
         double t = startMin;
@@ -58,7 +58,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         foreach (var id in path.EdgeIds)
         {
             int e = index[id];
-            double minutes = profile.Minutes(net.Edges[e], net.Spec.CellM) ?? 0;
+            double minutes = profile.Minutes(net.Edges[e], net.Spec.CellM, graph.SlopeOf(e)) ?? 0;
             if (cuts.IsCutDuring(e, t, t + minutes)) yield return (e, Math.Round(t, 1));
             t += minutes;
         }
@@ -120,7 +120,7 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         RoadCuts? cuts = null; double tMin = 0;
         if (req.SimulationId is { } simId && await runs.GetAsync(simId, ct) is { } run)
         {
-            cuts = (await cutsCache.ForPercentileAsync(run, req.Percentile, ct)).Cuts;
+            cuts = (await cutsCache.ForPercentileAsync(run, req.Percentile, ct: ct)).Cuts;
             tMin = req.At is { } at ? (at - run.Start).TotalMinutes : 0;
         }
         blocked = e => closed.ContainsKey(net.Edges[e].Id) || (cuts?.IsCut(e, (int)tMin) ?? false);

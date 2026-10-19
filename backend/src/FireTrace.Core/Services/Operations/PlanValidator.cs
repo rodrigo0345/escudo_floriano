@@ -22,7 +22,7 @@ namespace FireTrace.Core.Services.Operations;
 
 /// <summary>Verificações automáticas de um plano: referências a meios e organizações, dependências sem ciclos, conflitos de meios e segurança.</summary>
 public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> organizations, IDocumentStore<Vehicle> vehicles, IDocumentStore<PersonnelPool> pools,
-    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets)
+    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets)
 {
     public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default)
     {
@@ -72,7 +72,11 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
             }
         }
 
-        if (plan.Basis?.SimulationId is { } basisSimulation) await CheckSmokeAsync(plan, basisSimulation, Add, ct);
+        if (plan.Basis?.SimulationId is { } basisSimulation)
+        {
+            await CheckSmokeAsync(plan, basisSimulation, Add, ct);
+            await CheckCrewExposureAsync(plan, basisSimulation, Add, ct);
+        }
 
         var reach = Dependencies(plan);
         if (reach.Any(kv => kv.Value.Contains(kv.Key))) Add("error", "dependency_cycle", "As dependências entre ações têm um ciclo.", "/actions");
@@ -104,6 +108,17 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
             if (result.Items.Where(s => s.UnsafeFromMin is not null).MinBy(s => s.MinVisibilityM) is not { } worst) continue;
             string again = worst.SafeAgainAtMin is { } safe ? $"volta a ser seguro aos T+{safe} min" : "não volta a ser seguro no período";
             add("warning", "smoke_unsafe", $"Fumo denso onde a ação trabalha: visibilidade mínima {Math.Round(worst.MinVisibilityM)} m (limite {Math.Round(result.MinGroundVisibilityM)} m) a partir dos T+{worst.UnsafeFromMin} min; {again}.", $"/actions/{i}", a.Id, null);
+        }
+    }
+
+    /// <summary>Com uma simulação como base, avisa das equipas que o fogo previsto apanha (a caminho ou no local): as baixas saem das regras de equipas, o plano é que as evita.</summary>
+    async Task CheckCrewExposureAsync(Plan plan, string simulationId, Action<string, string, string, string, string?, string?> add, CancellationToken ct)
+    {
+        if (await runs.GetAsync(simulationId, ct) is not { } run) return;
+        foreach (var e in await crewSafety.EvaluateAsync(plan, run, ct))
+        {
+            int i = plan.Actions.ToList().FindIndex(a => a.Id == e.ActionId);
+            add("warning", "crew_in_fire", $"A equipa da viatura {e.VehicleId} fica apanhada pelo fogo previsto a partir dos T+{e.FirstMinute} min ({e.MinutesInFire} min no fogo, {e.Casualties} de {e.Personnel} baixas).", $"/actions/{i}", e.ActionId, e.VehicleId);
         }
     }
 

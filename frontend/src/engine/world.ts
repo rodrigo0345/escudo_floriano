@@ -3,6 +3,7 @@ import type { Georef } from '@/domain/georef';
 
 import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
+import { UnitLayer } from './layers/unitLayer';
 import { RoadLayer } from './layers/roadLayer';
 import { WaterLayer } from './layers/waterLayer';
 import type { Pickable } from './picking';
@@ -32,6 +33,7 @@ export class World {
   readonly assets: AssetLayer;
   readonly water: WaterLayer;
   readonly fire: FireLayer;
+  readonly units: UnitLayer;
   readonly smoke: SmokeSystem;
 
   constructor(
@@ -46,10 +48,11 @@ export class World {
     this.assets.setPlaces(places);
     this.water = new WaterLayer(geo, waterPoints);
     this.fire = new FireLayer(geo);
+    this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
 
     const scene = engine.scene;
-    scene.add(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.smoke.points);
+    scene.add(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.units.group, this.smoke.points);
   }
 
   get geo(): Georef {
@@ -58,7 +61,7 @@ export class World {
 
   /** Objects that react to hover (facilities, places, water points). */
   get pickables(): Pickable[] {
-    return [...this.assets.pickables, ...this.water.pickables];
+    return [...this.units.pickables, ...this.assets.pickables, ...this.water.pickables];
   }
 
   focusOnLatLon(lat: number, lon: number): void {
@@ -68,7 +71,8 @@ export class World {
 
   dispose(): void {
     const scene = this.engine.scene;
-    scene.remove(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.smoke.points);
+    scene.remove(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.units.group, this.smoke.points);
+    this.units.clear();
     this.terrain.geometry.dispose();
     this.roads.mesh.geometry.dispose();
     this.smoke.points.geometry.dispose();

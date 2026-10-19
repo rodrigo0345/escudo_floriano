@@ -14,7 +14,7 @@ public class CrudService<T>(IDocumentStore<T> store, IEntityPolicy<T> policy, Ti
     public async Task<T> CreateAsync(T input, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
-        var item = input with { Id = ids.New(policy.IdPrefix), CreatedAt = now, UpdatedAt = now };
+        var item = policy.Prepare(input with { Id = ids.New(policy.IdPrefix), CreatedAt = now, UpdatedAt = now });
         await EnsureValidAsync(item, ct);
         await store.UpsertAsync(item, ct);
         return item;

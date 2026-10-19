@@ -89,4 +89,46 @@ public class RoutingTests
         Assert.False(cuts.IsCutDuring(4, 0, 20));
         Assert.True(cuts.From[0] < 0); // a via 0 está longe do fogo
     }
+
+    [Fact]
+    public void A_wider_clearance_cuts_roads_further_from_the_fire()
+    {
+        var net = Net();
+        var ignition = Enumerable.Repeat(-1, Spec.CellCount).ToArray();
+        ignition[10 * Spec.Width + 14] = 30; // 4 células a leste da via 4 (x=10)
+        var burn = Enumerable.Repeat(20, Spec.CellCount).ToArray();
+        Assert.True(RoadCuts.Compute(net, ignition, burn).From[4] < 0);                  // só as vizinhas: a via 4 não está cortada
+        Assert.True(RoadCuts.Compute(net, ignition, burn, radiusCells: 4).From[4] >= 0); // com folga de 4 células: está
+    }
+
+    [Fact]
+    public void Steep_edges_are_slower_and_beyond_the_vehicle_limit_impassable()
+    {
+        var edge = Net().Edges[0];
+        var flat = Speeds.Profile().Minutes(edge, Spec.CellM, 0)!.Value;
+        var steep = Speeds.Profile().Minutes(edge, Spec.CellM, 20)!.Value;
+        Assert.True(steep > flat);                                                          // acima de 8 % anda mais devagar
+        Assert.Null(Speeds.Profile().Minutes(edge, Spec.CellM, 31));                        // acima do limite por omissão (30 %) não passa
+        Assert.NotNull(Speeds.Profile(maxSlopePercent: 40).Minutes(edge, Spec.CellM, 35));  // uma viatura que vence 40 % passa
+        Assert.Null(Speeds.Profile(maxSlopePercent: 10).Minutes(edge, Spec.CellM, 15));     // uma que só vence 10 % não passa
+    }
+
+    [Fact]
+    public void A_vehicle_wider_than_the_road_cannot_use_it()
+    {
+        var edge = Net().Edges[0] with { WidthM = 3 };
+        Assert.NotNull(Speeds.Profile(widthM: 2.5).Minutes(edge, Spec.CellM));
+        Assert.Null(Speeds.Profile(widthM: 3.5).Minutes(edge, Spec.CellM));
+        Assert.NotNull(Speeds.Profile(widthM: 3.5).Minutes(edge with { WidthM = null }, Spec.CellM)); // largura desconhecida: não se impede
+    }
+
+    [Fact]
+    public void Routing_detours_around_a_steep_edge()
+    {
+        var graph = RoadGraph.For(Net()).WithSlopes(new double[] { 0, 0, 0, 0, 50, 0 }); // a vertical (4) é íngreme demais
+        Assert.Null(graph.Route(At("from", 2, 5), At("to", 25, 15), Speeds.Profile()));   // sem a vertical e sem o caminho florestal não há via
+        var offRoad = graph.Route(At("from", 2, 5), At("to", 25, 15), Speeds.Profile(allowOffRoad: true))!;
+        Assert.DoesNotContain(4, offRoad.EdgeIds);
+        Assert.Contains(5, offRoad.EdgeIds);
+    }
 }

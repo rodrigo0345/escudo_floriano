@@ -5,37 +5,42 @@
 }
 
 .main {
+  position: relative;
   display: grid;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: 1fr 400px;
   min-height: 0;
 }
 
 .top {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 8px 14px;
+  align-items: stretch;
+  gap: 22px;
+  padding: 0 16px;
+  min-height: 44px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
 
+.top > * {
+  display: flex;
+  align-items: center;
+}
+
 .brand {
   font-weight: 700;
-  font-size: 17px;
-  display: flex;
-  gap: 7px;
-  align-items: baseline;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  gap: 10px;
   white-space: nowrap;
 }
 
 .brand small {
   font-weight: 400;
-  font-size: 12px;
-}
-
-.logo {
-  color: var(--acc);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .selects {
@@ -46,35 +51,53 @@
 
 .selects select {
   max-width: 260px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.period {
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .tabs {
   display: flex;
-  gap: 4px;
-  background: var(--panel2);
-  padding: 3px;
-  border-radius: 9px;
-  border: 1px solid var(--line);
+  gap: 0;
+  align-self: stretch;
 }
 
 .tabs button {
   border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
+  color: var(--mut);
+  padding: 0 15px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tabs button:hover {
+  color: var(--fg);
 }
 
 .tabs button.on {
-  background: var(--bg);
+  background: transparent;
   color: var(--fg);
-  box-shadow: 0 0 0 1px var(--line);
+  border-bottom-color: var(--acc);
 }
 
 .badge {
-  background: var(--acc);
-  color: #fff;
-  border-radius: 99px;
-  padding: 0 6px;
-  font-size: 11px;
-  margin-left: 3px;
+  background: var(--panel2);
+  color: var(--mut);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  margin-left: 7px;
+  text-transform: none;
 }
 
 .spacer {
@@ -85,9 +108,11 @@
   color: var(--mut);
   text-decoration: none;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 4px 11px;
-  font-size: 13px;
+  border-radius: var(--radius);
+  padding: 3px 11px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  align-self: center;
 }
 
 .apiLink:hover {
@@ -98,43 +123,46 @@
 .bar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
+  gap: 16px;
+  padding: 8px 16px;
   background: var(--panel);
   border-top: 1px solid var(--line);
 }
 
 .play {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
+  min-width: 96px;
+  height: 30px;
+  border-radius: var(--radius);
   background: var(--acc);
   border-color: var(--acc);
   color: #fff;
-  font-size: 16px;
-  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0 14px;
 }
 
 .clock {
   min-width: 150px;
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .clock b {
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .jumps {
   display: flex;
-  gap: 5px;
+  gap: 4px;
 }
 
 .jumps button {
-  padding: 3px 9px;
-  font-size: 12px;
+  padding: 2px 9px;
+  font-size: 11px;
 }
 
 .scrub {

@@ -6,6 +6,9 @@ namespace FireTrace.Core.Services.Policies;
 
 public sealed class VehiclePolicy(IDocumentStore<Organization> organizations, IDocumentStore<Station> stations) : ReferencingPolicy<Vehicle>("veh", organizations, stations)
 {
+    /// <summary>Uma viatura nova diz quantas pessoas tem: a lotação completa, se ninguém disse outra coisa.</summary>
+    public override Vehicle Prepare(Vehicle v) => v.State.CrewOnboard is null ? v with { State = v.State with { CrewOnboard = v.CrewCapacity } } : v;
+
     public override Task<IEnumerable<ValidationIssue>> ValidateAsync(Vehicle v, CancellationToken ct) => Collect(async issues =>
     {
         await RequireOrganization(v.OrganizationId, issues, ct);

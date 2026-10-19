@@ -38,22 +38,23 @@ export function textSprite(text: string, options: TextSpriteOptions = {}): THREE
   return sprite;
 }
 
-/** A round emoji badge on a colored disc (facility type markers). */
-export function badgeSprite(emoji: string, color: string): THREE.Sprite {
+/** A square code badge (one to three letters on a colored plate) for facilities and vehicles: legible at a glance, no pictograms. */
+export function badgeSprite(code: string, color: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(64, 64, 58, 0, Math.PI * 2);
+  ctx.roundRect(8, 8, 112, 112, 12);
   ctx.fill();
   ctx.lineWidth = 6;
-  ctx.strokeStyle = '#fff';
+  ctx.strokeStyle = '#0b0e12';
   ctx.stroke();
-  ctx.font = '64px serif';
+  ctx.fillStyle = '#fff';
+  ctx.font = `700 ${code.length > 2 ? 44 : 58}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(emoji, 64, 70);
+  ctx.fillText(code, 64, 68);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

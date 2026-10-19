@@ -89,7 +89,7 @@
   background: var(--acc);
   color: #fff;
   padding: 5px 14px;
-  border-radius: 99px;
+  border-radius: var(--radius);
   z-index: 4;
 }
 
@@ -103,10 +103,10 @@
   gap: 12px;
   align-items: flex-start;
   padding: 9px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   color: #fff;
   z-index: 6;
-  box-shadow: 0 4px 18px #0006;
+  box-shadow: none;
 }
 
 .banner.error {
@@ -142,7 +142,7 @@
   background: #000c;
   color: #fff;
   padding: 4px 9px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-size: 12px;
   pointer-events: none;
   z-index: 9;
@@ -171,7 +171,7 @@
   align-items: center;
   width: 236px;
   padding: 9px 11px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   border: 1px solid var(--line);
   z-index: 3;
@@ -219,7 +219,7 @@
   grid-column: 1 / -1;
   height: 4px;
   background: var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -246,7 +246,7 @@
 .box {
   background: color-mix(in srgb, var(--panel) 90%, transparent);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius);
   padding: 9px 12px;
   font-size: 12px;
   max-width: 290px;
@@ -277,7 +277,7 @@
 
 .ramp {
   height: 10px;
-  border-radius: 5px;
+  border-radius: var(--radius);
   margin: 6px 0 2px;
 }
 
@@ -298,7 +298,7 @@
 .lg i {
   width: 12px;
   height: 12px;
-  border-radius: 3px;
+  border-radius: var(--radius);
   flex: none;
 }
 

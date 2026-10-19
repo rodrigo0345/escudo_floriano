@@ -15,13 +15,15 @@ public sealed class RoadCutsCache(IMapReader map, FuelCatalog fuels)
     public int[] BurnMinutes(TerrainGrids t) => t.LandCover.Select(c => fuels.Get(c).BurnMinutes).ToArray();
 
     /// <summary>Cortes de uma corrida concreta (`key` identifica-a: um percentil ou um membro do ensemble).</summary>
-    public RoadCuts Of(FireRun run, RoadNetwork net, int[] burn, int[] ignition, string key) =>
-        _cache.GetOrAdd($"{run.SimulationId}:{key}", _ => RoadCuts.Compute(net, ignition, burn));
+    public RoadCuts Of(FireRun run, RoadNetwork net, int[] burn, int[] ignition, string key, int radiusCells = 1) =>
+        _cache.GetOrAdd($"{run.SimulationId}:{key}:{radiusCells}", _ => RoadCuts.Compute(net, ignition, burn, radiusCells));
 
-    public async Task<(RoadNetwork Net, RoadCuts Cuts)> ForPercentileAsync(FireRun run, string? percentile, CancellationToken ct = default)
+    /// <param name="clearanceM">Folga ao fogo, em metros (os percursos mantêm-se a pelo menos isto do fogo previsto); sem ela só contam as células vizinhas.</param>
+    public async Task<(RoadNetwork Net, RoadCuts Cuts)> ForPercentileAsync(FireRun run, string? percentile, double? clearanceM = null, CancellationToken ct = default)
     {
         var net = await map.GetRoadsAsync(run.LocationId, ct);
         var burn = BurnMinutes(await map.GetTerrainAsync(run.LocationId, ct));
-        return (net, Of(run, net, burn, run.Pick(percentile), percentile ?? "rep"));
+        int radius = clearanceM is { } m ? Math.Max(1, (int)Math.Ceiling(m / net.Spec.CellM)) : 1;
+        return (net, Of(run, net, burn, run.Pick(percentile), percentile ?? "rep", radius));
     }
 }

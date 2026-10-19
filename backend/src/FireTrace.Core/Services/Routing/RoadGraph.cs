@@ -7,8 +7,7 @@ namespace FireTrace.Core.Services.Routing;
 /// <summary>O grafo viário indexado para pesquisas de caminho mais curto (Dijkstra multi-origem), com troços bloqueáveis.</summary>
 public sealed class RoadGraph
 {
-    static readonly ConditionalWeakTable<RoadNetwork, RoadGraph> Cache = new();
-    public static RoadGraph For(RoadNetwork net) => Cache.GetValue(net, n => new RoadGraph(n));
+    public static RoadGraph For(RoadNetwork net) => new(net);
 
     public RoadNetwork Net { get; }
     readonly string[] _nodeIds;
@@ -86,7 +85,12 @@ public sealed class RoadGraph
         return new Search(dist, prevNode, prevEdge);
     }
 
-    double?[] Costs(TravelProfile profile) => Net.Edges.Select(e => profile.Minutes(e, Net.Spec.CellM)).ToArray();
+    double[]? _slopes;
+    /// <summary>Declive (%) de cada troço, para as regras de movimento (sem isto, tudo é plano).</summary>
+    public RoadGraph WithSlopes(double[] slopePercent) { _slopes = slopePercent; return this; }
+    public double SlopeOf(int edge) => _slopes?[edge] ?? 0;
+
+    double?[] Costs(TravelProfile profile) => Net.Edges.Select((e, i) => profile.Minutes(e, Net.Spec.CellM, SlopeOf(i))).ToArray();
 
     /// <summary>Minutos desde a origem mais próxima até cada alvo, sem passar por troços bloqueados (nada = sem acesso).</summary>
     public double?[] AccessTimes(IReadOnlyList<Anchor> origins, IReadOnlyList<Anchor> targets, TravelProfile profile, Func<int, bool>? blocked = null)

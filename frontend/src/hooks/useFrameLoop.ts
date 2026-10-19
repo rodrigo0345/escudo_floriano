@@ -39,6 +39,7 @@ export function useFrameLoop(): void {
       }
       const tf = useAppStore.getState().tf;
       if (run) world.terrain.setFireTime(tf);
+      world.units.update(tf);
       if (run) world.smoke.update(tf, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio());
     });
   }, [engine, world]);

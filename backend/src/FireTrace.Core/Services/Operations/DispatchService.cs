@@ -92,7 +92,7 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
         var location = s.LocationId ?? map.Locations.All.FirstOrDefault(l => l.Spec.CellAt(to.Lat, to.Lon) >= 0)?.Id;
         if (location is null) return (null, null, new("warning", "outside_locations", "O alvo está fora dos locais conhecidos; sem chegada estimada.", "/target"));
         var v = s.Vehicle;
-        var route = await routing.RouteAsync(new RouteRequest(location, to, from, At: input.StartAt, Vehicle: new VehicleProfile(v?.Type, v?.HeightM, v?.WidthM, v?.WeightT, v?.OffRoad, v?.CruiseSpeedKmh)), ct);
+        var route = await routing.RouteAsync(new RouteRequest(location, to, from, At: input.StartAt, Vehicle: new VehicleProfile(v?.Type, v?.HeightM, v?.WidthM, v?.WeightT, v?.OffRoad, v?.CruiseSpeedKmh, v?.MaxSlopePercent)), ct);
         return route.Found ? (route.DurationMin, route.Geometry, null) : (null, null, new("error", "target_unreachable", "Não há caminho até ao alvo com os cortes e restrições atuais.", "/target"));
     }
 
