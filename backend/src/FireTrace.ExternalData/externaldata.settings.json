@@ -1,0 +1,115 @@
+{
+  "FireTrace": {
+    "ExternalData": {
+      "ConnectionString": "Host=localhost;Port=5440;Database=firetrace;Username=firetrace;Password=firetrace",
+      "CacheTtlMinutes": 10,
+
+      "OpenMeteo": {
+        "HttpTimeoutSeconds": 60,
+        "UserAgent": "FireTrace/0.1 (research prototype)",
+        "Era5ArchiveLagDays": 7,
+        "ArchiveBaseUrl": "https://archive-api.open-meteo.com/v1/archive",
+        "ForecastBaseUrl": "https://api.open-meteo.com/v1/forecast"
+      },
+
+      "Http": {
+        "UserAgent": "FireTrace/0.1 (research prototype; UMinho challenge)",
+        "TimeoutMinutes": 12,
+        "Retries": 4,
+        "RetryDelayMs": 1500,
+        "RangeBlockBytes": 524288,
+        "RangeRetries": 3,
+        "RangeRetryDelayMs": 1000
+      },
+
+      "Overpass": {
+        "Endpoints": [
+          "https://overpass.openstreetmap.fr/api/interpreter",
+          "https://overpass-api.de/api/interpreter",
+          "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+          "https://overpass.private.coffee/api/interpreter",
+          "https://overpass.kumi.systems/api/interpreter"
+        ],
+        "MaxAttempts": 10,
+        "RetryDelaySeconds": 3,
+        "QueryTimeoutSeconds": 180,
+        "PlacesQueryTimeoutSeconds": 120,
+        "BboxPadDegrees": 0.002,
+        "Blocks": { "RoadsM": 7000, "BuildingsM": 5000, "WaterM": 7000, "WaterwaysM": 7000 }
+      },
+
+      "Roads": {
+        "PavedClasses": [ "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "living_street", "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link" ],
+        "ExcludedServiceTypes": [ "driveway", "parking_aisle", "drive-through", "alley" ]
+      },
+
+      "Places": {
+        "DefaultPopulation": { "city": 20000, "town": 5000, "suburb": 1500, "village": 400, "hamlet": 100 },
+        "DedupeDegrees": 0.002,
+        "CuratedDedupeDegrees": 0.003,
+        "Confidence": { "Emergency": 0.9, "Police": 0.7, "Education": 0.8, "CareHome": 0.8, "Fuel": 0.8, "CampSite": 0.7, "AssemblyPoint": 0.7, "SportsHall": 0.5 }
+      },
+
+      "Water": {
+        "TruckReachM": 60,
+        "HelicopterMinAreaM2": 400,
+        "MaxRoadLinkM": 150,
+        "MinPoolAreaM2": 20,
+        "MinWaterBodyAreaM2": 60,
+        "ReservoirMinAreaM2": 20000,
+        "BoundsAreaFactor": 0.85,
+        "PoolDepthM": 1.5,
+        "PondDepthM": 1.5,
+        "ReservoirDepthM": 3.0,
+        "TankVolumeLitresThreshold": 20000
+      },
+
+      "Waterways": {
+        "BarrierKinds": [ "river", "canal", "stream", "drain" ],
+        "OsmWaterwayTags": { "river": "river", "canal": "canal", "stream": "stream", "drain": "drain", "ditch": "drain" },
+        "DefaultWidthM": { "river": 25, "canal": 8, "stream": 3, "drain": 1.5 }
+      },
+
+      "Terrain": {
+        "TerrariumUrl": "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+        "TerrariumZoom": 13
+      },
+
+      "Imagery": {
+        "EoxUrl": "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg",
+        "EoxAttribution": "Sentinel-2 cloudless — https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2021)",
+        "ConcurrentTiles": 6,
+        "JpegQuality": 90
+      },
+
+      "Ortho": {
+        "WmsUrl": "https://cartografia.dgterritorio.gov.pt/ortos2021/service",
+        "Layer": "Ortos2021-RGB",
+        "Source": "dgt-ortos2021",
+        "Attribution": "Ortofotomapa de Portugal Continental 2021 © Direção-Geral do Território (DGT, dados abertos)",
+        "RequestPixels": 1024,
+        "ConcurrentRequests": 4,
+        "Retries": 5,
+        "JpegQuality": 88
+      },
+
+      "LandCover": {
+        "WorldCoverUrl": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif",
+        "WorldCoverTileDegrees": 3,
+        "WorldCoverClasses": { "10": "floresta", "20": "mato", "30": "pasto", "40": "agricola", "50": "urbano", "60": "rocha", "70": "rocha", "80": "agua", "90": "agricola", "95": "agua", "100": "pasto" },
+        "WorldCoverDefaultClass": "floresta",
+        "HrlUrl": "https://image.discomap.eea.europa.eu/arcgis/rest/services/GioLandPublic/HRL_ForestType_2018/ImageServer/exportImage",
+        "EarthSearchUrl": "https://earth-search.aws.element84.com/v1/search",
+        "EarthSearchCollection": "sentinel-2-l2a",
+        "EarthSearchLimit": 60,
+        "MaxCloudCoverPct": 15,
+        "WinterRange": { "From": "01-01", "To": "02-28" },
+        "SummerRange": { "From": "07-10", "To": "08-31" },
+        "EvergreenMinWinterNdvi": 0.62,
+        "EvergreenMaxSummerDelta": -0.06,
+        "SpeciesRasterPixels": 1680,
+        "UniformClass": "floresta"
+      }
+    }
+  }
+}

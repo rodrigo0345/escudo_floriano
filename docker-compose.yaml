@@ -1,41 +1,112 @@
-
 services:
   db:
     image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    shm_size: 256mb
+    command: postgres -c shared_buffers=256MB -c work_mem=16MB -c max_locks_per_transaction=256
     environment:
-      POSTGRES_DB: firetrace
-      POSTGRES_USER: firetrace
-      POSTGRES_PASSWORD: firetrace
+      POSTGRES_DB: ${POSTGRES_DB:-firetrace}
+      POSTGRES_USER: ${POSTGRES_USER:-firetrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firetrace}
     ports:
-      - "5440:5432"
+      - "${PORT_DB:-5440}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U firetrace -d firetrace"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-firetrace} -d ${POSTGRES_DB:-firetrace}"]
+      interval: 3s
       timeout: 3s
-      retries: 20
+      retries: 15
+      start_period: 4s
+      start_interval: 1s
+    networks:
+      - default
 
   engine:
-    build: ./engine
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
-      WORKERS: "8"   # simulações do ensemble em paralelo (o contentor vê 8 núcleos)
+      WORKERS: "${WORKERS:-8}"   # simulações do ensemble em paralelo
     volumes:
       - ./data/jobs:/jobs
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:9000/health')"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 10
+      start_period: 5s
+      start_interval: 1s
+    networks:
+      - default
+
+  # The API (controllers, services, repositories). Documentation at http://localhost:8080/swagger
+  backend:
+    build:
+      context: .                        # repo root: carries api-spec/ and backend/
+      dockerfile: backend/Dockerfile
+      target: api
+    restart: unless-stopped
+    environment:
+      FIRETRACE_DB: Host=db;Port=5432;Database=${POSTGRES_DB:-firetrace};Username=${POSTGRES_USER:-firetrace};Password=${POSTGRES_PASSWORD:-firetrace}
+      ENGINE_URL: http://engine:9000   # only used when FireTrace:Engine:Provider is "elmfire"
+      FIRETRACE_JOBS: /app/data/jobs
+    ports:
+      - "${PORT_API:-8080}:8080"
+    volumes:
+      - ./locations:/app/locations:ro
+      - ./data:/app/data
+      - ./api-spec:/app/api-spec:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+      start_interval: 1s
+    networks:
+      - default
+
+  # Loads the third-party data of a location: docker compose --profile ingest run --rm ingest --location guimaraes
+  ingest:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ingest
+    profiles: ["ingest"]
+    environment:
+      FIRETRACE_DB: Host=db;Port=5432;Database=${POSTGRES_DB:-firetrace};Username=${POSTGRES_USER:-firetrace};Password=${POSTGRES_PASSWORD:-firetrace}
+    volumes:
+      - ./locations:/app/locations:ro
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
 
   frontend:
     build:
-      context: .                        # repo root: the build also needs api-spec/ for the typed client
+      context: .                        # repo root: needs api-spec/ for typed client and frontend/
       dockerfile: frontend/Dockerfile
+    restart: unless-stopped
     environment:
-      BACKEND_URL: http://backend:8080  # where nginx proxies /api/ and /swagger (the FireTrace Coordination API)
+      BACKEND_URL: http://backend:8080  # where nginx proxies /api/ and /swagger
     ports:
-      - "8081:80"                       # http://localhost:8081
-    # no depends_on: nginx resolves the backend lazily, so the UI starts (and shows a clear error) even before backend/ exists
+      - "${PORT_WEB:-8081}:80"          # http://localhost:8081
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - default
+
+networks:
+  default:
+    name: firetrace-network
+
 volumes:
   pgdata:

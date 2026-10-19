@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The API: controllers, services and repositories — all of the application logic. It uses the Engine project to run fires and the ExternalData project to read third-party data. -->
+  <PropertyGroup>
+    <RootNamespace>FireTrace.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FireTrace.Engine\FireTrace.Engine.csproj" />
+    <ProjectReference Include="..\FireTrace.ExternalData\FireTrace.ExternalData.csproj" />
+    <PackageReference Include="Dapper" Version="2.1.89" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.AspNetCore.Mvc" />
+    <Using Remove="Microsoft.AspNetCore.Routing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Repositories/Migrations/*.sql" />
+    <InternalsVisibleTo Include="FireTrace.Tests" />
+  </ItemGroup>
+
+</Project>

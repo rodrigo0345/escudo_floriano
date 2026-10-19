@@ -1,0 +1,36 @@
+{
+  // Local piloto: Guimarães, centrado entre a Penha, o centro histórico e os Bombeiros Voluntários.
+  "id": "guimaraes",
+  "name": "Penha — detalhe (8 km, ortofoto 1,4 m)",
+  "center": { "lat": 41.438, "lon": -8.283 },
+  "widthCells": 280,
+  "heightCells": 280,
+  "cellM": 30,
+  "renderCellM": 20,
+  "weatherPoint": { "lat": 41.4298, "lon": -8.2686 },
+  "imageryZoom": 15,
+  "imageryPixels": 3072,
+  // Ortofotos DGT 2021 (≈1 m/píxel) em 2×2 blocos de 3072 px: mostram árvores, plantações, caminhos e edifícios
+  "orthoTiles": 2,
+  "orthoTilePixels": 3072,
+  "landCoverSource": "worldcover-2021",
+
+  // Instalações curadas prevalecem sobre OSM (o OSM cobre mal GNR e Proteção Civil).
+  // Formato: { "type": "civil_protection", "name": "...", "lat": 0, "lon": 0, "operator": "...", "source": "..." }
+  // Tipos: fire_station | gnr | civil_protection | inem | hospital | town_hall
+  "curatedFacilities": [],
+
+  // Cenários de incêndio. "historical": false = cenário hipotético com meteorologia real de uma data,
+  // não um incêndio que tenha realmente ocorrido.
+  "incidents": [
+    {
+      "id": "penha-pior-hora-2026",
+      "name": "Ignição na Penha — pior hora do verão de 2026 (cenário)",
+      "lat": 41.4298, "lon": -8.2686,
+      "start": "2026-08-17T15:00:00+01:00",
+      "durationMinutes": 180,
+      "notes": "Meteorologia real ERA5 (17 ago 2026): 35 °C, humidade 17%, vento de NNW. Ignição hipotética no topo da Penha.",
+      "historical": false
+    }
+  ]
+}

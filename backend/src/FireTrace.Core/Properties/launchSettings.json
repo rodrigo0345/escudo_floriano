@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "FireTrace.Api": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:63248;http://localhost:63249"
+    }
+  }
+}

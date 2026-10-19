@@ -1,0 +1,52 @@
+# ==============================================================================
+# Docker Build Context Ignore
+# Prevents transferring unnecessary files, local builds, caches, and secrets to Docker daemon
+# ==============================================================================
+
+# Version control & repo meta
+.git/
+.gitignore
+.claude/
+*.md
+
+# Local environment & secrets
+.env
+.env.*
+*.env
+*.env.local
+docker-compose*.yml
+docker-compose*.yaml
+
+# Simulation data & scratch (mounted via volumes at runtime)
+data/
+locations/
+agents/
+scratch/
+.scratch/
+
+# .NET artifacts
+**/[Bb]in/
+**/[Oo]bj/
+TestResults/
+*.user
+*.suo
+.vs/
+
+# Node / Frontend artifacts (dependencies installed inside container build stage)
+**/node_modules/
+**/dist/
+**/dist-ssr/
+*.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-error.log*
+.vite/
+
+# Python artifacts
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/

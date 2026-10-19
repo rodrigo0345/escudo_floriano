@@ -1,1 +1,118 @@
-**/.env
+# ==============================================================================
+# Environment & Secrets
+# ==============================================================================
+.env
+.env.*
+*.env
+*.env.local
+!.env.example
+!*.env.example
+
+# ==============================================================================
+# Operating System & IDEs
+# ==============================================================================
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Editors & IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+FireTrace.sln.DotSettings.user
+
+# ==============================================================================
+# .NET / C# (Backend)
+# ==============================================================================
+**/[Bb]in/
+**/[Oo]bj/
+**/[Ll]og/
+**/[Ll]ogs/
+[Bb]uildLog.*
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# ==============================================================================
+# Node / TypeScript (Frontend)
+# ==============================================================================
+**/node_modules/
+**/dist/
+**/dist-ssr/
+*.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+
+# ==============================================================================
+# Python (Engine & Agents)
+# ==============================================================================
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+env/
+
+# ==============================================================================
+# Simulation & Cache Data (data/)
+# ==============================================================================
+# Runtime jobs, caches, and downloaded satellite/ortho imagery
+/data/cache/
+/data/imagery/
+/data/jobs/*
+!/data/jobs/.gitkeep
+/scratch/
+.scratch/
+
+# Local docker compose overrides
+docker-compose.override.yml
+docker-compose.override.yaml
