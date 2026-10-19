@@ -1,25 +1,29 @@
-/* Design tokens: the only place colors live. Components reference these variables, never raw hex. */
+/* Design tokens: the only place colors live. Components reference these variables, never raw hex.
+   An operations console: near-black slate, one steel-blue accent for interaction, and red / amber / green kept for status only. */
 :root {
-  --bg: #0e1013;
-  --panel: #171a1f;
-  --panel2: #1f232a;
-  --line: #2b3038;
-  --fg: #ece8df;
-  --mut: #9aa0a8;
-  --acc: #ff6a1a;
-  --bad: #ff3b3b;
-  --ok: #38c172;
-  --warn: #f5b301;
-  --blue: #4c8dff;
+  --bg: #0a0d11;
+  --panel: #10151b;
+  --panel2: #161c24;
+  --line: #232b35;
+  --fg: #d6dce4;
+  --mut: #7d8997;
+  --acc: #3f86c7;
+  --bad: #d4504c;
+  --ok: #3b9e78;
+  --warn: #cf9a39;
+  --blue: #5a9bd8;
+  --radius: 2px;
+  --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, monospace;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #e9e6df;
-    --panel: #fbfaf7;
-    --panel2: #f0ede6;
-    --line: #d9d5ca;
-    --fg: #1d1d1b;
-    --mut: #6b6b66;
+    --bg: #e7eaee;
+    --panel: #f7f8fa;
+    --panel2: #eceff3;
+    --line: #cdd3db;
+    --fg: #1a2028;
+    --mut: #5f6b79;
+    --acc: #2a6fb0;
   }
 }

@@ -20,4 +20,4 @@ ENV BACKEND_URL=http://backend:8080
 COPY frontend/docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
-HEALTHCHECK --interval=10s --timeout=3s --retries=10 CMD wget -qO- http://localhost/ >/dev/null || exit 1
+HEALTHCHECK --interval=10s --timeout=3s --retries=10 CMD wget -qO- http://127.0.0.1/>/dev/null || exit 1

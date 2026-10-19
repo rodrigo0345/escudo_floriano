@@ -22,7 +22,7 @@ public sealed class RoadStatusResolver(IDocumentStore<RoadClosure> closures, IFi
         Func<RoadEdge, string> fire = _ => "open";
         if (simulationId is not null && await runs.GetAsync(simulationId, ct) is { } run)
         {
-            var (net, cuts) = await cutsCache.ForPercentileAsync(run, percentile, ct);
+            var (net, cuts) = await cutsCache.ForPercentileAsync(run, percentile, ct: ct);
             var index = net.Edges.Select((e, i) => (e.Id, i)).ToDictionary(x => x.Id, x => x.i);
             double minute = (at - run.Start).TotalMinutes;
             fire = edge =>

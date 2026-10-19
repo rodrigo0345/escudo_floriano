@@ -6,21 +6,21 @@ import type { Georef } from '@/domain/georef';
 import { badgeSprite, textSprite } from '../sprites';
 import type { Pickable } from '../picking';
 
-const ICON: Partial<Record<FacilityKind, [emoji: string, color: string]>> = {
-  fire_station: ['🚒', '#d93025'],
-  gnr: ['🛡️', '#2e7d32'],
-  psp: ['👮', '#1b5e20'],
-  civil_protection: ['⚠️', '#f9a825'],
-  inem: ['🚑', '#1565c0'],
-  hospital: ['🏥', '#1565c0'],
-  health_centre: ['⚕️', '#1976d2'],
-  town_hall: ['🏛️', '#6d4c41'],
-  school: ['🏫', '#8e24aa'],
-  care_home: ['🛏️', '#ad1457'],
-  shelter: ['⛺', '#00897b'],
-  heliport: ['🚁', '#455a64'],
-  camp_site: ['🏕️', '#558b2f'],
-  fuel_station: ['⛽', '#ef6c00'],
+const ICON: Partial<Record<FacilityKind, [code: string, color: string]>> = {
+  fire_station: ['B', '#b3392f'],
+  gnr: ['G', '#3d7a50'],
+  psp: ['P', '#2f6a4f'],
+  civil_protection: ['PC', '#a8802a'],
+  inem: ['EM', '#2f6bb0'],
+  hospital: ['H', '#2f6bb0'],
+  health_centre: ['CS', '#3a78b8'],
+  town_hall: ['CM', '#6a5b4f'],
+  school: ['E', '#6c4a8a'],
+  care_home: ['L', '#8a3d63'],
+  shelter: ['A', '#2f7f77'],
+  heliport: ['HE', '#4a5a68'],
+  camp_site: ['PC', '#53703a'],
+  fuel_station: ['C', '#a8602a'],
 };
 
 export const FACILITY_KIND_NAME: Record<FacilityKind, string> = {
@@ -65,8 +65,8 @@ export class AssetLayer {
   setFacilities(list: Facility[]): void {
     this.facilityEntries.forEach((f) => this.group.remove(f.sprite));
     this.facilityEntries = list.map((facility) => {
-      const [emoji, color] = ICON[facility.kind] ?? ['•', '#888'];
-      const sprite = badgeSprite(emoji, color);
+      const [code, color] = ICON[facility.kind] ?? ['·', '#666'];
+      const sprite = badgeSprite(code, color);
       sprite.position.set(...this.geo.world(facility.position.lat, facility.position.lon, 5));
       const confidence = facility.confidence && facility.confidence !== 'high' ? `, confiança ${CONFIDENCE_LABEL[facility.confidence]}` : '';
       const capacity = facility.capacity ? `, ${facility.capacity} lugares` : '';

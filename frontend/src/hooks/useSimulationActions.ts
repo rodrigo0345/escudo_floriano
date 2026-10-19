@@ -86,7 +86,7 @@ export function useSimulationActions() {
       world.fire.setMilestones(marks, [first.lat, first.lon]);
       await loadImpact(run.id);
       state.setTime(Math.min(30, run.durationMinutes));
-      state.setTab('incident');
+      if (state.tab !== 'demo' && state.tab !== 'resources') state.setTab('incident');
     },
     [world, loadImpact],
   );
@@ -178,5 +178,5 @@ export function useSimulationActions() {
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, runSimulation, cancelJob, reloadImpact };
+  return { selectScenario, runSimulation, showSimulation, cancelJob, reloadImpact };
 }

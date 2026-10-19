@@ -10,6 +10,8 @@ const TABS: { value: PanelTab; label: string }[] = [
   { value: 'roads', label: 'Estradas' },
   { value: 'assets', label: 'Meios' },
   { value: 'weather', label: 'Meteo' },
+  { value: 'resources', label: 'Recursos' },
+  { value: 'demo', label: 'Operação' },
 ];
 
 /** Brand, location/scenario pickers, the simulated period, the panel tabs and the API docs link. */
@@ -30,7 +32,7 @@ export function TopBar() {
   return (
     <header className={styles.top}>
       <div className={styles.brand}>
-        <span className={styles.logo}>▲</span> FireTrace <small>Resposta a emergências</small>
+        FireTrace <small>Coordenação de resposta a incêndios rurais</small>
       </div>
       <div className={styles.selects}>
         <select
@@ -55,7 +57,7 @@ export function TopBar() {
           <option value="custom">Cenário personalizado…</option>
         </select>
       </div>
-      <div className="mut">
+      <div className={`mut ${styles.period}`}>
         {run ? `${formatDateTime(run.startMs)} → ${formatDateTime(run.startMs + run.durationMinutes * 60000)}` : ''}
       </div>
       <nav className={styles.tabs}>

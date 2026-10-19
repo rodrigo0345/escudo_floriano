@@ -23,6 +23,7 @@ public static class FireJobFingerprint
         Number(hash, job.Minutes); Number(hash, job.SpinUpMinutes); Number(hash, job.Spotting ? 1 : 0);
         if (job.BurnedAtStart is { } burned) foreach (var cell in burned) Number(hash, cell ? 1 : 0);
         Moisture(hash, job.FuelMoisture);
+        Suppression(hash, job.Suppression);
         foreach (var member in job.Members) Member(hash, member);
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
@@ -39,6 +40,13 @@ public static class FireJobFingerprint
             Bytes(hash, MemoryMarshal.AsBytes<float>(wind.SpeedKmh));
             Bytes(hash, MemoryMarshal.AsBytes<float>(wind.FromDeg));
         }
+    }
+
+    static void Suppression(IncrementalHash hash, SuppressionPlan? plan)
+    {
+        if (plan is null) return;
+        Number(hash, plan.FullKwm); Number(hash, plan.NoneKwm); Number(hash, plan.MinFactor);
+        foreach (var w in plan.Windows) { Bytes(hash, MemoryMarshal.AsBytes<int>(w.Cells)); Number(hash, w.FromMinute); Number(hash, w.UntilMinute); Number(hash, w.Effectiveness); Number(hash, w.Direct ? 1 : 0); }
     }
 
     static void Moisture(IncrementalHash hash, FuelMoistureSpec? spec)

@@ -1,3 +1,4 @@
+using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Common;
 using FireTrace.Core.Domain.Dispatches;
 using FireTrace.Core.Domain.Errors;
@@ -10,6 +11,7 @@ using FireTrace.Core.Domain.Rules;
 using FireTrace.Core.Repositories;
 using FireTrace.Core.Services.Fire;
 using FireTrace.Core.Services.Map;
+using FireTrace.ExternalData.Map;
 using FireTrace.ExternalData.Store;
 using NetTopologySuite.Geometries;
 
@@ -19,7 +21,7 @@ namespace FireTrace.Core.Services.Operations;
 /// Traduz planos e despachos ativos em intervenções que o motor de fogo sabe aplicar. Se uma ação traz `simulationEffects`, usam-se esses;
 /// senão deduz-se do tipo de ação e dos meios atribuídos (pessoas, viaturas e água).
 /// </summary>
-public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore<Dispatch> dispatches, IDocumentStore<Vehicle> vehicles, TargetResolver targets, IMapReader map, Rules rules) : IInterventionProvider
+public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore<Dispatch> dispatches, IDocumentStore<Vehicle> vehicles, TargetResolver targets, IMapReader map, Rules rules, LimitsSettings limits, InterventionSettings interventions) : IInterventionProvider
 {
     public async Task<IReadOnlyList<Intervention>> ForPlanAsync(string planId, CancellationToken ct = default)
     {
@@ -29,7 +31,7 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         {
             var ref_ = new PlanActionRef(plan.Id, action.Id);
             var effects = action.SimulationEffects is { Count: > 0 } explicitEffects ? explicitEffects : await DeriveAsync(plan, action, ct);
-            result.AddRange(effects.Select(e => e with { PlanActionRef = ref_, Start = action.SimulationEffects is { Count: > 0 } ? e.Start : StartOf(action) }));
+            result.AddRange(effects.Select(e => e with { PlanActionRef = ref_ }));
         }
         return result;
     }
@@ -42,7 +44,7 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         switch (a)
         {
             case FireAttackAction f:
-                if (f.Line is not null && f.ExpectedEffectiveness is { } line) return new Intervention[] { new FireLineIntervention { Start = start, Geometry = f.Line, Effectiveness = line, Method = f.Tactic } };
+                if (f.Line is not null && f.ExpectedEffectiveness is { } line) return new Intervention[] { await LineAsync(plan, a, f, line, ct) };
                 return await CrewAsync(plan, a, Responsibility.Firefighting, f.Line ?? (Geometry?)(f.AnchorPoint is { } p ? TargetResolver.PointAt(p.Lat, p.Lon) : null) ?? await targets.GeometryAsync(PlanService.TargetOf(a), plan.LocationId, ct), ct);
             case FuelBreakAction b:
                 return new Intervention[] { new FuelRemovalIntervention { Start = start, Geometry = b.Line, WidthM = b.WidthM, Removal = b.Removal, Method = b.Method } };
@@ -64,20 +66,55 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         }
     }
 
-    /// <summary>A equipa que o plano põe num sítio: soma das pessoas, viaturas e água das viaturas atribuídas à ação.</summary>
+    /// <summary>
+    /// Uma linha de contenção feita por equipas: só começa a travar o fogo depois de as equipas chegarem (`etaMinutes`) e de a abrirem
+    /// (comprimento / (pessoas × ritmo de abertura)). Sem equipas atribuídas, a linha já existe à hora do gatilho (um aceiro, por exemplo).
+    /// </summary>
+    async Task<Intervention> LineAsync(Plan plan, PlanAction a, FireAttackAction f, double effectiveness, CancellationToken ct)
+    {
+        int people = 0; double eta = 0;
+        foreach (var r in a.Resources ?? new())
+        {
+            eta = Math.Max(eta, r.EtaMinutes ?? 0);
+            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v) people += r.Personnel ?? v.CrewCapacity;
+            else if (r.ResourceType == ResourceType.PersonnelPool) people += r.Personnel ?? 0;
+        }
+        var c = f.Line!.Coordinates;
+        double lengthM = Enumerable.Range(1, c.Length - 1).Sum(i => RoadGeometry.DistanceM(c[i - 1].Y, c[i - 1].X, c[i].Y, c[i].X));
+        int construction = people == 0 ? 0 : (int)Math.Ceiling(lengthM / (people * interventions.FireLineRateMPerHourPerPerson / 60));
+        return new FireLineIntervention
+        {
+            Start = new TimeSpec(OffsetMinutes: (int)Math.Round(StartMinutes(plan, a) + (people == 0 ? 0 : eta))), ConstructionMinutes = construction, Geometry = f.Line, Effectiveness = effectiveness, Method = f.Tactic,
+        };
+    }
+
+    /// <summary>
+    /// A equipa que o plano põe num sítio: pessoas, viaturas e água das viaturas atribuídas à ação, a chegar `etaMinutes` depois do gatilho e a combater por janelas
+    /// (com água, a reabastecer, cansada: ver <see cref="CrewWorkSchedule"/>). Cada janela é uma intervenção com a sua hora de início e duração.
+    /// </summary>
     async Task<IReadOnlyList<Intervention>> CrewAsync(Plan plan, PlanAction a, Responsibility fallback, Geometry? where, CancellationToken ct)
     {
         if (where is null || a.Resources is not { Count: > 0 } resources) return Array.Empty<Intervention>();
-        int people = 0, vehicleCount = 0; double water = 0; var responsibility = fallback;
+        int people = 0, vehicleCount = 0; double water = 0, pump = 0, eta = 0; var responsibility = fallback;
         foreach (var r in resources)
         {
             responsibility = r.Responsibility ?? responsibility;
-            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v) { vehicleCount++; people += r.Personnel ?? v.CrewCapacity; water += v.WaterCapacityL ?? 0; }
+            eta = Math.Max(eta, r.EtaMinutes ?? 0);
+            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v) { vehicleCount++; people += r.Personnel ?? v.CrewCapacity; water += v.WaterCapacityL ?? 0; pump += v.PumpFlowLpm ?? 0; }
             else if (r.ResourceType == ResourceType.PersonnelPool) people += r.Personnel ?? 0;
         }
-        return people == 0 ? Array.Empty<Intervention>()
-            : new Intervention[] { new CrewDeploymentIntervention { Start = StartOf(a), Responsibility = responsibility, Personnel = people, Vehicles = vehicleCount, WaterL = water, Geometry = where } };
+        if (people == 0) return Array.Empty<Intervention>();
+
+        double arrival = StartMinutes(plan, a) + eta, until = arrival + (a.ExpectedDurationMinutes ?? limits.DefaultActionWindowMinutes);
+        return CrewWorkSchedule.Plan(arrival, until, water, pump, rules).Select(s => (Intervention)new CrewDeploymentIntervention
+        {
+            Start = new TimeSpec(OffsetMinutes: (int)Math.Round(s.FromMinute)), DurationMinutes = Math.Max(1, (int)Math.Round(s.Minutes)), Responsibility = responsibility, Personnel = people, Vehicles = vehicleCount, WaterL = water, Geometry = where,
+            Effectiveness = InterventionApplier.CrewEffectiveness(people, water, rules.Suppression) * s.Fatigue,
+        }).ToList();
     }
+
+    /// <summary>Minuto (desde o início do cenário) em que o gatilho da ação a manda começar; sem gatilho de hora, ao ativar (0).</summary>
+    static double StartMinutes(Plan plan, PlanAction a) => a.Trigger is AtTimeTrigger t ? t.At.Time is { } abs ? (abs - (plan.Horizon?.Start ?? abs)).TotalMinutes : t.At.OffsetMinutes ?? 0 : 0;
 
     /// <summary>Os meios que já estão a trabalhar no terreno (em combate ou a proteger edifícios) travam o fogo onde atuam.</summary>
     public async Task<IReadOnlyList<Intervention>> ForActiveDispatchesAsync(string locationId, CancellationToken ct = default)

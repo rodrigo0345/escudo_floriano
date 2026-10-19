@@ -16,12 +16,12 @@ namespace FireTrace.Core.Services.Map;
 public sealed class MapQueries(IMapReader map, FuelCatalog fuels, Population population, MapSettings settings, Fire.LandscapeBuilder landscape)
 {
     static readonly GeometryFactory Gf = NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(4326);
-    static readonly ConditionalWeakTable<RoadNetwork, RoadGeo[]> RoadCache = new();
-    static readonly ConditionalWeakTable<RoadNetwork, RoadIndex> IndexCache = new();
+    readonly ConditionalWeakTable<RoadNetwork, RoadGeo[]> _roadCache = new();
+    readonly ConditionalWeakTable<RoadNetwork, RoadIndex> _indexCache = new();
 
     sealed record RoadGeo(RoadEdge Edge, LineString Line, Envelope Box);
 
-    public RoadIndex IndexOf(RoadNetwork net) => IndexCache.GetValue(net, n => new RoadIndex(n));
+    public RoadIndex IndexOf(RoadNetwork net) => _indexCache.GetValue(net, n => new RoadIndex(n));
 
     // ===================================================================================================== local
     public async Task<LocationView> LocationAsync(string id, CancellationToken ct = default)
@@ -80,7 +80,7 @@ public sealed class MapQueries(IMapReader map, FuelCatalog fuels, Population pop
     }
 
     // ===================================================================================================== estradas
-    RoadGeo[] Roads(RoadNetwork net) => RoadCache.GetValue(net, n => n.Edges.Select(e =>
+    RoadGeo[] Roads(RoadNetwork net) => _roadCache.GetValue(net, n => n.Edges.Select(e =>
     {
         var coords = Enumerable.Range(0, e.Pts.Length / 2).Select(i => { var (lat, lon) = n.Spec.ToLatLon(e.Pts[2 * i], e.Pts[2 * i + 1]); return new Coordinate(Math.Round(lon, 6), Math.Round(lat, 6)); }).ToArray();
         var line = Gf.CreateLineString(coords);

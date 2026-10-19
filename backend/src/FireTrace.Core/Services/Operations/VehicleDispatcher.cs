@@ -28,8 +28,9 @@ public sealed class VehicleDispatcher(IDocumentStore<Vehicle> store, CrudService
         if (alreadyInBatch > 0) yield return new("error", "duplicate_resource", $"A viatura {v.Callsign} aparece mais do que uma vez.");
         if (!v.InService) yield return new("error", "vehicle_out_of_service", $"A viatura {v.Callsign} está fora de serviço.");
         else if (v.State.Status != VehicleStatus.Available) yield return new("error", "vehicle_busy", $"A viatura {v.Callsign} não está livre (estado {EnumText.ToSnake(v.State.Status)}).");
-        if (input.Personnel < (v.MinimumCrew ?? 1) || input.Personnel > v.CrewCapacity)
-            yield return new("error", "crew_range", $"A viatura {v.Callsign} leva entre {v.MinimumCrew ?? 1} e {v.CrewCapacity} pessoas (pedidas {input.Personnel}).", "/personnel");
+        int fit = v.CrewCapacity - (v.State.Crew?.Casualties ?? 0); // quem já é baixa não segue
+        if (input.Personnel < (v.MinimumCrew ?? 1) || input.Personnel > fit)
+            yield return new("error", "crew_range", $"A viatura {v.Callsign} leva entre {v.MinimumCrew ?? 1} e {fit} pessoas (pedidas {input.Personnel}){(fit < v.CrewCapacity ? $"; {v.CrewCapacity - fit} baixas" : "")}.", "/personnel");
         if (!rules.Supports(input.Responsibility, v.Capabilities))
             yield return new("error", "responsibility_not_supported", $"A viatura {v.Callsign} não tem capacidades para '{EnumText.ToSnake(input.Responsibility)}'.", "/responsibility");
     }
@@ -56,6 +57,7 @@ public sealed class VehicleDispatcher(IDocumentStore<Vehicle> store, CrudService
     {
         var v = await vehicles.GetAsync(d.ResourceId, ct);
         var home = v.StationId is { } sid ? (await stations.GetAsync(sid, ct))?.Position : null;
-        await vehicles.SaveAsync(v with { State = new VehicleState { Status = VehicleStatus.Available, Position = home ?? v.State.Position, Source = StateSource.System, UpdatedAt = clock.GetUtcNow() } }, ct);
+        // back at the station the vehicle keeps its people (minus the casualties it has suffered): every vehicle always says how many it has
+        await vehicles.SaveAsync(v with { State = new VehicleState { Status = VehicleStatus.Available, Position = home ?? v.State.Position, Crew = v.State.Crew, CrewOnboard = v.CrewCapacity - (v.State.Crew?.Casualties ?? 0), Source = StateSource.System, UpdatedAt = clock.GetUtcNow() } }, ct);
     }
 }

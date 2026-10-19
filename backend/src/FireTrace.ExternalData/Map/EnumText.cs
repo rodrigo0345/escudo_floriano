@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.RegularExpressions;
 
 namespace FireTrace.ExternalData.Map;
@@ -23,6 +24,6 @@ public static partial class EnumText
     /// <summary>The text → value table of one enum type; the runtime builds it once per type and it never changes afterwards.</summary>
     static class ByText<T> where T : struct, Enum
     {
-        public static readonly Dictionary<string, T> Values = Enum.GetValues<T>().ToDictionary(v => ToSnake(v), v => v);
+        public static readonly FrozenDictionary<string, T> Values = Enum.GetValues<T>().ToDictionary(v => ToSnake(v), v => v).ToFrozenDictionary();
     }
 }

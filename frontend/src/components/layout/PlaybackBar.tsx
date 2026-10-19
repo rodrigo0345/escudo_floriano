@@ -26,8 +26,8 @@ export function PlaybackBar() {
 
   return (
     <footer className={styles.bar}>
-      <button className={styles.play} title="Reproduzir/pausar" onClick={togglePlay}>
-        {playing ? '⏸' : '▶'}
+      <button className={styles.play} title="Reproduzir / pausar" onClick={togglePlay}>
+        {playing ? 'Pausar' : 'Reproduzir'}
       </button>
       <div className={styles.clock}>
         <b>{run ? formatDateTime(run.startMs + t * 60000) : '—'}</b>

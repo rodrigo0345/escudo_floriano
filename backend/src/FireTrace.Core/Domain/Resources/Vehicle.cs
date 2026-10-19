@@ -26,6 +26,7 @@ public sealed record Vehicle : Entity
     public double? WeightT { get; init; }
     public double? CruiseSpeedKmh { get; init; }
     public double? RangeKm { get; init; }
+    public double? FuelCapacityL { get; init; }
     public List<VehicleCapability>? Capabilities { get; init; }
     public AerialSpec? Aerial { get; init; }
     public bool InService { get; init; } = true;
