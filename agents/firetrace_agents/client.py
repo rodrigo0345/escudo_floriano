@@ -130,6 +130,15 @@ class FiretraceClient:
             params=params,
         )
 
+    def get_vectors(self, simulation_id: str, *, t_min: int, window_minutes: int = 15) -> dict[str, Any]:
+        """``GET /simulations/{id}/vectors``: where the fire front is at ``t_min`` and how it is spreading
+        (a ``FeatureCollection`` of points with ``bearingDeg``, ``speedMmin``, ``intensityKwm``)."""
+        return self._request(
+            "GET",
+            self._fill("/simulations/{simulationId}/vectors", simulationId=simulation_id),
+            params={"tMin": t_min, "windowMin": window_minutes},
+        )
+
     def get_summary(self, simulation_id: str, *, step_minutes: int = 15) -> dict[str, Any]:
         return self._request(
             "GET",

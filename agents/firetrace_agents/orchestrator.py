@@ -35,6 +35,7 @@ from typing import Any, Iterable
 from .client import ApiProblem, FiretraceClient
 from .contracts import UNSAFE_ON_WIRE, validate_against_spec
 from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
+from .sectors import Assignment, Sector, assign_units, plan_sectors
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 
 
@@ -58,6 +59,7 @@ class CycleResult:
     plan_b: dict[str, Any] | None = None
     published: dict[str, str] = field(default_factory=dict)  # variant → plan id
     validation: dict[str, dict[str, Any]] = field(default_factory=dict)  # variant → backend `PlanValidation`
+    assignments: dict[str, Assignment] = field(default_factory=dict)  # agent id → sector and place it was given
 
     def reasons_log(self) -> list[str]:
         """The reasons every firefighter gave, in reporting order."""
@@ -134,6 +136,8 @@ class OrchestratorAgent:
         ``at_minute`` is the decision instant (minutes since ignition). Without it the situation is the
         end of the run, which is rarely what a commander decides on.
         """
+        simulation = self._simulation(simulation_id)
+        ignitions = ((simulation or {}).get("scenarioSnapshot") or {}).get("ignitions") or []
         situation = situation_from_simulation(
             simulation_id,
             threatened=self.client.get_threatened(simulation_id, horizon_minutes=horizon_minutes, t_min=at_minute),
@@ -141,6 +145,7 @@ class OrchestratorAgent:
             horizon_minutes=horizon_minutes,
             at_minute=at_minute,
             rules=self._load_rules(),
+            ignition=ignitions[0].get("position") if ignitions else None,
         )
         if not self.agents:
             self.pull_fleet()
@@ -148,8 +153,9 @@ class OrchestratorAgent:
             raise RuntimeError("no firefighter agents available from the fleet")
 
         result = CycleResult(simulation_id=simulation_id)
+        result.assignments = self._assign_sectors(situation, simulation)
         for agent in self.agents:
-            message = agent.decide(situation)
+            message = agent.decide(situation, result.assignments.get(agent.agent_id))
             result.decisions.append(message)
 
         guarded = self._guard_decisions(result)
@@ -166,6 +172,36 @@ class OrchestratorAgent:
                 published = self.client.create_plan(plan)
                 result.published[variant] = published.get("id", "")
         return result
+
+    def _simulation(self, simulation_id: str) -> dict[str, Any] | None:
+        try:
+            return self.client.get_simulation(simulation_id)
+        except ApiProblem:
+            return None
+
+    def _assign_sectors(self, situation: Situation, simulation: dict[str, Any] | None) -> dict[str, Assignment]:
+        """Spread the units over the fire front instead of letting each one aim at the head.
+
+        The front comes from the backend's spread vectors one horizon ahead of the decision (where the fire will be
+        when the units are working), falling back to the decision instant itself. Threatened places are dealt out too.
+        """
+        decided_at = situation.at_minute
+        if decided_at is None:
+            decided_at = int(situation.latest_milestone.get("tMin") or 0)
+        duration = ((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes")
+        ahead = decided_at + situation.horizon_minutes
+        instants = [min(ahead, duration) if duration else ahead, decided_at]
+        sectors: list[Sector] = []
+        for t_min in dict.fromkeys(instants):
+            try:
+                vectors = self.client.get_vectors(situation.simulation_id, t_min=int(t_min))
+            except ApiProblem:  # a server without vectors: units fall back to the fire's head
+                continue
+            sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m)
+            if sectors:
+                break
+        units = [(agent.agent_id, agent.tier.value) for agent in self.agents]
+        return assign_units(units, sectors, situation.people_in_danger_within())
 
     def _load_rules(self) -> dict[str, Any] | None:
         """The backend's own numbers (`GET /rules`); a server without them leaves the agents on their defaults."""
