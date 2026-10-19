@@ -13,7 +13,8 @@ This is the shared background every agent working in this repo — a Claude Code
 backend/    the API implementation (FireTrace Coordination API)
 frontend/   the operator UI
 agents/     AI planning agents: read simulation results, propose response plans
-api-spec/   openapi.json — the contract. The one thing all three above must agree with.
+engine/     the fire spread & ensemble simulation worker (see docker-compose.yaml)
+api-spec/   openapi.json — the contract. The one thing all of the above must agree with.
 ```
 
 None of `backend/`, `frontend/`, or `agents/` get to define the contract by what they happen to implement. `api-spec/openapi.json` defines it; the three folders are all, equally, clients of that definition. The spec's own `info.description` says this explicitly: it is "a fonte de verdade" (the source of truth) — any contract change goes through that file, in a pull request, *before* it's implemented anywhere.
