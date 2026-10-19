@@ -75,7 +75,7 @@ public sealed class MapQueries(IMapReader map, FuelCatalog fuels, Population pop
             return new(null, HeightmapPng.Encode(await map.GetRenderHeightmapAsync(loc, ct) ?? throw new NotFoundException("Relevo de desenho")), "image/png");
         var asset = (await map.GetImageryAsync(loc, ct)).FirstOrDefault(a => a.Kind == layerId) ?? throw new NotFoundException($"Camada '{layerId}'");
         var path = Path.GetFullPath(Path.Combine(map.DataDir, asset.Path));
-        if (!File.Exists(path)) throw new NotFoundException($"Ficheiro da camada '{layerId}'");
+        if (!map.FileExists(path)) throw new NotFoundException($"Ficheiro da camada '{layerId}'");
         return new(path, null, path.EndsWith(".png") ? "image/png" : "image/jpeg");
     }
 
