@@ -227,7 +227,7 @@ class TestOrchestratorGuards:
             THREATENED_ISOLATED, SUMMARY_MEDIUM,
             capabilities={
                 "apiVersion": "x",
-                "interventions": [{"name": "fuel_removal", "supported": False}],
+                "interventions": [{"name": "fire_line", "supported": False}],
             },
         )
         squads = [agent for agent in orchestrator.agents if agent.tier is FirefighterTier.SQUAD]
@@ -235,7 +235,28 @@ class TestOrchestratorGuards:
         message = squads[0].decide(_situation(THREATENED_ISOLATED, SUMMARY_MEDIUM))
         result = CycleResult(simulation_id="sim-penanet", decisions=[message])
         orchestrator._guard_decisions(result)
-        assert any("fuel_removal" in issue.problem for issue in result.issues)
+        assert any("fire_line" in issue.problem for issue in result.issues)
+
+    def test_fuel_removal_is_dropped_while_spec_and_backend_disagree_on_its_shape(self):
+        orchestrator = _orchestrator(THREATENED_ISOLATED, SUMMARY_MEDIUM)  # /capabilities says it is supported
+        message = DecisionMessage(
+            agent_id="pp-x",
+            tier=FirefighterTier.SQUAD,
+            organization_id="org-bv-penha",
+            objective="minimize_burned_area",
+            reason="clear fuel ahead",
+            proposals=[
+                ActionProposal(
+                    action_type="fire_attack",
+                    title="fuel removal",
+                    intervention={"type": "fuel_removal", "start": {"offsetMinutes": 0}},
+                    priority="high",
+                )
+            ],
+        )
+        result = CycleResult(simulation_id="sim-penanet", decisions=[message])
+        orchestrator._guard_decisions(result)
+        assert any("fuel_removal" in issue.problem and "backend" in issue.problem for issue in result.issues)
 
     def test_vehicle_conflict_keeps_the_life_first_action(self):
         orchestrator = _orchestrator(THREATENED_TOWN, SUMMARY_RAGING)

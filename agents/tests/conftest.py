@@ -240,6 +240,10 @@ class _Store:
             return json_ok(dict(self.threatened, simulationId=path.split("/")[2]))
         if path.startswith("/simulations/") and path.endswith("/summary"):
             return json_ok(dict(self.summary, simulationId=path.split("/")[2]))
+        if path == "/rules":
+            return json_ok({"version": "test", "safety": {"minSafeDistanceM": 100}, "suppression": {"baseEffectiveness": 0.15}})
+        if method == "POST" and path == "/plans/validate":
+            return json_ok({"valid": True, "issues": []})
         if method == "POST" and path == "/plans":
             body = json.loads(request.content.decode("utf-8"))
             self.posted_plans.append(body)

@@ -42,6 +42,12 @@ INTERVENTION_TYPES: frozenset[str] = frozenset(
 """Types accepted by the ``Intervention`` oneOf (aerial_drop, fire_line, fuel_removal,
 backfire, crew_deployment, structure_protection, road_closure, evacuation)."""
 
+UNSAFE_ON_WIRE: frozenset[str] = frozenset({"fuel_removal"})
+"""Interventions the spec lists and ``/capabilities`` calls supported, but that the live backend
+rejects with HTTP 400: its ``FuelRemovalIntervention`` requires a ``removal`` field and has no
+``effectiveness``, while the spec's ``InterventionFuelRemoval`` has the opposite. Until spec and backend
+are reconciled (a contract proposal, not an agents decision) the agents do not emit them."""
+
 ACTION_TYPES: frozenset[str] = frozenset(
     {
         "dispatch_units",

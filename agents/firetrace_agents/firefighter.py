@@ -25,11 +25,16 @@ Each agent
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .contracts import OBJECTIVES, INTERVENTION_TYPES
+from .contracts import OBJECTIVES, INTERVENTION_TYPES, UNSAFE_ON_WIRE
 from .tiers import FirefighterTier, tier_for_vehicle
+
+# Spec ``Responsibility`` -> vehicle capabilities that let a vehicle take it (the backend warns
+# ``responsibility_not_supported`` otherwise). Only what the agents assign is listed.
+EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", "perimeter_security"})
 
 PROTECT_LIFE = "protect_life"
 MINIMIZE_BURNED_AREA = "minimize_burned_area"
@@ -46,6 +51,33 @@ class Situation:
     horizon_minutes: int
     threatened: dict[str, Any]
     summary: dict[str, Any]
+    at_minute: int | None = None
+    """Decision instant, minutes since ignition. ``None`` = the last milestone (end of the run)."""
+    rules: dict[str, Any] | None = None
+    """The backend's ``GET /rules`` (safety distances, suppression effectiveness...). ``None`` = defaults below."""
+
+    @property
+    def safe_distance_m(self) -> float:
+        return float(((self.rules or {}).get("safety") or {}).get("minSafeDistanceM") or 100.0)
+
+    @property
+    def head_bearing_deg(self) -> float:
+        """Where the head is moving towards. Falls back to downwind (wind blows *from* ``windFromDeg``)."""
+        bearing = self.latest_milestone.get("headBearingDeg")
+        if bearing is not None:
+            return float(bearing)
+        wind_from = (self.latest_milestone.get("wind") or {}).get("windFromDeg")
+        return (float(wind_from) + 180.0) % 360.0 if wind_from is not None else 0.0
+
+    def suppression_effectiveness(self, people: int, water_l: float) -> float:
+        """The backend's own formula (``Rules.suppression``): base + per-crew term + water bonus, capped."""
+        s = (self.rules or {}).get("suppression") or {}
+        value = (
+            float(s.get("baseEffectiveness", 0.15))
+            + float(s.get("perCrewEquivalent", 0.12)) * people / max(float(s.get("personsPerCrewEquivalent", 4)), 1.0)
+            + float(s.get("waterBonusPerThousandL", 0.02)) * water_l / 1000.0
+        )
+        return round(min(value, float(s.get("maxEffectiveness", 0.85))), 2)
 
     @property
     def threatened_places(self) -> list[dict[str, Any]]:
@@ -67,6 +99,9 @@ class Situation:
     @property
     def latest_milestone(self) -> dict[str, Any]:
         milestones = self.summary.get("milestones") or []
+        if self.at_minute is not None:
+            # the fire as it is at the decision instant, not as it ends
+            milestones = [m for m in milestones if m.get("tMin", -1) <= self.at_minute] or milestones[:1]
         if not milestones:
             return {}
         return max(milestones, key=lambda milestone: milestone.get("tMin", -1))
@@ -104,12 +139,16 @@ def situation_from_simulation(
     threatened: dict[str, Any],
     summary: dict[str, Any],
     horizon_minutes: int = 60,
+    at_minute: int | None = None,
+    rules: dict[str, Any] | None = None,
 ) -> Situation:
     return Situation(
         simulation_id=simulation_id,
         horizon_minutes=horizon_minutes,
         threatened=threatened,
         summary=summary,
+        at_minute=at_minute,
+        rules=rules,
     )
 
 
@@ -251,6 +290,9 @@ class FirefighterAgent:
             proposal.intervention.setdefault("start", {"offsetMinutes": 0})
             proposal.intervention.pop("planActionRef", None)
             proposal.proposal_id = proposal.proposal_id or f"act-{self.agent_id}-{index:02d}"
+            if proposal.action_type == "fire_attack":  # LCES: the backend warns `missing_safety` without it
+                for key, value in self._lces(situation, proposal.intervention.get("geometry")).items():
+                    proposal.extra_action_fields.setdefault(key, value)
         return DecisionMessage(
             agent_id=self.agent_id,
             tier=self.tier,
@@ -260,6 +302,22 @@ class FirefighterAgent:
             proposals=proposals,
             confidence=confidence,
         )
+
+    def _lces(self, situation: Situation, geometry: dict[str, Any] | None) -> dict[str, Any]:
+        """Lookouts, Communications, Escape routes, Safety zones: an escape line and a safety zone *away* from
+        the head (opposite its bearing) and a lookout on the flank. Distances come from the backend's `/rules`."""
+        lat, lon = _centroid(geometry) if geometry else (None, None)
+        if lat is None:
+            position = situation.head_position or {"lat": 41.42, "lon": -8.27}
+            lat, lon = float(position["lat"]), float(position["lon"])
+        bearing = situation.head_bearing_deg
+        safe_lat, safe_lon = _destination(lat, lon, (bearing + 180.0) % 360.0, max(situation.safe_distance_m * 3.0, 300.0))
+        look_lat, look_lon = _destination(lat, lon, (bearing + 90.0) % 360.0, situation.safe_distance_m)
+        return {
+            "escapeRoutes": [{"type": "LineString", "coordinates": [[lon, lat], [safe_lon, safe_lat]]}],
+            "safetyZones": [{"lat": safe_lat, "lon": safe_lon}],
+            "lookouts": [{"lat": look_lat, "lon": look_lon}],
+        }
 
     # -- branch 1: people in the path → evacuate first ----------------------------
     def _protect_life(self, situation: Situation, in_danger: list[dict[str, Any]]) -> tuple[list[ActionProposal], str, float]:
@@ -303,6 +361,11 @@ class FirefighterAgent:
                 f"retardante/água à frente das localidades para dar margem às equipas no terreno."
             )
             return proposals, reason, confidence
+
+        if self.tier is FirefighterTier.TRUCK and not (self.observation.capabilities & EVACUATION_CAPABILITIES):
+            # A fire engine without transport/traffic/perimeter capability may not be assigned `evacuation`
+            # (backend: responsibility_not_supported). Its way of protecting people is defending their homes.
+            return self._protect_structures(situation, in_danger, base, arrival, people, names)
 
         evacuation_id = f"evap-{self.agent_id}"
         evacuation = ActionProposal(
@@ -350,6 +413,51 @@ class FirefighterAgent:
         quantified = f"evacuar primeiro ({people} pessoas; margem {self.SAFETY_MARGIN_MIN} min), depois {follow_ups[0].intervention['type']} em sequência."
         reason = f"{base} A minha decisão pela regra 'vidas primeiro': {quantified}"
         return [evacuation, *follow_ups], reason, 0.75
+
+    def _protect_structures(
+        self, situation: Situation, in_danger: list[dict[str, Any]], base: str, arrival: float, people: int, names: str
+    ) -> tuple[list[ActionProposal], str, float]:
+        suppression = self._truck_suppression(situation)
+        if "structure_protection" not in self.observation.capabilities:
+            reason = (
+                f"{base} Não tenho capacidade de evacuação nem de proteção de estruturas: contribuo só com combate "
+                f"({self._describe(suppression)})."
+            )
+            return suppression, reason, 0.5
+
+        protection_id = f"prot-{self.agent_id}"
+        effectiveness = situation.suppression_effectiveness(self.observation.crew_onboard, self.observation.water_capacity_l)
+        protection = ActionProposal(
+            action_type="structure_protection",
+            title=f"Defender {names} (proteção de edifícios)",
+            proposal_id=protection_id,
+            intervention={
+                "type": "structure_protection",
+                "label": f"Defesa {names}",
+                "start": {"offsetMinutes": 0},
+                "placeId": in_danger[0]["id"],
+                "effectiveness": effectiveness,
+            },
+            priority="critical",
+            resources=self._ground_resources("structure_protection"),
+            expected_effect=f"Reduz os edifícios perdidos em {names} (eficácia ~{effectiveness:.0%}, pelas regras do servidor).",
+            confidence=0.7,
+            safety_notes="Defender a partir da zona já ardida ou de segurança; retirar se o fogo chegar em menos do que o limite das regras.",
+            extra_action_fields={
+                "targets": [{"placeId": asset["id"], "label": str(asset.get("name") or asset["id"])} for asset in in_danger],
+                "tactic": "wetting",
+            },
+        )
+        for follow in suppression:
+            follow.title += " (só após a defesa dos edifícios)"
+            follow.priority = "high"
+            follow.depends_on.append(protection_id)
+            follow.trigger = {"kind": "on_action_complete", "actionId": protection_id}
+        reason = (
+            f"{base} Sou um carro de bombeiros sem capacidade de evacuação (só transporte, trânsito e segurança evacuam): "
+            f"a minha forma de proteger vidas é defender os edifícios ({people} pessoas, eficácia ~{effectiveness:.0%}) e só depois combater."
+        )
+        return [protection, *suppression], reason, 0.7
 
     # -- branch 2: region isolated → reduce the burned area ------------------------
     def _minimize_burned_area(self, situation: Situation) -> tuple[list[ActionProposal], str, float]:
@@ -482,7 +590,8 @@ class FirefighterAgent:
         ]
 
     def _squad_suppression(self, situation: Situation) -> list[ActionProposal]:
-        if situation.head_speed_mmin > 8 or situation.max_intensity_kwm > 2500:
+        # fuel_removal is a tame-fire option, but the live backend rejects its payload (see UNSAFE_ON_WIRE): handline then.
+        if "fuel_removal" in UNSAFE_ON_WIRE or situation.head_speed_mmin > 8 or situation.max_intensity_kwm > 2500:
             return [
                 ActionProposal(
                     action_type="fire_attack",
@@ -538,6 +647,31 @@ TIER_SUPPRESSION: dict[FirefighterTier, Callable[[FirefighterAgent, Situation], 
 # ---------------------------------------------------------------------------
 # geometry helpers (GeoJSON, [lon, lat] — contract convention)
 # ---------------------------------------------------------------------------
+def _centroid(geometry: dict[str, Any]) -> tuple[float | None, float | None]:
+    """(lat, lon) of the mean vertex of a LineString/Polygon/Point; (None, None) if there is none."""
+    coords = geometry.get("coordinates")
+    kind = geometry.get("type")
+    if kind == "Point" and coords:
+        return float(coords[1]), float(coords[0])
+    if kind == "LineString" and coords:
+        points = coords
+    elif kind == "Polygon" and coords and coords[0]:
+        points = coords[0][:-1] or coords[0]
+    else:
+        return None, None
+    return sum(float(p[1]) for p in points) / len(points), sum(float(p[0]) for p in points) / len(points)
+
+
+def _destination(lat: float, lon: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
+    """Point ``distance_m`` from (lat, lon) along ``bearing_deg`` (0 = north), on a sphere."""
+    radius = 6_371_008.8
+    brg, ang = math.radians(bearing_deg), distance_m / radius
+    p1, l1 = math.radians(lat), math.radians(lon)
+    p2 = math.asin(math.sin(p1) * math.cos(ang) + math.cos(p1) * math.sin(ang) * math.cos(brg))
+    l2 = l1 + math.atan2(math.sin(brg) * math.sin(ang) * math.cos(p1), math.cos(ang) - math.sin(p1) * math.sin(p2))
+    return math.degrees(p2), math.degrees(l2)
+
+
 def _area_around(position: dict[str, Any] | None, radius_deg: float = 0.004) -> dict[str, Any]:
     if not position:
         return _area_around({"lat": 41.42, "lon": -8.27}, radius_deg)

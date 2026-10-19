@@ -32,10 +32,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
 
-from .client import FiretraceClient
-from .contracts import validate_against_spec
+from .client import ApiProblem, FiretraceClient
+from .contracts import UNSAFE_ON_WIRE, validate_against_spec
 from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
-from .tiers import ORCHESTRATOR_ONLY, can_execute, explain_denial
+from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 
 
 @dataclass
@@ -57,6 +57,7 @@ class CycleResult:
     plan_a: dict[str, Any] | None = None
     plan_b: dict[str, Any] | None = None
     published: dict[str, str] = field(default_factory=dict)  # variant → plan id
+    validation: dict[str, dict[str, Any]] = field(default_factory=dict)  # variant → backend `PlanValidation`
 
     def reasons_log(self) -> list[str]:
         """The reasons every firefighter gave, in reporting order."""
@@ -95,20 +96,24 @@ class OrchestratorAgent:
     def agents(self) -> list[Any]:
         return self._registry.all()
 
-    def pull_fleet(self) -> int:
-        """(Re)build the team from what the coordination API reports as available."""
+    def pull_fleet(self, *, exclude_tiers: Iterable[FirefighterTier] = ()) -> int:
+        """(Re)build the team from what the coordination API reports as available.
+
+        ``exclude_tiers`` leaves whole tiers out (what-if "without helicopters / trucks / squads").
+        """
+        excluded = frozenset(exclude_tiers)
         self._registry = AgentRegistry()
         for vehicle in self.client.list_vehicles(status="available"):
             agent_id = str(vehicle.get("id") or vehicle.get("callsign") or "").strip()
             if not agent_id:
                 continue
             agent = FirefighterAgent.from_vehicle(vehicle, agent_id=agent_id)
-            if agent is None:
+            if agent is None or agent.tier in excluded:
                 continue  # ambulance, command vehicle, patrol car… — not a combat firefighter unit
             self._registry.register(agent)
         for pool in self.client.list_personnel_pools():
             agent = FirefighterAgent.from_personnel_pool(pool, agent_id=str(pool.get("id") or ""))
-            if agent is None or not agent.agent_id:
+            if agent is None or not agent.agent_id or agent.tier in excluded:
                 continue
             self._registry.register(agent)
         return len(self._registry)
@@ -122,13 +127,20 @@ class OrchestratorAgent:
         location_id: str = "guimaraes-concelho",
         title_prefix: str = "Plano de resposta",
         publish: bool = True,
+        at_minute: int | None = None,
     ) -> CycleResult:
-        """Situation → decisions → validation → plans A and B (→ ``POST /plans``)."""
+        """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
+
+        ``at_minute`` is the decision instant (minutes since ignition). Without it the situation is the
+        end of the run, which is rarely what a commander decides on.
+        """
         situation = situation_from_simulation(
             simulation_id,
-            threatened=self.client.get_threatened(simulation_id, horizon_minutes=horizon_minutes),
+            threatened=self.client.get_threatened(simulation_id, horizon_minutes=horizon_minutes, t_min=at_minute),
             summary=self.client.get_summary(simulation_id),
             horizon_minutes=horizon_minutes,
+            at_minute=at_minute,
+            rules=self._load_rules(),
         )
         if not self.agents:
             self.pull_fleet()
@@ -145,11 +157,40 @@ class OrchestratorAgent:
         plan_b = self._compose_plan(guarded, result, situation, variant="B", location_id=location_id, title_prefix=title_prefix)
         result.plan_a, result.plan_b = plan_a, plan_b
 
+        self._validate_plans(result)
         if publish:
             for variant, plan in (("A", plan_a), ("B", plan_b)):
+                if result.validation.get(variant, {}).get("valid") is False:
+                    result.issues.append(AgentIssue("orchestrator", plan["title"], "not published: the backend validation reports errors (see the issues above)."))
+                    continue
                 published = self.client.create_plan(plan)
                 result.published[variant] = published.get("id", "")
         return result
+
+    def _load_rules(self) -> dict[str, Any] | None:
+        """The backend's own numbers (`GET /rules`); a server without them leaves the agents on their defaults."""
+        try:
+            return self.client.get_rules()
+        except ApiProblem:
+            return None
+
+    def _validate_plans(self, result: CycleResult) -> None:
+        """`POST /plans/validate` each plan before publishing; every issue keeps the backend's stable ``code``."""
+        for variant, plan in (("A", result.plan_a), ("B", result.plan_b)):
+            try:
+                validation = self.client.validate_plan(plan)
+            except ApiProblem as error:  # e.g. a server without the validator: report, do not block
+                result.issues.append(AgentIssue("orchestrator", plan["title"], f"validation unavailable [{error.code}]: {error}"))
+                continue
+            result.validation[variant] = validation
+            for issue in validation.get("issues", []):
+                result.issues.append(
+                    AgentIssue(
+                        agent_id=issue.get("actionId") or issue.get("resourceId") or "plan",
+                        proposal_title=f"plan {variant}",
+                        problem=f"{issue.get('severity')} {issue.get('code')}: {issue.get('message')}",
+                    )
+                )
 
     def simulate_plan(self, plan_id: str, *, baseline_simulation_id: str | None = None) -> dict[str, Any]:
         """Ask the contract's what-if: ``POST /plans/{id}/simulate`` and await outcome."""
@@ -190,6 +231,12 @@ class OrchestratorAgent:
 
     def _proposal_issue(self, message: DecisionMessage, proposal: ActionProposal) -> AgentIssue | None:
         kind = proposal.intervention.get("type")
+        if kind in UNSAFE_ON_WIRE:
+            return AgentIssue(
+                agent_id=message.agent_id,
+                proposal_title=proposal.title,
+                problem=f"dropped: {kind!r} is listed by the spec but the live backend rejects its payload (spec and backend disagree).",
+            )
         if kind in ORCHESTRATOR_ONLY:
             return AgentIssue(
                 agent_id=message.agent_id,
@@ -263,6 +310,10 @@ class OrchestratorAgent:
     ) -> dict[str, Any]:
         ordered = _sequenced(proposals_by_agent, life_first=(variant == "A"))
         life_first = variant == "A"
+        by_id = {proposal.proposal_id: proposal for _message, proposal in ordered}
+        parallel: set[int] = set()  # plan B: proposals that no longer wait for a life action
+        if not life_first:
+            ordered, parallel = _area_first(ordered)
         actions: list[dict[str, Any]] = []
         strategy = (
             "Evacuar imediatamente quem está no caminho e atacar o fogo em sequência."
@@ -291,13 +342,18 @@ class OrchestratorAgent:
             )
             if proposal.resources:
                 action["resources"] = proposal.resources
-            if proposal.depends_on:
+            waits = id(proposal) not in parallel
+            if proposal.depends_on and waits:
                 action["dependsOn"] = list(proposal.depends_on)
-            if proposal.trigger:
+            if proposal.trigger and waits:
                 action["trigger"] = proposal.trigger
             if proposal.safety_notes:
                 action["safetyNotes"] = proposal.safety_notes
             intervention = {k: v for k, v in proposal.intervention.items() if v is not None}
+            if life_first and proposal.trigger and proposal.trigger.get("kind") == "on_action_complete":
+                # The backend ignores `trigger`/`dependsOn` when it simulates a plan: it only reads each effect's own
+                # `start`. So "attack after the evacuation" has to be written into the effect's start time too.
+                intervention["start"] = {"offsetMinutes": _follow_up_delay(by_id.get(proposal.trigger.get("actionId")))}
             action["simulationEffects"] = [intervention]
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
             actions.append(action)
@@ -366,6 +422,41 @@ def _plus_minutes(instant: str, minutes: int) -> str:
     except ValueError:
         then = datetime.now(UTC)
     return (then + timedelta(minutes=minutes)).isoformat()
+
+
+FOLLOW_UP_DELAY_MIN = 15
+"""Minutes a follow-up waits when the action it depends on has no ``completeBy`` of its own (a building defence)."""
+
+
+def _follow_up_delay(life_action: ActionProposal | None) -> int:
+    """When plan A's combat starts: the evacuation's ``completeBy``, else a fixed delay."""
+    complete_by = ((life_action.intervention.get("completeBy") or {}).get("offsetMinutes")) if life_action else None
+    return int(complete_by) if complete_by else FOLLOW_UP_DELAY_MIN
+
+
+def _area_first(
+    ordered: list[tuple[DecisionMessage, ActionProposal]],
+) -> tuple[list[tuple[DecisionMessage, ActionProposal]], set[int]]:
+    """Plan B ("burned area first"): attack from minute 0 instead of after the life action.
+
+    One unit does one thing at a time (the backend warns ``resource_conflict`` for a unit in two simultaneous
+    actions), so a truck that plan A would have sent to evacuate/defend first only fights here, and a squad only
+    evacuates. Returns the kept proposals and the ids of those that no longer wait for anything.
+    """
+    followers: dict[str, list[ActionProposal]] = {}
+    for _message, proposal in ordered:
+        if proposal.trigger and proposal.trigger.get("kind") == "on_action_complete":
+            followers.setdefault(proposal.trigger.get("actionId"), []).append(proposal)
+    dropped: set[int] = set()
+    parallel: set[int] = set()
+    for message, proposal in ordered:
+        for follower in followers.get(proposal.proposal_id, []):
+            if message.tier is FirefighterTier.TRUCK:
+                dropped.add(id(proposal))
+                parallel.add(id(follower))
+            else:
+                dropped.add(id(follower))
+    return [(message, proposal) for message, proposal in ordered if id(proposal) not in dropped], parallel
 
 
 def _sequenced(

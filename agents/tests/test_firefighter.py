@@ -43,8 +43,18 @@ def make_observation(tier: FirefighterTier, agent_id: str) -> Observation:
         crew_onboard={"squad": 8, "truck": 6, "helicopter": 4}[tier.value],
         water_capacity_l={FirefighterTier.TRUCK: 2500, FirefighterTier.HELICOPTER: 3000, FirefighterTier.SQUAD: 0.0}[tier],
         passenger_capacity=8 if tier is FirefighterTier.TRUCK else 0,
-        capabilities=frozenset({"wildfire_attack"} if tier is not FirefighterTier.HELICOPTER else {"aerial_water_drop"}),
+        capabilities={
+            # the test truck can evacuate (the backend only lets vehicles with these capabilities take `evacuation`)
+            FirefighterTier.TRUCK: frozenset({"wildfire_attack", "structure_protection", "evacuation_transport"}),
+            FirefighterTier.SQUAD: frozenset({"wildfire_attack"}),
+            FirefighterTier.HELICOPTER: frozenset({"aerial_water_drop"}),
+        }[tier],
     )
+
+
+def make_truck_without_evacuation(capabilities: frozenset[str]) -> FirefighterAgent:
+    observation = make_observation(FirefighterTier.TRUCK, "veh-vt-02")
+    return FirefighterAgent(Observation(**{**observation.__dict__, "agent_id": "veh-vt-02", "vehicle_id": "veh-vt-02", "capabilities": capabilities}))
 
 
 def situation(threatened, summary) -> "Situation":  # noqa: F821
@@ -110,6 +120,32 @@ class TestLifeFirst:
             "responsibility": "evacuation",
         }
 
+    def test_truck_without_evacuation_capability_defends_the_buildings_instead(self):
+        # backend: `responsibility_not_supported` when a vehicle takes `evacuation` without transport/traffic/perimeter capability
+        truck = make_truck_without_evacuation(frozenset({"wildfire_attack", "structure_protection"}))
+        message = truck.decide(situation(THREATENED_TOWN, SUMMARY_RAGING))
+        assert message.objective == "protect_life"
+        protection, follow = message.proposals[0], message.proposals[1]
+        assert protection.action_type == "structure_protection"
+        assert protection.intervention["type"] == "structure_protection"
+        assert protection.resources[0]["responsibility"] == "structure_protection"
+        assert protection.extra_action_fields["targets"][0]["placeId"]
+        assert follow.depends_on == [protection.proposal_id]
+        assert all(resource["responsibility"] != "evacuation" for p in message.proposals for resource in p.resources)
+
+    def test_truck_with_neither_capability_only_fights(self):
+        truck = make_truck_without_evacuation(frozenset({"wildfire_attack"}))
+        message = truck.decide(situation(THREATENED_TOWN, SUMMARY_RAGING))
+        assert [p.action_type for p in message.proposals] == ["fire_attack"]
+
+    def test_fire_attacks_carry_escape_routes_and_safety_zones(self, agent):
+        # backend: `missing_safety` warning otherwise
+        message = agent.decide(situation(THREATENED_ISOLATED, SUMMARY_MEDIUM))
+        for proposal in message.proposals:
+            if proposal.action_type == "fire_attack":
+                assert proposal.extra_action_fields["escapeRoutes"] and proposal.extra_action_fields["safetyZones"]
+                assert proposal.extra_action_fields["lookouts"]
+
     def test_helicopter_cannot_evacuate_and_slows_the_fire_instead(self):
         heli = FirefighterAgent(make_observation(FirefighterTier.HELICOPTER, "veh-heli-01"))
         message = heli.decide(situation(THREATENED_TOWN, SUMMARY_RAGING))
@@ -134,7 +170,8 @@ class TestMinimizeBurnedArea:
         [
             (FirefighterTier.HELICOPTER, "aerial_drop"),
             (FirefighterTier.TRUCK, "crew_deployment"),
-            (FirefighterTier.SQUAD, "fuel_removal"),
+            # fuel_removal is the squad's tame-fire tool, but the live backend rejects its payload (UNSAFE_ON_WIRE)
+            (FirefighterTier.SQUAD, "fire_line"),
         ],
         ids=["helicopter", "truck", "squad"],
     )

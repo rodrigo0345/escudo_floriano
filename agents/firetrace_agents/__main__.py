@@ -41,9 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         prog="firetrace_agents",
         description="Run one orchestrator planning cycle against a FireTrace API.",
     )
-    parser.add_argument("--base-url", default=None, help="API root (default: $FIRETRACE_BASE_URL or http://localhost:8080)")
+    parser.add_argument("--base-url", default=None, help="API root, including /api/v1 (default: $FIRETRACE_BASE_URL or http://localhost:8080/api/v1)")
     parser.add_argument("--simulation-id", default="sim-penanet", help="simulation to base the plans on")
     parser.add_argument("--horizon", type=int, default=60, help="decision horizon, minutes (default 60)")
+    parser.add_argument("--at-minute", type=int, default=None, help="decision instant, minutes since ignition (default: end of the run)")
     parser.add_argument("--location-id", default="guimaraes-concelho", help="plan location id")
     parser.add_argument("--no-publish", action="store_true", help="compose plans but do not POST /plans")
     parser.add_argument("--simulate", action="store_true", help="after publishing plan A, run POST /plans/{id}/simulate")
@@ -74,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             horizon_minutes=args.horizon,
             location_id=args.location_id,
             publish=not args.no_publish,
+            at_minute=args.at_minute,
         )
     except Exception as error:  # noqa: BLE001 — the CLI reports and exits non-zero
         print(f"\nerror: {type(error).__name__}: {error}", file=sys.stderr)
