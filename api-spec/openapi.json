@@ -9885,6 +9885,49 @@
           }
         ]
       },
+      "InterventionFuelRemoval": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/InterventionBase"
+          },
+          {
+            "type": "object",
+            "description": "Remoção de combustível: retira vegetação num polígono à frente do fogo (descapamento, limpeza de mato, pastagem controlada). Ao contrário de uma largada aérea, o efeito é permanente: com `effectiveness` completo, o fogo não propaga através da área tratada.",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "fuel_removal"
+              },
+              "geometry": {
+                "$ref": "#/components/schemas/Polygon"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "hand_tool",
+                  "machine",
+                  "grazing"
+                ]
+              },
+              "constructionMinutes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "effectiveness": {
+                "type": "number",
+                "description": "Fração da propagação que a área tratada bloqueia (0–1), aplicada a partir de `constructionMinutes`.",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "type",
+              "geometry",
+              "effectiveness"
+            ]
+          }
+        ]
+      },
       "InterventionCrewDeployment": {
         "allOf": [
           {
@@ -10019,6 +10062,9 @@
             "$ref": "#/components/schemas/InterventionBackfire"
           },
           {
+            "$ref": "#/components/schemas/InterventionFuelRemoval"
+          },
+          {
             "$ref": "#/components/schemas/InterventionCrewDeployment"
           },
           {
@@ -10036,6 +10082,7 @@
             "fire_line": "#/components/schemas/InterventionFireLine",
             "aerial_drop": "#/components/schemas/InterventionAerialDrop",
             "backfire": "#/components/schemas/InterventionBackfire",
+            "fuel_removal": "#/components/schemas/InterventionFuelRemoval",
             "crew_deployment": "#/components/schemas/InterventionCrewDeployment",
             "structure_protection": "#/components/schemas/InterventionStructureProtection",
             "evacuation": "#/components/schemas/InterventionEvacuation"
