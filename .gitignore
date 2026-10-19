@@ -110,6 +110,8 @@ env/
 # ==============================================================================
 # Runtime jobs, caches, and downloaded satellite/ortho imagery
 /data/cache/
+/data/engine-cache/
+/data/runs/
 /data/imagery/
 /data/jobs/*
 !/data/jobs/.gitkeep

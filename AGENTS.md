@@ -8,7 +8,8 @@ This file is the shared background for *any* coding agent working in this repo �
 backend/    the API implementation (FireTrace Coordination API)
 frontend/   the operator UI
 agents/     AI planning agents: read simulation results, propose response plans
-api-spec/   openapi.json — the contract. The one thing all three above must agree with.
+engine/     the fire spread & ensemble simulation worker (see docker-compose.yaml)
+api-spec/   openapi.json — the contract. The one thing all of the above must agree with.
 ```
 
 None of `backend/`, `frontend/`, or `agents/` get to define the contract by what they happen to implement. `api-spec/openapi.json` defines it; the three folders are all, equally, clients of that definition. The spec's own `info.description` says this explicitly: it is "a fonte de verdade" (the source of truth) — any contract change goes through that file, in a pull request, *before* it's implemented anywhere.
@@ -77,6 +78,32 @@ These come straight from the spec's own `info.description` — read them once so
 - **Errors are `application/problem+json`** (RFC 9457): a stable, machine-readable `code` (e.g. `validation_failed`, `resource_conflict`, `unsupported_capability`, `version_conflict`) plus `errors[]` for field-level detail. Branch your error handling on `code`, never on the human-readable `message`.
 - **Long operations are async by default**: creating a simulation returns `202` with the resource in `queued` state; poll `GET /simulations/{id}` for progress. If you'd rather block, send `Prefer: wait=<seconds>` — if the server finishes within that window it responds `201` with the full result instead of making you poll.
 - **Unknown fields are not errors**: adding an optional field is not a breaking change, and clients must ignore fields they don't recognize. This is what lets backend/frontend/agents evolve independently without constant version bumps — don't write a client that fails on an unexpected field.
+
+## Team verticals, execution rules & output format (`CLAUDE.md` & `PROTOCOL.md`)
+
+> **Sprint Context (Hack4Guimarães 2035 — submission: 23 Oct 2026, 16:30 UTC):** Each [`CLAUDE.md`](CLAUDE.md) imports its sibling `AGENTS.md` via `@AGENTS.md` so both Claude Code and other agents (Cursor, Codex, Copilot) share a single source of truth. Vertical-specific technical rules live inside each vertical folder, and [`PROTOCOL.md`](PROTOCOL.md) holds the cross-vertical communication & handover templates.
+
+| Vertical | Path | Vertical Rules |
+|---|---|---|---|
+| **Simulador** | `engine/` (Python + ELMFIRE worker) | [`engine/AGENTS.md`](engine/AGENTS.md) |
+| **Backend** | `backend/` (.NET 10 API + Native/ELMFIRE bridge) | [`backend/AGENTS.md`](backend/AGENTS.md) |
+| **Frontend** | `frontend/` (React + TypeScript + Three.js 3D) | [`frontend/AGENTS.md`](frontend/AGENTS.md) |
+| **Agentes** | `agents/` (Multi-Agent System — MAS) | [`agents/AGENTS.md`](agents/AGENTS.md) |
+| **REST Contract** | `api-spec/openapi.json` (67 paths, 252 schemas) | See [`PROTOCOL.md`](PROTOCOL.md) §1 |
+
+1. **Stay in your vertical (Scope Isolation):** When working in one vertical, treat all other verticals and `api-spec/openapi.json` as **read-only unless explicitly authorized by the teammate running the session**. Read your vertical's `AGENTS.md` / `CLAUDE.md` before editing code in that folder. Optimize for shipping velocity, not academic bureaucracy or unrequested unit-test suites (in `backend/`, always run `dotnet test` to verify architecture and contract tests pass).
+2. **Decision Policy — Interactive Question Feature vs. "Decide & Flag":**
+   - **Major or ambiguous decisions → Use your tool's ask-the-user feature (`AskUserQuestion` / `ask_question` / `/question`) ONLY when truly necessary:** If you hit a genuine product, UX, or architectural fork with multiple valid solutions—or need permission to touch another vertical or `api-spec/openapi.json`—ask the user with concise options (listing `(Recommended)` first).
+   - **Minor or routine details → "Decide & Flag" (do not interrupt):** For low-stakes implementation choices (helper structure, naming, minor defaults), keep moving, make the best call, and flag: *"Decision taken on your behalf: [X] because [Y] — tell me if you want this changed."*
+   - **Always stop and ask before destructive commands:** Never run `git push`, `git reset --hard`, or `docker compose down -v` without explicit permission.
+3. **Mandatory 3-Section Output Format (keep output compact, no walls of text):** Skip step-by-step narration of file reads and end every substantive task response with these **three scannable sections** (without omitting critical technical details):
+   1. **`### 1. Changes & Status`** — What was built/fixed, exact files touched (`file:line`), and whether it was verified live or is **`untested`**.
+   2. **`### 2. Decisions & Open Items`** — Any *"Decision taken on your behalf: …"*, any **`UNWIRED`** code with no live caller yet, or cross-vertical blockers.
+   3. **`### 3. Next Step`** — The single immediate next action on the critical path.
+4. **Universal engineering guardrails:**
+   - **Query `openapi.json` by path/schema name & fix the class, not the instance:** Never trust line numbers or memory in `api-spec/openapi.json` (16k+ lines). When you fix a contract, coordinate (`[lon, lat]` vs `{lat, lon}`), or unit bug in one file, grep your vertical and fix every occurrence of that pattern in the same edit.
+   - **Wire the caller (`UNWIRED`) & state honestly if `untested`:** Do not mark a feature complete if nothing in the real execution flow calls it yet—either wire it to its caller or flag it as **`UNWIRED`** under Section 2. Do not write unrequested unit tests—simply state honestly under Section 1 whether your change was verified live or is **`untested`**.
+   - **Never edit existing files via shell redirection:** Do not use `>`, `>>`, `cat << EOF`, `sed -i`, `tee -a`, or `Out-File` on existing files. Always use structured file edit/write tools so a typo never truncates `api-spec/openapi.json` or source files.
 
 ## When this file isn't enough
 

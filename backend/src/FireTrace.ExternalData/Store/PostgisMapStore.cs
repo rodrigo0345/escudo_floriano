@@ -16,6 +16,7 @@ public sealed class PostgisMapStore : IMapReader, IMapWriter
 
     public LocationCatalog Locations { get; }
     public string DataDir { get; }
+    public bool FileExists(string path) => File.Exists(path);
 
     // ============================================================================================ locais e grelhas
     public async Task UpsertLocationAsync(LocationDefinition d, CancellationToken ct = default)

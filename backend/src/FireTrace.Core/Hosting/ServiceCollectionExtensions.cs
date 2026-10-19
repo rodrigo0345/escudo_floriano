@@ -86,6 +86,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PlanValidator>().AddSingleton<ResponsibilityRules>().AddSingleton<TargetResolver>().AddSingleton<DispatchService>().AddSingleton<PlanService>();
         services.AddSingleton<IResourceDispatcher, VehicleDispatcher>().AddSingleton<IResourceDispatcher, PersonnelDispatcher>().AddSingleton<IInterventionProvider, PlanInterventions>();
         services.AddSingleton<OwnerFilter>().AddSingleton<VehicleFilter>().AddSingleton<VehicleStateService>().AddSingleton<ResourceOverview>().AddSingleton<RoutingService>();
-        return services.AddSingleton<ScenarioSeeder>().AddSingleton<RoadCutsCache>().AddSingleton<SimulationQueue>().AddSingleton<SimulationService>().AddSingleton<FireResults>();
+        return services.AddSingleton<ScenarioSeeder>().AddSingleton<ResourceSeeder>().AddSingleton<RoadCutsCache>().AddSingleton<SimulationQueue>().AddSingleton<SimulationService>().AddSingleton<FireResults>();
     }
 }
