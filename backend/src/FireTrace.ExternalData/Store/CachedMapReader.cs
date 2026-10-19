@@ -18,6 +18,7 @@ public sealed class CachedMapReader : IMapReader
 
     public LocationCatalog Locations => _inner.Locations;
     public string DataDir => _inner.DataDir;
+    public bool FileExists(string path) => _inner.FileExists(path);
 
     async Task<T> Cached<T>(string kind, string loc, Func<Task<T>> load)
     {

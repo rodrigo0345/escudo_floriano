@@ -75,7 +75,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<IIngestStep, TerrainStep>().AddSingleton<IIngestStep, VegetationStep>().AddSingleton<IIngestStep, SatelliteStep>().AddSingleton<IIngestStep, OrthophotoStep>()
             .AddSingleton<IIngestStep, RoadsStep>().AddSingleton<IIngestStep, BuildingsStep>().AddSingleton<IIngestStep, PlacesStep>().AddSingleton<IIngestStep, WaterStep>()
-            .AddSingleton<IIngestStep, WaterwaysStep>().AddSingleton<IIngestStep, FirebreaksStep>();
+            .AddSingleton<IIngestStep, WaterwaysStep>().AddSingleton<IIngestStep, FirebreaksStep>().AddSingleton<IIngestStep, WeatherStep>();
         services.AddSingleton<IngestRunner>();
     }
 

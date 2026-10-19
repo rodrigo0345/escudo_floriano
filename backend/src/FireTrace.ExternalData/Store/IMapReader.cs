@@ -7,6 +7,7 @@ public interface IMapReader
 {
     LocationCatalog Locations { get; }
     string DataDir { get; }
+    bool FileExists(string path);
 
     Task<TerrainGrids> GetTerrainAsync(string locationId, CancellationToken ct = default);
     Task<RenderHeightmap?> GetRenderHeightmapAsync(string locationId, CancellationToken ct = default);

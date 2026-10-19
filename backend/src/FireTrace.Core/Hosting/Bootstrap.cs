@@ -3,6 +3,7 @@ using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Simulations;
 using FireTrace.Core.Repositories;
 using FireTrace.Core.Services.Fire;
+using FireTrace.Core.Services.Resources;
 using FireTrace.ExternalData.Ingest;
 using FireTrace.ExternalData.Map;
 using FireTrace.ExternalData.Store;
@@ -14,7 +15,7 @@ namespace FireTrace.Core.Hosting;
 /// garante que os locais têm os dados necessários (ingest automático), semeia os cenários e aquece as simulações.
 /// O servidor web já responde enquanto isto corre (documentação e saúde nunca esperam).
 /// </summary>
-public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, ScenarioSeeder seeder, SimulationService simulations, IDocumentStore<Simulation> sims, IMapReader map,
+public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, ScenarioSeeder seeder, ResourceSeeder resourceSeeder, SimulationService simulations, IDocumentStore<Simulation> sims, IMapReader map,
     IngestRunner ingest, ILogger<Bootstrap> log, DatabaseSettings database) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -27,6 +28,7 @@ public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, Scenari
                 await migrator.RunAsync(typeof(Bootstrap).Assembly, "api_schema_migrations", ct);
                 await seeder.SeedAsync(ct);
                 await EnsureLocationsIngestedAsync(ct);
+                await resourceSeeder.SeedAsync(ct);
                 readiness.Database = true; readiness.Error = null;
                 log.LogInformation("Base de dados pronta.");
                 _ = WarmUpAsync(ct); // em segundo plano: a API já responde: não se espera aqui por simulações que podem demorar dezenas de minutos
@@ -94,6 +96,7 @@ public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, Scenari
                     {
                         await ingest.RunAsync(loc, new HashSet<string>(), new HashSet<string>());
                         log.LogInformation("Ingest automático concluído para '{Location}'.", loc.Id);
+                        await resourceSeeder.SeedAsync(ct);
                     }
                     catch (Exception ex)
                     {

@@ -13,7 +13,7 @@ public sealed class OsmBuildingsSource(OverpassClient overpass, OverpassOptions 
         await overpass.ForEachBlockAsync(spec, options.Blocks.BuildingsM, async box =>
         {
             var bb = OverpassBbox.Of(box);
-            using var d = await overpass.QueryAsync($"{overpass.Prefix()}(way[\"building\"]{bb};relation[\"building\"]{bb};);out center;");
+            using var d = await overpass.QueryAsync($"{overpass.Prefix()}(node[\"building\"]{bb};way[\"building\"]{bb};relation[\"building\"]{bb};);out center;");
             counter.Add(OsmJson.Elements(d));
             return $"{counter.BuildingCount} edifícios";
         });
