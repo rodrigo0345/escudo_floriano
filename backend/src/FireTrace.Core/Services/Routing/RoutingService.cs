@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Errors;
 using FireTrace.Core.Domain.Resources;
@@ -12,18 +13,43 @@ using NetTopologySuite.Geometries;
 namespace FireTrace.Core.Services.Routing;
 
 /// <summary>Rotas e tempos de acesso que respeitam os cortes de estrada, o fogo previsto numa simulação e o tipo de viatura.</summary>
-public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> closures, IDocumentStore<Station> stations, IDocumentStore<Organization> organizations, IFireRunRepository runs, RoadCutsCache cutsCache, RoadSpeeds speeds, RoutingSettings routing, TimeProvider clock)
+public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> closures, IDocumentStore<Station> stations, IDocumentStore<Organization> organizations, IFireRunRepository runs, RoadCutsCache cutsCache, RoadSpeeds speeds, RoutingSettings routing, MapQueries queries, TimeProvider clock)
 {
     static readonly GeometryFactory Gf = NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(4326);
+    readonly ConditionalWeakTable<RoadNetwork, RoadGraph> _graphs = new();
 
-    public async Task<RoutePlan> RouteAsync(RouteRequest req, CancellationToken ct = default)
+    /// <summary>O grafo (com declives) é caro de construir e só depende da rede: constrói-se uma vez por rede.</summary>
+    async Task<RoadGraph> GraphAsync(RoadNetwork net, string locationId, CancellationToken ct)
+    {
+        if (_graphs.TryGetValue(net, out var cached)) return cached;
+        var built = RoadGraph.For(net).WithSlopes(RoadSlopes.Of(net, await map.GetTerrainAsync(locationId, ct)));
+        return _graphs.GetValue(net, _ => built);
+    }
+
+    public async Task<RoutePlan> RouteAsync(RouteRequest req, CancellationToken ct = default) => (await RouteWithAccessAsync(req, ct)).Plan;
+
+    /// <summary>
+    /// A rota por estrada e o troço a pé que sobra nas pontas. Uma viatura só anda na rede viária: se a origem ou o destino estão a mais de `MaxSnapM` da estrada mais próxima
+    /// não há rota (`no_road_access`); até esse limite a rota termina na estrada e a distância até ao ponto faz-se a pé (`WalkKmh`).
+    /// </summary>
+    public async Task<RouteAccess> RouteWithAccessAsync(RouteRequest req, CancellationToken ct = default)
     {
         var loc = map.Locations.Get(req.LocationId);
         var net = await map.GetRoadsAsync(req.LocationId, ct);
-        var graph = RoadGraph.For(net).WithSlopes(RoadSlopes.Of(net, await map.GetTerrainAsync(req.LocationId, ct)));
+        var graph = await GraphAsync(net, req.LocationId, ct);
         var from = req.From ?? (req.FromStationId is { } sid ? (await stations.GetAsync(sid, ct) ?? throw new NotFoundException($"Posto '{sid}'")).Position
             : throw new ValidationException("Indique `from` ou `fromStationId`.", "/from"));
         Anchor A(string k, LatLon p) { var (x, y) = net.Spec.ToCell(p.Lat, p.Lon); return new Anchor(k, x, y); }
+        var index = queries.IndexOf(net);
+        var fromAccess = index.Nearest(from.Lat, from.Lon, routing.MaxSnapM);
+        var toAccess = index.Nearest(req.To.Lat, req.To.Lon, routing.MaxSnapM);
+        if (fromAccess is null || toAccess is null)
+        {
+            var issues = new List<ValidationIssue>();
+            if (fromAccess is null) issues.Add(new("warning", "no_road_access", $"A origem está a mais de {routing.MaxSnapM:F0} m de qualquer estrada: uma viatura não chega lá.", "/from"));
+            if (toAccess is null) issues.Add(new("warning", "no_road_access", $"O destino está a mais de {routing.MaxSnapM:F0} m de qualquer estrada: uma viatura não chega lá.", "/to"));
+            return new RouteAccess(new RoutePlan(false, Warnings: issues), 0, 0);
+        }
         var avoid = req.Avoid ?? new AvoidOptions();
         var at = req.At;
         var closed = avoid.ActiveClosures ? await ClosedEdges(req.LocationId, at, req.EmergencyVehicle, ct) : new Dictionary<int, string>();
@@ -36,17 +62,17 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         for (int attempt = 0; attempt < routing.MaxReroutes; attempt++)
         {
             var path = graph.Route(A("from", from), A("to", req.To), profile, e => blocked.Contains(e) || closed.ContainsKey(net.Edges[e].Id));
-            if (path is null) return new RoutePlan(false, BlockedBy: reasons, Warnings: new List<ValidationIssue> { new("warning", "no_route", "Não há caminho entre os dois pontos com estas restrições.") });
+            if (path is null) return new RouteAccess(new RoutePlan(false, BlockedBy: reasons, Warnings: new List<ValidationIssue> { new("warning", "no_route", "Não há caminho entre os dois pontos com estas restrições.") }), 0, 0);
             var fresh = FireConflicts(net, graph, path, cuts, startMin, profile).Where(c => blocked.Add(c.Edge)).ToList();
             if (fresh.Count == 0)
             {
                 reasons.AddRange(closed.Where(c => path.EdgeIds.Contains(c.Key)).Select(c => new BlockedRoad(MapIds.Road(c.Key), "closure", c.Value)));
                 var geometry = Gf.CreateLineString(Enumerable.Range(0, path.Points.Length / 2).Select(i => { var (lat, lon) = net.Spec.ToLatLon(path.Points[2 * i], path.Points[2 * i + 1]); return new Coordinate(Math.Round(lon, 6), Math.Round(lat, 6)); }).ToArray());
-                return new RoutePlan(true, path.DistanceM, path.Minutes, geometry, path.EdgeIds.Select(MapIds.Road).ToList(), reasons, Warnings(loc, from, req.To, net));
+                return new RouteAccess(new RoutePlan(true, path.DistanceM, path.Minutes, geometry, path.EdgeIds.Select(MapIds.Road).ToList(), reasons, Warnings(loc, from, req.To, net)), Math.Round(fromAccess.Value.DistanceM), Math.Round(toAccess.Value.DistanceM));
             }
             reasons.AddRange(fresh.Select(c => new BlockedRoad(MapIds.Road(net.Edges[c.Edge].Id), "predicted_fire", AtMinute: c.AtMinute)));
         }
-        return new RoutePlan(false, BlockedBy: reasons, Warnings: new List<ValidationIssue> { new("warning", "no_safe_route", "Todos os caminhos passam por troços que o fogo previsto atinge.") });
+        return new RouteAccess(new RoutePlan(false, BlockedBy: reasons, Warnings: new List<ValidationIssue> { new("warning", "no_safe_route", "Todos os caminhos passam por troços que o fogo previsto atinge.") }), 0, 0);
     }
 
     /// <summary>Troços do percurso que o fogo previsto corta enquanto a viatura os atravessa.</summary>

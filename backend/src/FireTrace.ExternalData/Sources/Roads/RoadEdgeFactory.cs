@@ -16,6 +16,6 @@ public static class RoadEdgeFactory
         bool offRoad = hw == "track" && tracktype is not ("grade1" or "grade2");
         double? width = double.TryParse(OsmJson.Tag(way, "width"), NumberStyles.Float, CultureInfo.InvariantCulture, out var w) ? w : null;
         return new RoadEdge(id, OsmJson.Tag(way, "name") ?? OsmJson.Tag(way, "ref") ?? $"via ({hw})", OsmJson.Tag(way, "ref") ?? "", hw, a, b, flat,
-            RoadGeometry.CellsOf(flat, spec), length, offRoad, tracktype, width);
+            RoadGeometry.CellsOf(flat, spec), length, offRoad, tracktype, width, OsmMaxSpeed.Parse(OsmJson.Tag(way, "maxspeed")));
     }
 }

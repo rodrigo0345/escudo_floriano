@@ -22,7 +22,7 @@ namespace FireTrace.Core.Services.Operations;
 
 /// <summary>Verificações automáticas de um plano: referências a meios e organizações, dependências sem ciclos, conflitos de meios e segurança.</summary>
 public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> organizations, IDocumentStore<Vehicle> vehicles, IDocumentStore<PersonnelPool> pools,
-    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets)
+    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets, ArrivalEstimator arrival)
 {
     public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default)
     {
@@ -54,7 +54,7 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
             foreach (var org in (a.SupportingOrganizationIds ?? new()).Where(o => !knownOrgs.Contains(o))) Add("error", "unknown_organization", $"Organização '{org}' desconhecida.", $"{at}/supportingOrganizationIds", a.Id);
             foreach (var dep in (a.DependsOn ?? new()).Where(d => d == a.Id || !ids.Contains(d))) Add("error", "unknown_dependency", $"A ação depende de '{dep}', que não existe neste plano.", $"{at}/dependsOn", a.Id);
 
-            foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(r, $"{at}/resources/{j}", a, Add, ct);
+            foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, ct);
 
             switch (a)
             {
@@ -167,13 +167,14 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
         return result;
     }
 
-    async Task CheckResource(ResourceAssignment r, string at, PlanAction action, Action<string, string, string, string, string?, string?> add, CancellationToken ct)
+    async Task CheckResource(Plan plan, ResourceAssignment r, string at, PlanAction action, Action<string, string, string, string, string?, string?> add, CancellationToken ct)
     {
         switch (r.ResourceType)
         {
             case ResourceType.Vehicle when await vehicles.GetAsync(r.ResourceId, ct) is { } v:
                 if (r.Personnel is { } n && (n < (v.MinimumCrew ?? 1) || n > v.CrewCapacity)) add("warning", "crew_range", $"A viatura {v.Callsign} leva entre {v.MinimumCrew ?? 1} e {v.CrewCapacity} pessoas.", $"{at}/personnel", action.Id, v.Id);
                 if (r.Responsibility is { } resp && !rules.Supports(resp, v.Capabilities)) add("warning", "responsibility_not_supported", $"A viatura {v.Callsign} não tem capacidades para '{EnumText.ToSnake(resp)}'.", $"{at}/responsibility", action.Id, v.Id);
+                await CheckAccess(plan, v, r, at, action, add, ct);
                 break;
             case ResourceType.PersonnelPool when await pools.GetAsync(r.ResourceId, ct) is { } p:
                 if (r.Personnel > p.Total) add("warning", "not_enough_personnel", $"O grupo só tem {p.Total} pessoas.", $"{at}/personnel", action.Id, p.Id);
@@ -185,5 +186,17 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
                 add("error", "unknown_resource", $"Meio '{r.ResourceId}' ({EnumText.ToSnake(r.ResourceType)}) desconhecido.", $"{at}/resourceId", action.Id, r.ResourceId);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Uma viatura terrestre só chega por estrada: o alvo da ação tem de ter um caminho (cortes ativos, tipo de viatura, a pé até `MaxSnapM`) a partir do posto.
+    /// A rota que o plano traga é só informativa (o servidor usa a sua, ver <see cref="PlanRouter"/>): se não anda na rede viária avisa-se que foi substituída.
+    /// </summary>
+    async Task CheckAccess(Plan plan, Vehicle v, ResourceAssignment r, string at, PlanAction action, Action<string, string, string, string, string?, string?> add, CancellationToken ct)
+    {
+        if (ArrivalEstimator.IsAerial(v.Type)) return;
+        if (await arrival.ForActionAsync(plan, action, v, r, ct) is { Problem: { Severity: "error" } problem }) add("error", problem.Code, $"A viatura {v.Callsign}: {problem.Message}", $"{at}/resourceId", action.Id, v.Id);
+        if (r.Route is { } sent && await arrival.CheckRouteAsync(sent, plan.LocationId, $"{at}/route", ct) is { } offNetwork)
+            add("warning", "route_replaced", $"A viatura {v.Callsign}: {offNetwork.Message} O servidor usa a sua rota por estrada.", $"{at}/route", action.Id, v.Id);
     }
 }
