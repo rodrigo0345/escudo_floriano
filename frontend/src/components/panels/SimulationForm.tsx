@@ -646,6 +646,43 @@ export function SimulationForm() {
                             </label>
                           )}
 
+                          {(ev.type === 'rain' || ev.type === 'storm' || ev.type === 'clouds') && (
+                            <>
+                              <label>
+                                <span>
+                                  Construção Prévia: <b>{ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)} min</b>
+                                  <small style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted, #8e9bb0)', marginTop: '2px' }}>
+                                    nuvens começam a armar em T+{Math.max(0, ev.startMinute - (ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)))} min
+                                  </small>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={45}
+                                  step={5}
+                                  value={ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { buildupMinutes: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Dissipação Posterior: <b>{ev.dissipationMinutes ?? 20} min</b>
+                                  <small style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted, #8e9bb0)', marginTop: '2px' }}>
+                                    nuvens dissipam até T+{ev.endMinute + (ev.dissipationMinutes ?? 20)} min
+                                  </small>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={45}
+                                  step={5}
+                                  value={ev.dissipationMinutes ?? 20}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { dissipationMinutes: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
                           {ev.type === 'wind_shift' && (
                             <>
                               <label>

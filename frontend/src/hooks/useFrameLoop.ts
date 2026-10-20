@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import type { TimelineRangeEvent } from '@/domain/simulationForm';
 import { groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
 import { useEngine, useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
@@ -49,26 +50,58 @@ export function useFrameLoop(): void {
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
         const smokeVisM = groundVisibilityFromSmoke(s.smokeInfo);
 
-        // Check active custom weather events at minute `tf`
-        const activeEvents = s.customEvents.filter(
-          (ev) => ev.enabled && tf >= ev.startMinute && tf <= ev.endMinute,
-        );
-        const activeRain = activeEvents.find((e) => e.type === 'rain' || e.type === 'storm');
-        const activeClouds = activeEvents.find((e) => e.type === 'clouds');
-
         let effectivePrecipMmH = w?.precipitationMmH ?? 0;
-        if (activeRain) {
-          effectivePrecipMmH = Math.max(
-            effectivePrecipMmH,
-            activeRain.intensityMmH ?? (activeRain.type === 'storm' ? 15 : 6),
-          );
-        }
-
         let effectiveCloudCoverPct = w?.cloudCoverPct ?? 0;
-        if (activeRain) {
-          effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, 85);
-        } else if (activeClouds) {
-          effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, activeClouds.cloudCoverPct ?? 80);
+        let activeLocalEvent: TimelineRangeEvent | undefined;
+
+        // Continuous atmospheric event lifecycle:
+        // 1. Buildup phase BEFORE startMinute: [startMinute - buildupMinutes, startMinute] (clouds form & thicken, no rain)
+        // 2. Active phase: [startMinute, endMinute] (full clouds + full rain/storm)
+        // 3. Dissipation phase AFTER endMinute: [endMinute, endMinute + dissipationMinutes] (rain stops, clouds gradually dissipate)
+        for (const ev of s.customEvents) {
+          if (!ev.enabled) continue;
+
+          const tStart = ev.startMinute;
+          const tEnd = ev.endMinute;
+          const tBuildup = Math.max(1, ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
+          const tBuildStart = Math.max(0, tStart - tBuildup);
+          const tDissipate = Math.max(1, ev.dissipationMinutes ?? 20);
+          const tFinish = tEnd + tDissipate;
+
+          if (tf >= tBuildStart && tf <= tFinish) {
+            if (ev.scope === 'local' && ev.centerLat != null && ev.centerLon != null && !activeLocalEvent) {
+              activeLocalEvent = ev;
+            }
+
+            const targetPrecip = ev.type === 'storm' ? (ev.intensityMmH ?? 15) : ev.type === 'rain' ? (ev.intensityMmH ?? 6) : 0;
+            const targetCloud = ev.type === 'clouds' ? (ev.cloudCoverPct ?? 85) : (ev.type === 'storm' || ev.type === 'rain') ? 88 : 0;
+
+            let cloudFactor = 0;
+            let precipFactor = 0;
+
+            if (tf < tStart) {
+              // 1. Buildup phase BEFORE startMinute:
+              const u = (tf - tBuildStart) / (tStart - tBuildStart);
+              cloudFactor = u * u * (3 - 2 * u); // smoothstep curve
+              precipFactor = 0; // rain has not started yet
+            } else if (tf <= tEnd) {
+              // 2. Active event phase:
+              cloudFactor = 1.0;
+              precipFactor = 1.0;
+            } else {
+              // 3. Post-event dissipation phase AFTER endMinute:
+              const v = (tf - tEnd) / (tFinish - tEnd);
+              cloudFactor = 1.0 - (v * v * (3 - 2 * v)); // smoothstep dissipation
+              precipFactor = 0; // rain ceased at tEnd
+            }
+
+            if (targetPrecip > 0) {
+              effectivePrecipMmH = Math.max(effectivePrecipMmH, targetPrecip * precipFactor);
+            }
+            if (targetCloud > 0) {
+              effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, Math.round(targetCloud * cloudFactor));
+            }
+          }
         }
 
         const rainVisM = effectivePrecipMmH > 4 ? Math.max(1200, 5200 - effectivePrecipMmH * 320) : null;
@@ -84,14 +117,6 @@ export function useFrameLoop(): void {
         );
 
         world.terrain.setWetness(effectivePrecipMmH > 0 ? Math.min(1, effectivePrecipMmH / 8) : 0);
-
-        // Check if an active custom weather event at current minute `tf` has a localized spot & dimension (Point 2)
-        const activeLocalEvent = activeEvents.find(
-          (ev) =>
-            ev.scope === 'local' &&
-            ev.centerLat != null &&
-            ev.centerLon != null,
-        );
 
         let cloudSpot: { x: number; z: number; radiusUnits: number } | null = null;
         if (activeLocalEvent && activeLocalEvent.centerLat != null && activeLocalEvent.centerLon != null) {
