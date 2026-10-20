@@ -7,6 +7,7 @@ import styles from './layout.module.css';
 
 const TABS: { value: PanelTab; label: string }[] = [
   { value: 'incident', label: 'Incidente' },
+  { value: 'plans', label: 'Planos' },
   { value: 'roads', label: 'Estradas' },
   { value: 'assets', label: 'Meios' },
   { value: 'weather', label: 'Meteo' },

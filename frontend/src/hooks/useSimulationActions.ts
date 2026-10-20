@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { simulationsApi, type Simulation, type SimulationRequest } from '@/api';
+import { plansApi, simulationsApi, type Simulation, type SimulationRequest } from '@/api';
 import { Impact } from '@/domain/impact';
 import { formatDateTime, formatTime } from '@/domain/weather';
 import { useWorld } from '@/engine/EngineContext';
@@ -69,6 +69,27 @@ export function useSimulationActions() {
       });
       const first = simulation.scenarioSnapshot.ignitions[0].position;
       state.setRun(run);
+      // opened by id the picker must name *this* fire, not the first one: by scenario id, else by the snapshot's name, else "custom"
+      const ownScenario = simulation.scenarioId ?? data.scenarios.find((s) => s.name === simulation.scenarioSnapshot.name)?.id ?? 'custom';
+      if (simulation.kind !== 'what_if') {
+        state.setBaseSimulationId(run.id); // the plans panel lists plans made for this baseline
+        state.setScenario(ownScenario);
+      } else if (!useAppStore.getState().scenarioId) {
+        state.setScenario(ownScenario); // a plan's run opened directly; from the plans panel the picker already points at its fire
+      }
+      // draw the plan whose what-if this is; a baseline has none
+      if (simulation.kind === 'what_if' && simulation.planId) {
+        plansApi
+          .get(simulation.planId as string)
+          .then((plan) => {
+            const store = useAppStore.getState();
+            if (store.run?.id !== run.id) return; // another simulation was loaded meanwhile
+            store.setActivePlan(plan);
+            // a plan's run opened directly (`?sim=`): its baseline is named in the plan, so the plans panel can list its siblings
+            if (!store.baseSimulationId && plan.basis?.simulationId) store.setBaseSimulationId(plan.basis.simulationId as string);
+          })
+          .catch((e: Error) => console.warn('plano no mapa:', e.message));
+      } else state.setActivePlan(null);
       state.setIgnition({ lat: first.lat, lon: first.lon });
       world.fire.setIgnition(first.lat, first.lon, `Ignição ${formatDateTime(run.startMs)}`);
       if (!framedFirstRun) {
@@ -85,8 +106,12 @@ export function useSimulationActions() {
         .filter((m): m is Milestone => m !== null);
       world.fire.setMilestones(marks, [first.lat, first.lon]);
       await loadImpact(run.id);
-      state.setTime(Math.min(30, run.durationMinutes));
-      if (state.tab !== 'demo' && state.tab !== 'resources') state.setTab('incident');
+      // Flipping between the base and a plan from the plans panel keeps the minute on screen, so the two fires can be compared at the
+      // same moment; any other load starts at T+30 (back at T+30 a fire that had grown would seem to have vanished).
+      const tab = useAppStore.getState().tab;
+      const comparing = tab === 'plans' && state.run !== null;
+      state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
+      if (tab !== 'plans' && tab !== 'demo' && tab !== 'resources') state.setTab('incident'); // these tabs stay open while a run loads
     },
     [world, loadImpact],
   );
@@ -173,10 +198,24 @@ export function useSimulationActions() {
     [world, showSimulation, runSimulation],
   );
 
+  /** Shows any finished simulation by id: a baseline or a plan's what-if (`?sim=<id>`, or the plans panel). */
+  const showSimulationById = useCallback(
+    (simulationId: string) =>
+      showSimulation(async () => {
+        const simulation = await simulationsApi.get(simulationId);
+        if (simulation.status !== 'succeeded') {
+          // failed / cancelled / still running: say why instead of drawing nothing
+          throw new Error(simulation.error?.detail ?? simulation.error?.title ?? `A simulação ${simulationId} está ${simulation.status}.`);
+        }
+        return simulation;
+      }),
+    [showSimulation],
+  );
+
   const reloadImpact = useCallback(async () => {
     const run = useAppStore.getState().run;
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, runSimulation, showSimulation, cancelJob, reloadImpact };
+  return { selectScenario, showSimulationById, runSimulation, showSimulation, cancelJob, reloadImpact };
 }

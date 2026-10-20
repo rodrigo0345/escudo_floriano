@@ -45,6 +45,8 @@ export type WeatherKeyframe = Schemas['WeatherKeyframe'];
 export type WeatherResolveRequest = Schemas['WeatherResolveRequest'];
 export type WeatherResolveResponse = Schemas['WeatherResolveResponse'];
 
+export type PlanAction = Schemas['Action']; // (`Plan` and `PlanSummary` are declared with the other plan types below)
+
 export type SimulationRequest = Schemas['SimulationRequest'];
 export type Simulation = Schemas['Simulation'];
 export type SimulationStatus = Schemas['SimulationStatus'];

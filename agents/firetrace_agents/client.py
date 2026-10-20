@@ -130,6 +130,15 @@ class FiretraceClient:
             params=params,
         )
 
+    def get_vectors(self, simulation_id: str, *, t_min: int, window_minutes: int = 15) -> dict[str, Any]:
+        """``GET /simulations/{id}/vectors``: where the fire front is at ``t_min`` and how it is spreading
+        (a ``FeatureCollection`` of points with ``bearingDeg``, ``speedMmin``, ``intensityKwm``)."""
+        return self._request(
+            "GET",
+            self._fill("/simulations/{simulationId}/vectors", simulationId=simulation_id),
+            params={"tMin": t_min, "windowMin": window_minutes},
+        )
+
     def get_summary(self, simulation_id: str, *, step_minutes: int = 15) -> dict[str, Any]:
         return self._request(
             "GET",
@@ -154,6 +163,13 @@ class FiretraceClient:
             cursor = page.get("nextCursor")
         return items
 
+    def list_organizations(self, org_type: str | None = None) -> list[dict[str, Any]]:
+        """``GET /organizations`` (optionally of one ``type``, e.g. ``civil_protection``)."""
+        params: dict[str, Any] = {"limit": 200}
+        if org_type:
+            params["type"] = org_type
+        return list(self._request("GET", "/organizations", params=params).get("items", []))
+
     def list_personnel_pools(self) -> list[dict[str, Any]]:
         page = self._request("GET", "/personnel-pools")
         items: list[dict[str, Any]] = list(page.get("items", []))
@@ -173,6 +189,24 @@ class FiretraceClient:
             json_body={"geometry": geometry},
         )
 
+    def get_location(self, location_id: str) -> dict[str, Any]:
+        """``GET /locations/{id}``: bounds and the grid (size, cell size, north-west corner) every simulation of it uses."""
+        return self._request("GET", self._fill("/locations/{locationId}", locationId=location_id))
+
+    def list_buildings(self, location_id: str, *, limit: int = 20000) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/buildings``: one point per grid cell with its building count and estimated people."""
+        page = self._request("GET", self._fill("/locations/{locationId}/buildings", locationId=location_id), params={"limit": limit})
+        return list(page.get("features", []))
+
+    def get_ignition_grid(self, simulation_id: str) -> bytes:
+        """``GET /simulations/{id}/grids/ignition``: the raw int16 grid (minute the fire reaches each cell, -1 = never)."""
+        response = self._http.get(self._fill("/simulations/{simulationId}/grids/ignition", simulationId=simulation_id))
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            problem = response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]}
+            raise ApiProblem(response.status_code, problem)
+        return response.content
+
     # -- decisions -------------------------------------------------------------
     def create_plan(self, plan_input: dict[str, Any], *, prefer_wait: int | None = None) -> dict[str, Any]:
         """``POST /plans`` — publish a plan (variant ``A`` or ``B``), in ``proposed`` status."""
@@ -186,6 +220,30 @@ class FiretraceClient:
                 raise ApiProblem(response.status_code, response.json())
             raise ApiProblem(response.status_code, {"code": "http_error", "title": response.text[:400]})
         return response.json()
+
+    def run_scenario(self, scenario: dict[str, Any], *, label: str, wait_seconds: int = 120, timeout_seconds: float = 600.0) -> dict[str, Any]:
+        """``POST /simulations`` with an inline scenario (not stored as a scenario), waited for. Returns the terminal simulation:
+        a failed one is returned too (see :meth:`wait_for_simulation`), so callers branch on ``status``."""
+        if self._validate:
+            validate_against_spec("ScenarioInput", scenario)
+        response = self._http.post(
+            "/simulations",
+            json={"scenario": scenario, "label": label, "kind": "baseline"},
+            headers={"Prefer": f"wait={wait_seconds}"},
+        )
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            if "application/problem+json" in content_type:
+                raise ApiProblem(response.status_code, response.json())
+            raise ApiProblem(response.status_code, {"code": "http_error", "title": response.text[:400]})
+        simulation: dict[str, Any] = response.json()
+        if simulation.get("status") in {"queued", "running"}:
+            simulation = self.wait_for_simulation(simulation["id"], timeout_seconds=timeout_seconds)
+        return simulation
+
+    def get_perimeters(self, simulation_id: str, *, t_min: int) -> dict[str, Any]:
+        """``GET /simulations/{id}/perimeters?tMin=``: the fire's outline at ``t_min`` (a ``FeatureCollection``)."""
+        return self._request("GET", self._fill("/simulations/{simulationId}/perimeters", simulationId=simulation_id), params={"tMin": t_min})
 
     def validate_plan(self, plan_input: dict[str, Any]) -> dict[str, Any]:
         """``POST /plans/validate``: the backend's ``PlanValidation`` (``valid`` + ``issues[]`` with stable ``code``)."""
