@@ -2,12 +2,12 @@ import * as THREE from 'three';
 
 import type { CloudSpatialSpot } from './cloudLayer';
 
-const DROP_COUNT = 1800;
+const DROP_COUNT = 6000;
 // In FireTrace coordinates, 1 world unit = 10 meters.
-// BOUNDS_XZ = 240 units => 2400 m across camera viewport.
+// TERRITORY_BOUNDS = 2400 units => 24 km spanning the entire Guimarães concelho.
 // CLOUD_BASE_Y = 140 units => 1400m altitude, exactly matching the underside of the high cloud deck.
 // Rain strictly originates at or below CLOUD_BASE_Y and falls towards ground level (Y ~ 0).
-const BOUNDS_XZ = 240;
+const TERRITORY_BOUNDS = 2400;
 const CLOUD_BASE_Y = 140;
 const GROUND_Y = -6;
 const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
@@ -18,6 +18,7 @@ const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
  * - 1 world unit = 10 meters.
  * - Dynamically visible and modulated in opacity when precipitationMmH > 0.
  * - Originates strictly at the high cloud base (Y = 140), falling towards terrain.
+ * - World sky anchored: completely independent of camera movement (never follows camera view).
  */
 export class RainLayer {
   readonly group = new THREE.Group();
@@ -35,10 +36,10 @@ export class RainLayer {
     this.lengths = new Float32Array(DROP_COUNT);
 
     for (let i = 0; i < DROP_COUNT; i++) {
-      const x = (Math.random() - 0.5) * BOUNDS_XZ;
+      const x = (Math.random() - 0.5) * TERRITORY_BOUNDS;
       const y = GROUND_Y + Math.random() * RAIN_FALL_RANGE;
-      const z = (Math.random() - 0.5) * BOUNDS_XZ;
-      const streakLen = 2.4 + Math.random() * 2.6; // 24m to 50m world streak length
+      const z = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      const streakLen = 3.6 + Math.random() * 4.4; // 36m to 80m world streak length
       this.lengths[i] = streakLen;
 
       // Top of streak (initial vertical)
@@ -51,8 +52,8 @@ export class RainLayer {
       this.positions[i * 6 + 4] = y;
       this.positions[i * 6 + 5] = z;
 
-      // Fall speed: ~22 to 32 units/s (220 to 320 m/s visual fall rate for crisp streaks)
-      this.velocities[i] = 22 + Math.random() * 10;
+      // Fall speed: ~30 to 46 units/s (300 to 460 m/s visual fall rate for crisp streaks)
+      this.velocities[i] = 30 + Math.random() * 16;
     }
 
     this.geometry = new THREE.BufferGeometry();
@@ -76,7 +77,6 @@ export class RainLayer {
     precipRateMmH: number,
     windKmh: number,
     windFromDeg: number,
-    cameraTarget?: THREE.Vector3,
     spot?: CloudSpatialSpot | null,
   ): void {
     if (precipRateMmH <= 0.05) {
@@ -102,15 +102,17 @@ export class RainLayer {
 
     const driftRatio = Math.min(0.85, (Math.max(0, windKmh) / 45) * 0.6);
 
+    // World sky anchoring:
     // If localized spot is active, anchor rain strictly over that spot on the terrain.
-    // If global, center rain horizontally around camera focus area so the user sees rain wherever they look.
-    const effectiveRadius = spot ? Math.max(120, spot.radiusUnits) : BOUNDS_XZ / 2;
+    // If global (concelho-wide), anchor rain strictly at world origin (0, 0, 0) across TERRITORY_BOUNDS.
+    // NEVER follow camera or cameraTarget, so rain remains stationary in world space!
+    const effectiveRadius = spot ? Math.max(120, spot.radiusUnits) : TERRITORY_BOUNDS / 2;
     const spanXZ = effectiveRadius * 2;
 
     if (spot) {
       this.group.position.set(spot.x, 0, spot.z);
-    } else if (cameraTarget) {
-      this.group.position.set(cameraTarget.x, 0, cameraTarget.z);
+    } else {
+      this.group.position.set(0, 0, 0);
     }
 
     const pos = this.positions;
@@ -138,20 +140,14 @@ export class RainLayer {
       pos[idx + 1] = Math.min(CLOUD_BASE_Y, pos[idx + 4] + len);
       pos[idx + 2] = pos[idx + 5] - slantZ;
 
-      // Wrap boundaries horizontally
-      if (pos[idx + 3] > halfX) {
-        pos[idx + 3] -= spanXZ;
-        pos[idx] -= spanXZ;
-      } else if (pos[idx + 3] < -halfX) {
-        pos[idx + 3] += spanXZ;
-        pos[idx] += spanXZ;
-      }
-      if (pos[idx + 5] > halfX) {
-        pos[idx + 5] -= spanXZ;
-        pos[idx + 2] -= spanXZ;
-      } else if (pos[idx + 5] < -halfX) {
-        pos[idx + 5] += spanXZ;
-        pos[idx + 2] += spanXZ;
+      // Wrap boundaries horizontally within effectiveRadius
+      if (pos[idx + 3] > halfX || pos[idx + 3] < -halfX || pos[idx + 5] > halfX || pos[idx + 5] < -halfX) {
+        const rx = (Math.random() - 0.5) * spanXZ;
+        const rz = (Math.random() - 0.5) * spanXZ;
+        pos[idx + 3] = rx;
+        pos[idx] = rx - slantX;
+        pos[idx + 5] = rz;
+        pos[idx + 2] = rz - slantZ;
       }
 
       // Reset when below ground level - respawn strictly inside the underside of the clouds

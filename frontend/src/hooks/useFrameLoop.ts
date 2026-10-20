@@ -69,9 +69,6 @@ export function useFrameLoop(): void {
           effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, 85);
         } else if (activeClouds) {
           effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, activeClouds.cloudCoverPct ?? 80);
-        } else if (s.cloudsEnabled && effectiveCloudCoverPct < 40) {
-          // If the user explicitly checks "Nuvens 3D", provide atmospheric coverage
-          effectiveCloudCoverPct = 50;
         }
 
         const rainVisM = effectivePrecipMmH > 4 ? Math.max(1200, 5200 - effectivePrecipMmH * 320) : null;
@@ -113,7 +110,6 @@ export function useFrameLoop(): void {
           effectivePrecipMmH,
           w?.windKmh ?? 0,
           w?.windFromDeg ?? 0,
-          engine.controls.target,
           cloudSpot,
         );
 
