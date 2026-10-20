@@ -9,7 +9,6 @@ import {
   type DispatchInput,
   type DispatchStatus,
   type InterventionAerialDrop,
-  type LineString,
   type PlanInput,
   type Simulation,
 } from '@/api';
@@ -29,20 +28,12 @@ import { useResourcesStore } from '@/store/resourcesStore';
  */
 
 const POLL_MS = 1500;
-const MAX_ROUTE_POINTS = 150;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface PlanOptions {
   alarmMinute: number;
   respectAirLimits: boolean;
 }
-
-const lineOf = (pts: { lat: number; lon: number }[]): LineString | undefined => {
-  if (pts.length < 2) return undefined;
-  const stride = Math.max(1, Math.ceil(pts.length / MAX_ROUTE_POINTS));
-  const kept = pts.filter((_, i) => i % stride === 0 || i === pts.length - 1);
-  return { type: 'LineString', coordinates: kept.map((p) => [p.lon, p.lat]) };
-};
 
 const dispatchInput = (a: Assignment): DispatchInput => ({
   resourceType: 'vehicle',
@@ -166,7 +157,6 @@ export async function planOperation(opts: PlanOptions, show: (sim: Simulation) =
             responsibility: a.responsibility,
             fromStationId: a.unit.stationId ?? undefined,
             etaMinutes: etas.get(a.unit.id) ?? a.etaMin,
-            route: lineOf(a.route),
           },
         ],
         target: { label: a.target.label, position: { lat: a.target.lat, lon: a.target.lon } },

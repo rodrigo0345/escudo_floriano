@@ -14,7 +14,7 @@ using NetTopologySuite.Geometries;
 namespace FireTrace.Core.Services.Operations;
 
 /// <summary>Despachar meios com pessoas e uma responsabilidade: valida tudo antes de executar (atómico), mantém o estado dos meios em sincronia e permite reatribuir ou chamar de volta.</summary>
-public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerable<IResourceDispatcher> dispatcherList, RoutingService routing, TargetResolver targets, IMapReader map, TimeProvider clock, RoutingSettings routingSettings)
+public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerable<IResourceDispatcher> dispatcherList, ArrivalEstimator arrival, TargetResolver targets, TimeProvider clock)
 {
     readonly Dictionary<ResourceType, IResourceDispatcher> _dispatchers = dispatcherList.ToDictionary(d => d.Type);
 
@@ -43,7 +43,7 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
             {
                 OrganizationId = subject.OrganizationId, ResourceType = input.ResourceType, ResourceId = input.ResourceId, Personnel = input.Personnel, Responsibility = input.Responsibility,
                 Target = input.Target, FromStationId = input.FromStationId ?? subject.StationId, StartAt = input.StartAt ?? clock.GetUtcNow(), ExpectedDurationMinutes = input.ExpectedDurationMinutes,
-                Route = input.Route ?? route, Notes = input.Notes, Status = DispatchStatus.Ordered, EtaMinutes = eta, Position = subject.Position,
+                Route = route ?? input.Route, // a rota calculada pelo servidor (por estrada) prevalece sobre a do cliente Notes = input.Notes, Status = DispatchStatus.Ordered, EtaMinutes = eta, Position = subject.Position,
                 CrewOnboard = input.ResourceType == ResourceType.Vehicle ? input.Personnel : null, Source = origin.Source, PlanId = origin.PlanId,
                 ActionId = origin.ActionIds is { } ids && i < ids.Count ? ids[i] : null, Reason = batch.Reason,
             }, ct);
@@ -70,12 +70,15 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
 
             var (eta, route, problem) = await ArrivalAsync(subject, input, ct);
             if (problem is not null) Add(problem);
+            if (input.Route is { } sent && subject.Vehicle is { } vehicle && !ArrivalEstimator.IsAerial(vehicle.Type) && arrival.LocationOf(new LatLon(sent.Coordinates[^1].Y, sent.Coordinates[^1].X), subject.LocationId) is { } routeLocation
+                && await arrival.CheckRouteAsync(sent, routeLocation, "/route", ct) is { } offNetwork)
+                Add(offNetwork with { Severity = "warning", Code = "route_replaced", Message = offNetwork.Message + " O servidor usa a sua rota por estrada." }); // a rota guardada é sempre a calculada pelo servidor
             prepared.Add(new Prepared(input, dispatcher, subject, eta, route));
         }
         return (prepared, issues);
     }
 
-    /// <summary>Quanto demora a chegar ao alvo (por estrada, ou em linha reta se for um meio aéreo) e por onde.</summary>
+    /// <summary>Quanto demora a chegar ao alvo (por estrada e a pé nas pontas, ou em linha reta se for um meio aéreo) e por onde.</summary>
     async Task<(double? Eta, LineString? Route, ValidationIssue? Problem)> ArrivalAsync(DispatchSubject s, DispatchInput input, CancellationToken ct)
     {
         if (input.Target.IsEmpty) return (null, null, null);
@@ -83,17 +86,8 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
         if (to is null) return (null, null, new("error", "target_not_found", "Não foi possível localizar o alvo.", "/target"));
         if (s.Position is not { } from) return (null, null, new("warning", "unknown_position", "A posição de partida do meio não é conhecida; sem chegada estimada."));
 
-        if (s.Vehicle?.Type is VehicleType.Helicopter or VehicleType.Airtanker or VehicleType.Drone)
-        {
-            double kmh = s.Vehicle.CruiseSpeedKmh ?? s.Vehicle.Aerial?.CruiseSpeedKmh ?? routingSettings.AerialDefaultKmh;
-            return (Math.Round(RoadGeometry.DistanceM(from.Lat, from.Lon, to.Lat, to.Lon) / (kmh * 1000 / 60), 1), null, null);
-        }
-
-        var location = s.LocationId ?? map.Locations.All.FirstOrDefault(l => l.Spec.CellAt(to.Lat, to.Lon) >= 0)?.Id;
-        if (location is null) return (null, null, new("warning", "outside_locations", "O alvo está fora dos locais conhecidos; sem chegada estimada.", "/target"));
-        var v = s.Vehicle;
-        var route = await routing.RouteAsync(new RouteRequest(location, to, from, At: input.StartAt, Vehicle: new VehicleProfile(v?.Type, v?.HeightM, v?.WidthM, v?.WeightT, v?.OffRoad, v?.CruiseSpeedKmh, v?.MaxSlopePercent)), ct);
-        return route.Found ? (route.DurationMin, route.Geometry, null) : (null, null, new("error", "target_unreachable", "Não há caminho até ao alvo com os cortes e restrições atuais.", "/target"));
+        var a = await arrival.EstimateAsync(s.Vehicle, from, to, s.LocationId, input.StartAt, ct);
+        return (a.Minutes, a.Route, a.Problem);
     }
 
     // ===================================================================================================== alterar e chamar de volta
@@ -107,6 +101,9 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
             Status = patch.Status ?? current.Status, Notes = patch.Notes ?? current.Notes,
         };
         if (patch.Target is { IsEmpty: true }) throw new ValidationException("O alvo não pode ficar vazio.", "/target");
+        if (patch.Target is not null && await dispatcher.FindAsync(current.ResourceId, ct) is { } mover
+            && (await ArrivalAsync(mover, new DispatchInput(updated.ResourceType, updated.ResourceId, updated.Personnel, updated.Responsibility, updated.Target), ct)).Problem is { Severity: "error" } unreachable)
+            throw new ValidationException(new[] { unreachable }); // o novo alvo também tem de ser alcançável por estrada
 
         bool regroup = updated.Personnel != current.Personnel || updated.Responsibility != current.Responsibility;
         if (regroup)

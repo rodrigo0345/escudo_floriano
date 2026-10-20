@@ -22,13 +22,14 @@ namespace FireTrace.Core.Services.Operations;
 /// Também guarda a execução de cada ação por quem as cumpre.
 /// </summary>
 public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator, DispatchService dispatching, CrudService<Dispatch> dispatches, CrudService<RoadClosure> closures,
-    SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock)
+    PlanRouter router, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock)
 {
     // ===================================================================================================== criar e alterar
     public Task<PlanValidation> ValidateAsync(Plan input, CancellationToken ct = default) => validator.ValidateAsync(input, ct);
 
     public async Task<Plan> CreateAsync(Plan input, CancellationToken ct = default)
     {
+        input = await router.ApplyAsync(input, ct);
         var plan = input with
         {
             Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = await validator.ValidateAsync(input, ct),
@@ -48,6 +49,7 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
 
         // o que o servidor gere não se altera por PATCH
         var merged = MergePatch.Apply(plan, patch) with { Status = plan.Status, StatusHistory = plan.StatusHistory, Author = plan.Author, ActivatedAt = plan.ActivatedAt, CompletedAt = plan.CompletedAt };
+        merged = await router.ApplyAsync(merged, ct);
         merged = merged with { Validation = await validator.ValidateAsync(merged, ct) };
         if (merged.Validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(merged.Validation.Issues);
         if (closing is { } status) merged = await CloseAsync(merged, status, ct);

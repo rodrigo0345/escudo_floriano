@@ -28,22 +28,23 @@ export class FireLayer {
   constructor(private geo: Georef) {
     this.group.add(this.ignitionMarkers);
     const shape = new THREE.Shape();
-    shape.moveTo(0, -2.4);
-    shape.lineTo(0.75, -0.7);
-    shape.lineTo(0.22, -0.55);
-    shape.lineTo(0.22, 1.8);
-    shape.lineTo(-0.22, 1.8);
-    shape.lineTo(-0.22, -0.55);
-    shape.lineTo(-0.75, -0.7);
+    shape.moveTo(0, -3.0);
+    shape.lineTo(1.3, -0.6);
+    shape.lineTo(0.42, -0.5);
+    shape.lineTo(0.42, 2.2);
+    shape.lineTo(-0.42, 2.2);
+    shape.lineTo(-0.42, -0.5);
+    shape.lineTo(-1.3, -0.6);
     shape.closePath();
     this.arrowGeometry = new THREE.ShapeGeometry(shape);
-    this.arrowGeometry.rotateX(Math.PI / 2); // tip (y = -2.4) ends up at -z, i.e. pointing north
+    this.arrowGeometry.rotateX(Math.PI / 2); // tip (y = -3.0) ends up at -z, i.e. pointing north
     this.arrowMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       side: THREE.DoubleSide,
       depthTest: false,
+      depthWrite: false,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.92,
     });
   }
 
@@ -137,18 +138,18 @@ export class FireLayer {
       const props = feature.properties as { bearingDeg?: number; speedMmin?: number; intensityKwm?: number } | undefined;
       const bearingDeg = props?.bearingDeg ?? 0;
       const speedMmin = props?.speedMmin ?? 0;
-      const k = 2.4 * Math.min(Math.max(speedMmin / 30, 0.65), 1.6);
+      const k = 3.8 * Math.min(Math.max(speedMmin / 25, 0.75), 1.9);
       quaternion.setFromAxisAngle(up, (-bearingDeg * Math.PI) / 180);
-      position.set(...this.geo.world(lat, lon, 3.5));
+      position.set(...this.geo.world(lat, lon, 4.5));
       scale.set(k, 1, k);
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
       const intensity = props?.intensityKwm;
-      const color = intensity == null ? 0xffa040 : intensity <= 1700 ? 0xf5c542 : intensity <= 4000 ? 0xff8a1f : 0xe5484d;
+      const color = intensity == null ? 0xff9933 : intensity <= 1700 ? 0xffd000 : intensity <= 4000 ? 0xff7700 : 0xff3333;
       mesh.setColorAt(i, new THREE.Color(color));
     });
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.renderOrder = 9;
+    mesh.renderOrder = 15;
     this.arrows = mesh;
     this.group.add(mesh);
   }
