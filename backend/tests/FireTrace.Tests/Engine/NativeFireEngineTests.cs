@@ -14,8 +14,8 @@ namespace FireTrace.Tests.Engine;
 
 /// <summary>
 /// As mesmas verificações físicas de <see cref="FireBehaviourTests"/> (ELMFIRE), mas contra o motor nativo — sem contentor, sempre disponível.
-/// O motor nativo é deliberadamente menos fiel (Rothermel ligeiro + frente elíptica em vez da física completa); estes testes garantem que,
-/// apesar disso, continua a responder ao que o descreve: vento, vegetação, declive e barreiras (estradas, rios, faixas cortadas).
+/// O motor nativo usa a mesma física de superfície (Rothermel, Scott &amp; Burgan, Van Wagner) mas propaga a frente por tempo mínimo de viagem em vez
+/// de uma PDE; estes testes garantem que, apesar disso, continua a responder ao que o descreve: vento, vegetação, declive e barreiras.
 /// </summary>
 public class NativeFireEngineTests
 {

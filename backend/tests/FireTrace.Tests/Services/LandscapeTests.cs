@@ -33,7 +33,7 @@ public class LandscapeTests
     public void Vegetation_drives_fuel_and_canopy()
     {
         var eucalyptus = TestSettings.Landscape.Bands(Grid(cover: LandCover.Eucalipto));
-        Assert.Equal(145, Band(eucalyptus, 3, 5, 5)); // SH5
+        Assert.Equal(147, Band(eucalyptus, 3, 5, 5)); // SH7 (eucaliptal: mato alto e denso)
         Assert.True(Band(eucalyptus, 4, 5, 5) > 0);   // cobertura do copado
         var water = TestSettings.Landscape.Bands(Grid(cover: LandCover.Agua));
         Assert.Equal(98, Band(water, 3, 5, 5));       // NB8
@@ -49,7 +49,7 @@ public class LandscapeTests
         g.Buildings[8 * N + 8] = 2;  // casas dispersas
         var bands = TestSettings.Landscape.Bands(g);
         Assert.Equal(91, Band(bands, 3, 5, 5));
-        Assert.Equal(145, Band(bands, 3, 8, 8));
+        Assert.Equal(147, Band(bands, 3, 8, 8));
         var adj = TestSettings.FlatLandscape.Adjustment(g, Array.Empty<Firebreak>(), Array.Empty<Waterway>());
         Assert.True(adj[5 * N + 5] < adj[8 * N + 8] && adj[8 * N + 8] < adj[2 * N + 2]);
         Assert.Equal((float)(TestSettings.Fuels.Get(LandCover.Eucalipto).SpreadFactor * TestSettings.All.Landscape.SpreadCalibration), adj[2 * N + 2], 4);

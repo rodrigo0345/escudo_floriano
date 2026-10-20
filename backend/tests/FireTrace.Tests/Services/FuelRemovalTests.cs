@@ -50,7 +50,7 @@ public class FuelRemovalTests
     {
         var treated = TestSettings.Landscape.Treat(TestSettings.Landscape.Bands(Forest()), N * N, Cut(FuelRemoval.Trees).Treatments, Settings.FuelRemoval);
         Assert.Equal(0, Band(treated, 4, 20, 20)); Assert.Equal(0, Band(treated, 7, 20, 20));      // sem copado nem densidade: sem fogo de copas
-        Assert.Equal(145, Band(treated, 3, 20, 20));                                               // o mato fica
+        Assert.Equal(147, Band(treated, 3, 20, 20));                                               // o mato fica
         Assert.True(Band(treated, 4, 5, 5) > 0, "fora da faixa nada muda");
     }
 
@@ -62,7 +62,7 @@ public class FuelRemovalTests
         var all = TestSettings.Landscape.Treat(bands, N * N, Cut(FuelRemoval.All).Treatments, Settings.FuelRemoval);
         Assert.Equal(Settings.FuelRemoval.UnderstoryFuelModel, Band(understory, 3, 20, 20));
         Assert.Equal(Settings.FuelRemoval.NonBurnableFuelModel, Band(all, 3, 20, 20));
-        Assert.Equal(145, Band(bands, 3, 20, 20));            // as bandas partilhadas do local não foram alteradas
+        Assert.Equal(147, Band(bands, 3, 20, 20));            // as bandas partilhadas do local não foram alteradas
     }
 
     [Fact]
