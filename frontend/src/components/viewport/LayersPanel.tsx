@@ -132,9 +132,13 @@ function PlanBox() {
   if (!world || !plan) return null;
   const kinds = (Object.keys(PLAN_KINDS) as PlanKind[]).filter((k) => world.plan.counts[k]);
   if (!kinds.length) return null;
+  const total = kinds.reduce((sum, k) => sum + (world.plan.counts[k] ?? 0), 0);
   return (
-    <div className={styles.box}>
-      <b>Plano {plan.variant ?? ''} dos agentes</b>
+    <section className={styles.layerSection}>
+      <div className={styles.sectionHead}>
+        <b className={styles.sectionTitle}>Plano {plan.variant ?? ''} dos agentes</b>
+        <span className={styles.sectionMeta}>{total} elementos</span>
+      </div>
       {kinds.map((k) => (
         <label className={styles.waterKind} key={k}>
           <input
@@ -150,8 +154,8 @@ function PlanBox() {
           <small>{world.plan.counts[k]}</small>
         </label>
       ))}
-      <span className="mut">passe o rato sobre um elemento para ver a ação e a razão do agente</span>
-    </div>
+      <span className={styles.sectionNote}>passe o rato sobre um elemento para ver a ação e a razão do agente</span>
+    </section>
   );
 }
 

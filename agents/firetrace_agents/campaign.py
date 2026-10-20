@@ -124,12 +124,14 @@ class Campaign:
         life_horizon_minutes: int = 180,
         building_zones: tuple[int, ...] = (0,),
         building_weight_ha: float = 10.0,
+        travel: bool = True,
     ) -> None:
         if policy not in {"A", "B", "best"}:
             raise ValueError("policy must be 'A', 'B' or 'best'")
         self.capacity, self.concentrations, self.response = capacity, tuple(concentrations), response
         self.building_zones = tuple(building_zones)  # candidate numbers of house zones the engines defend (0 = none)
         self.building_weight_ha = building_weight_ha  # how many hectares of burned area one building is worth when choosing between candidates
+        self.travel = travel  # units take the time the backend's routing says to arrive (False: everyone on site at once, as the first campaigns assumed)
         self.life_horizon = life_horizon_minutes
         self.client, self.orchestrator, self.baseline = client, orchestrator, baseline
         self.snapshot = baseline["scenarioSnapshot"]
@@ -189,7 +191,7 @@ class Campaign:
                 result = self.orchestrator.run_cycle(
                     forecast["id"], horizon_minutes=self.horizon, at_minute=0, location_id=self.snapshot["locationId"], title_prefix=f"[campanha T+{t0}] Plano",
                     publish=False, stage_minutes=self.stage if self.capacity else None, concentration=(conc or None) if self.capacity else None,
-                    life_horizon_minutes=self.life_horizon, building_zones=zones,
+                    life_horizon_minutes=self.life_horizon, building_zones=zones, travel=self.travel,
                 )
                 if zones and not result.zones:
                     continue  # no houses to defend: the same plan as without zones
