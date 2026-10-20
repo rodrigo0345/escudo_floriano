@@ -3,13 +3,18 @@
 Serviço HTTP mínimo à volta do ELMFIRE. A API .NET escreve uma pasta de trabalho em /jobs/<id> e chama POST /run {"job": "<id>"}.
 
 Entrada (em /jobs/<id>):
-  meta.json        {"w","h","cell_m","tstop_s","dt_met_s","ign":[ix,iy],"members":["rep","m0",...]}
+  meta.json        {"w","h","cell_m","tstop_s","dt_met_s","ign":[ix,iy],"members":["rep","m0",...], opcional "foliar_pct"}
   landscape.i16    8 bandas (dem m, slp °, asp °, fbfm40, cc %, ch 10·m, cbh 10·m, cbd 100·kg/m³), Int16 LE, band-sequential, linha 0 = norte
   adj.f32          fator de ajuste da velocidade de propagação (1 = sem efeito; <1 = descontinuidade, ex.: estradas); adj_<m>.f32 = o de um membro
   wind_<m>.f32     opcional (meta "wind": cols, rows, cell_m): vento por bloco, ws (km/h) e wd (°) [2][intervalo][linha][coluna], em vez do uniforme
-  wx_<m>.csv       ws(km/h a 10 m),wd(° de onde sopra),m1,m10,m100 (%),lh,lw (%), uma linha por dt_met_s
+  wx_<m>.csv       ws(km/h a 10 m, já com a rajada média),wd(° de onde sopra),m1,m10,m100 (%),lh,lw (%), uma linha por dt_met_s
 
 Saída (em /jobs/<id>/<m>/): toa.i16 (minutos até a ignição, -1 = não ardeu), flin.u16 (kW/m), crown.u8 (0/1/2), log.txt
+
+Desempenho: o transporte de faíscas usa o modelo de acumulação EULERIANO. O modelo LAGRANGIANO do ELMFIRE faz, em cada passo,
+uma alocação e cópia integral de `SPOTTING_STATS` — 10 000 000 de elementos — dentro de `CLEAR_USED_EMBER`, o que domina o
+tempo de parede (~99.5% num caso de 280×280/3 h, independentemente do número de faíscas). O EULERIANO resolve a mesma física
+num campo de fluxo e dá o mesmo mapa de chegada (diferença < 0.1% na área ardida medida).
 """
 import glob
 import json
@@ -30,6 +35,12 @@ from rasterio.transform import from_origin
 JOBS = os.environ.get("JOBS_DIR", "/jobs")
 CRS = "EPSG:32629"  # georreferência nominal: o ELMFIRE só precisa de metros, a grelha local é cartesiana
 WORKERS = int(os.environ.get("WORKERS", os.cpu_count() or 2))
+# Tempo: `TARGET_CFL` é o passo de integração do level set (menor = mais passos, mais lento); 0.4 é o valor de referência
+# do ELMFIRE para máxima precisão. `SIMULATION_DT` é só o passo inicial (cresce até `SIMULATION_DTMAX`, que fica no valor do
+# ELMFIRE, 600 s). Os dois podem ser afinados por ambiente sem mexer no código.
+TARGET_CFL = float(os.environ.get("ELMFIRE_TARGET_CFL", "0.4"))
+SIMULATION_DT = float(os.environ.get("ELMFIRE_SIMULATION_DT", "1.0"))
+FOLIAR_MOISTURE_PCT = float(os.environ.get("ELMFIRE_FOLIAR_MOISTURE_PCT", "90"))
 ELMFIRE = os.path.join(os.environ.get("ELMFIRE_INSTALL_DIR", "/elmfire/elmfire/build/linux/bin"), "elmfire")
 FUEL_TABLE = os.path.join(os.environ.get("ELMFIRE_BASE_DIR", "/elmfire/elmfire"), "build/source/fuel_models.csv")
 
@@ -51,6 +62,8 @@ USE_CONSTANT_LW                = .FALSE.
 MLW_FILENAME                   = 'lw'
 WS_AT_10M                      = .TRUE.
 WS_IN_KPH                      = .TRUE.
+USE_CONSTANT_FMC               = .TRUE.
+FOLIAR_MOISTURE_CONTENT        = {foliar}
 /
 
 &OUTPUTS
@@ -64,8 +77,8 @@ CONVERT_TO_GEOTIFF   = .FALSE.
 /
 
 &TIME_CONTROL
-SIMULATION_DT    = 1.0
-TARGET_CFL       = 0.4
+SIMULATION_DT    = {dt}
+TARGET_CFL       = {cfl}
 SIMULATION_TSTOP = {tstop}
 /
 
@@ -90,13 +103,14 @@ PIGN_MIN                                  = {sp[pign_min]}
 TAU_EMBERGEN                              = {sp[tau_embergen]}
 GENERATION_MODEL                          = 'PER-AREA'
 SPOTTING_DISTANCE_MODEL                   = 'EMPIRICAL'
-ACCUMULATION_MODEL                        = 'LAGRANGIAN'
+ACCUMULATION_MODEL                        = 'EULERIAN'
 IGNITION_MODEL                            = 'SIMPLE'
 P_EPS                                     = 0.001
 EMBER_SAMPLING_FACTOR                     = {sp[ember_sampling_factor]}
 GLOBAL_SURFACE_FIRE_SPOTTING_PERCENT_MAX  = {sp[surface_pct_max]}
 GLOBAL_SURFACE_FIRE_SPOTTING_PERCENT_MIN  = {sp[surface_pct_min]}
 USE_SUPERSEDED_SPOTTING                   = .FALSE.
+STOCHASTIC_SPOTTING                       = .TRUE.
 /
 
 &MISCELLANEOUS
@@ -163,6 +177,7 @@ def run_member(job_dir, meta, name):
           "min_spotting_distance_m": 0.0, "max_spotting_distance_m": 0.0}  # 0 = sem tecto no ELMFIRE: valores antigos (sem isto no meta.json) continuam sem limite
     sp.update({k: float(v) for k, v in (meta.get("spotting_params") or {}).items()})
     nl = NAMELIST.format(dt_met=meta["dt_met_s"], tstop=float(meta["tstop_s"]), nbands=rows.shape[0], n_ign=len(ignitions), ignitions=ign_lines, sp=sp,
+                         dt=SIMULATION_DT, cfl=TARGET_CFL, foliar=float(meta.get("foliar_pct", FOLIAR_MOISTURE_PCT)),
                          spotting=".TRUE." if meta.get("spotting", os.environ.get("SPOTTING", "1") == "1") else ".FALSE.")
     with open(os.path.join(inputs, "elmfire.data"), "w") as f:
         f.write(nl)

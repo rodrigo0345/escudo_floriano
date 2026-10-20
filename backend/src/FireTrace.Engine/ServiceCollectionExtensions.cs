@@ -24,17 +24,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFireEngine>(sp =>
         {
             bool elmfire = engine.Provider == "elmfire";
-            IFireEngine provider = elmfire ? CreateElmfire(engine, moisture, paths) : new NativeFireEngine(native, moisture, paths.Workers);
+            IFireEngine provider = elmfire ? CreateElmfire(engine, native, moisture, paths) : new NativeFireEngine(native, moisture, paths.Workers);
             var scope = $"{engine.Provider}:{JsonSerializer.Serialize(elmfire ? (object)engine : native)}:{JsonSerializer.Serialize(moisture)}";
             return new CoupledFireEngine(new CachedFireEngine(provider, sp.GetRequiredService<IFireResultCache>(), scope), convection, engine);
         });
         return services;
     }
 
-    static ElmfireEngine CreateElmfire(EngineSettings engine, FuelMoistureSettings moisture, EnginePaths paths)
+    static ElmfireEngine CreateElmfire(EngineSettings engine, NativeEngineSettings native, FuelMoistureSettings moisture, EnginePaths paths)
     {
         var options = new ElmfireOptions(paths.JobsDir, paths.ElmfireUrl, engine.MetIntervalSeconds, engine.HttpTimeoutMinutes, engine.HealthTimeoutSeconds, engine.ProgressPollSeconds, engine.Spotting);
         var client = new ElmfireClient(new HttpClient { Timeout = TimeSpan.FromMinutes(engine.HttpTimeoutMinutes) }, options);
-        return new ElmfireEngine(client, new ElmfireJobFiles(options, moisture), options, () => Guid.NewGuid().ToString("N"));
+        return new ElmfireEngine(client, new ElmfireJobFiles(options, moisture, native), options, () => Guid.NewGuid().ToString("N"));
     }
 }

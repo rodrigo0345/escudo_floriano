@@ -57,7 +57,7 @@ public class FireBehaviourTests
         var member = new MemberWeather("rep", WeatherTrack.Constant(windKmh, windFrom, 25), barriers.Apply(adjustment, windKmh, 1, TestSettings.All.Landscape.MinAdjustmentFactor));
         var job = new FireJob(Spec.ToEngineGrid(), bands, adjustment, new[] { new IgnitionCell(IgnitionX, IgnitionY) }, 60, new[] { member }, 60, Spotting: spotOn);
         var options = new ElmfireOptions(Jobs, Url, TestSettings.All.Engine.MetIntervalSeconds, 5, 3, 3, TestSettings.All.Engine.Spotting);
-        var engine = new ElmfireEngine(new ElmfireClient(new HttpClient { Timeout = TimeSpan.FromMinutes(5) }, options), new ElmfireJobFiles(options, TestSettings.All.FuelMoisture), options, () => Guid.NewGuid().ToString("N"));
+        var engine = new ElmfireEngine(new ElmfireClient(new HttpClient { Timeout = TimeSpan.FromMinutes(5) }, options), new ElmfireJobFiles(options, TestSettings.All.FuelMoisture, TestSettings.All.NativeEngine), options, () => Guid.NewGuid().ToString("N"));
         IFireEngine runner = coupled ? new CoupledFireEngine(engine, TestSettings.All.Convection, TestSettings.All.Engine) : engine;
         return (await runner.RunAsync(job))["rep"].Ignition;
     }

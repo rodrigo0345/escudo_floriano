@@ -9,7 +9,7 @@ using FireTrace.Engine.Weather;
 namespace FireTrace.Engine.Elmfire;
 
 /// <summary>The shared job folder: writes a job's inputs for the container (landscape, adjustments, weather per member, meta) and reads the results back.</summary>
-public sealed class ElmfireJobFiles(ElmfireOptions options, FuelMoistureSettings moisture)
+public sealed class ElmfireJobFiles(ElmfireOptions options, FuelMoistureSettings moisture, NativeEngineSettings native)
 {
     public async Task WriteInputsAsync(string dir, FireJob job, CancellationToken ct)
     {
@@ -47,8 +47,15 @@ public sealed class ElmfireJobFiles(ElmfireOptions options, FuelMoistureSettings
     string WeatherCsv(MemberWeather member, FireJob job, int bands)
     {
         var csv = new StringBuilder("ws,wd,m1,m10,m100,lh,lw\n");
-        foreach (var r in DeadFuelMoisture.Series(member.Weather, options.MetIntervalSeconds, bands, moisture, job.SpinUpMinutes, job.FuelMoisture))
-            csv.AppendLine(string.Join(',', new[] { r.Ws, r.Wd, r.M1, r.M10, r.M100, r.Lh, r.Lw }.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))));
+        int stepMinutes = Math.Max(1, options.MetIntervalSeconds / 60);
+        // O ELMFIRE não tem campo de rajada: entra na velocidade do vento com o mesmo peso que tem no motor nativo, para as duas
+        // física verem o mesmo vento efetivo (uma rajada a 40 km/h com 25 km/h de vento médio não pode ser ignorada pelo level set).
+        foreach (var (row, k) in DeadFuelMoisture.Series(member.Weather, options.MetIntervalSeconds, bands, moisture, job.SpinUpMinutes, job.FuelMoisture).Select((r, k) => (r, k)))
+        {
+            double gustKmh = member.Weather.At(k * stepMinutes).GustKmh;
+            double windKmh = gustKmh > row.Ws ? row.Ws + native.GustFactor * (gustKmh - row.Ws) : row.Ws;
+            csv.AppendLine(string.Join(',', new[] { windKmh, row.Wd, row.M1, row.M10, row.M100, row.Lh, row.Lw }.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))));
+        }
         return csv.ToString();
     }
 
@@ -60,6 +67,7 @@ public sealed class ElmfireJobFiles(ElmfireOptions options, FuelMoistureSettings
         {
             w = job.Spec.Width, h = job.Spec.Height, cell_m = job.Spec.CellM, tstop_s = job.Minutes * 60, dt_met_s = options.MetIntervalSeconds,
             ignitions = job.Ignitions.Select(i => new[] { i.X, i.Y, i.StartSeconds }), members = job.Members.Select(m => m.Name), spotting = job.Spotting,
+            foliar_pct = job.FuelMoisture?.Values?.FoliarPct ?? native.DefaultFoliarMoisturePct,
             spotting_params = new
             {
                 critical_intensity_kwm = spotting.CriticalFirelineIntensityKwm, pign = spotting.PignPct, pign_min = spotting.PignMinPct, pign_max = spotting.PignMaxPct,

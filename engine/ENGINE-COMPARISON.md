@@ -12,7 +12,7 @@ This note records the model correction, the Guimarães fuel mapping, and the dec
 | Surface physics | Rothermel (1972) with the full Scott & Burgan 40 table, size-class weighting, live/dead moisture, WAF and vector wind+slope | Rothermel + level-set PDE, full spatial wind/slope interaction |
 | Crown fire | Van Wagner initiation and active-crowning test, crown intensity | Crown fire and torching, coupled with the level set |
 | Spotting | Not implemented (`Spotting` is currently ignored) | Yes |
-| Rain / gusts / live moisture | Rain wetting + extinction, gust factor, live herb/woody damping, aspect drying | Weather series; rain is not part of the `wx_<m>.csv` seam, so it cannot drive the fire there |
+| Rain / gusts / live moisture | Rain wetting + extinction, gust factor, live herb/woody damping, aspect drying | Gust enters the `ws` column of `wx_<m>.csv` (`wind + GustFactor·(gust − wind)`, same factor as the native engine), foliar moisture feeds `FOLIAR_MOISTURE_CONTENT`; rain still reaches it only through the dead-fuel moisture series (ELMFIRE has no rain input) |
 | Timed suppression | Yes (`SuppressionPlan` windows, direct attack fades with intensity) | No: the integration runs one shot and applies every intervention from minute 0 (`timed = provider != "elmfire"`) |
 | Ensemble | In-process, one task per member, no container or file round-trip | One container job per simulation, per-member files and process overhead |
 | Operational fit | Always available, deterministic, sub-second on a 60×60 test grid | Needs the engine container and its data; slower feedback loop |
@@ -149,7 +149,26 @@ docker run --rm -v "${PWD}:/repo" -w /repo/backend `
 No ELMFIRE benchmark was run in this session (the worker container was not running), so the performance comparison above is structural, not a
 measured head-to-head. The native 60×60 sub-second result is measured by `NativeFireEngineTests.Runs_in_well_under_a_second_for_a_grid_this_size`.
 
-## 5. Known limits / next steps
+## 5. ELMFIRE runtime (measured)
+
+The container was benchmarked in place (`DUMP_TIMINGS = .TRUE.`, 280×280 cells at 30 m, 180 min, one member) before changing anything. The
+whole simulation was 301 s, and the internal timer showed **145.9 s of 147.0 s inside the Lagrangian ember transport** (timer bucket 46,
+`LAGRANGIAN_SPOTTING_MAIN`). The cause is not the number of firebrands: `CLEAR_USED_EMBER` allocates and copies `SPOTTING_STATS` every
+timestep, and that array is dimensioned `EMBER_TRACKER_SIZE = 10_000_000` — a compile-time parameter. Lowering `EMBER_GR` by 100× or
+enabling `STOCHASTIC_SPOTTING` changed the wall time by less than 1%, which confirms the diagnosis.
+
+Two changes were made in `engine/runner.py`:
+
+| Change | Effect |
+|---|---|
+| `ACCUMULATION_MODEL = 'EULERIAN'` (was `'LAGRANGIAN'`) | 147 s → 0.8 s on the 90-min benchmark; burned area 872.9 → 872.2 acres (< 0.1%) |
+| `STOCHASTIC_SPOTTING = .TRUE.` | the configured `GLOBAL_SURFACE_FIRE_SPOTTING_PERCENT_MIN/MAX` (0.1–0.5 %) is actually applied; without it ELMFIRE keeps `SURFACE_FIRE_SPOTTING_PERCENT = 100` and every qualifying front cell spots |
+
+End-to-end, through the HTTP worker on the same grid and duration: **one member 301.3 s → 1.7 s; thirteen members 7.3 s** (2 waves of 8 on
+`WORKERS=8`). A coupled 12-member simulation therefore drops from ~15–18 min to roughly 12 s. `TARGET_CFL` stays at ELMFIRE's reference 0.4;
+it is env-overridable (`ELMFIRE_TARGET_CFL`), and 0.8 was measured to halve the remaining time with a 0.3% area change, if ever needed.
+
+## 6. Known limits / next steps
 
 - **Spotting.** `FireJob.Spotting` is ignored by the native engine. If spotting-sensitive runs matter, use ELMFIRE until an ember-transport
   model (intensity/wind-dependent launch, deterministic seeded landing) is added.
@@ -161,7 +180,7 @@ measured head-to-head. The native 60×60 sub-second result is measured by `Nativ
   balance.
 - **Per-scenario engine choice.** Not exposed in `api-spec/openapi.json`; only the server configuration selects the provider.
 
-## 6. Contract impact
+## 7. Contract impact
 
 None. `api-spec/openapi.json` was not modified. The weather samples now fill optional fields that the contract already defines —
 `gustKmh`, `precipitationMmH` and `fuelMoisture` — from the same moisture series the engine uses (`SimulationService`), so the UI and the
@@ -171,3 +190,8 @@ The manual weather path uses the existing `WeatherSpec` contract: `base: none` p
 event. Both are accepted by `/weather/resolve` and by simulations, and neither calls Open-Meteo. The scenario seeder now leaves an existing
 built-in scenario untouched, so a manual weather correction made through the API survives a backend restart; `/weather/series` and
 `base: provider` remain the explicit real-weather paths.
+
+The gust and foliar-moisture corrections stay inside the internal `backend ↔ engine` seam, so the public contract is untouched as well:
+`ElmfireJobFiles` folds the gust into the `ws` column of `wx_<m>.csv` (same `GustFactor` as the native engine) and adds the optional
+`foliar_pct` key to `meta.json`, which `runner.py` reads with `.get("foliar_pct", 90)` and writes as `FOLIAR_MOISTURE_CONTENT`. No
+`api-spec/openapi.json` schema, route or example changed.
