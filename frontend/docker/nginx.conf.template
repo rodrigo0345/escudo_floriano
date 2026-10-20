@@ -33,6 +33,14 @@ server {
     proxy_set_header Host $host;
   }
 
+  # photoreal 3D city: local tiles saved once by tools/fetch_tiles3d.py and mounted read-only (see docker-compose.yaml). No folder = 404 = no 3D city.
+  location /tiles3d/ {
+    root /usr/share/nginx;
+    expires 1d;
+    add_header Cache-Control "public";
+    try_files $uri =404;
+  }
+
   # hashed build assets: cache forever
   location /assets/ {
     expires 1y;

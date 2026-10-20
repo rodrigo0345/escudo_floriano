@@ -41,6 +41,7 @@ export function useFrameLoop(): void {
       if (run) world.terrain.setFireTime(tf);
       if (run) world.fire.updatePulse(tf);
       if (run) world.wind.updateFlow(tf);
+      world.updateCity();
       world.units.update(tf);
       if (run) world.smoke.update(tf, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio());
     });

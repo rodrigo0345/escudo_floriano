@@ -13,6 +13,8 @@
   "imageryPixels": 2048,
   "orthoTiles": 3,
   "orthoTilePixels": 2048,
+  // cidade 3D fotorrealista (tiles locais em data/tiles3d/guimaraes-concelho/): o ingest avisa se faltarem
+  "tiles3d": true,
   "landCoverSource": "worldcover-2021",
   "curatedFacilities": [],
 

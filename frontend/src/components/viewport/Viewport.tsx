@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useMapPointer } from '@/hooks/useMapPointer';
 import { useEngineContext } from '@/engine/EngineContext';
 import { SceneEngine } from '@/engine/sceneEngine';
+import { useAppStore } from '@/store/appStore';
 
 import { Compass } from './Compass';
 import { LayersPanel } from './LayersPanel';
@@ -31,8 +32,9 @@ export function Viewport() {
     };
   }, [setEngine]);
 
+  const cityEnabled = useAppStore((s) => s.cityEnabled);
   const attribution = world
-    ? `Imagem: ${world.terrain.attribution || '—'} · Relevo: AWS Terrain Tiles · Espécies: ESA WorldCover 2021, Copernicus HRL, Sentinel-2 · Estradas/instalações: © OpenStreetMap · Meteo: Open-Meteo`
+    ? `${cityEnabled && world.city.attribution ? `Cidade 3D: Google Maps · ${world.city.attribution} · ` : ''}Imagem: ${world.terrain.attribution || '—'} · Relevo: AWS Terrain Tiles · Espécies: ESA WorldCover 2021, Copernicus HRL, Sentinel-2 · Estradas/instalações: © OpenStreetMap · Meteo: Open-Meteo`
     : '';
 
   return (

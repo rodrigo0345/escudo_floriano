@@ -20,7 +20,7 @@ export class Picker {
   pick(clientX: number, clientY: number, bounds: DOMRect, objects: THREE.Object3D[]): THREE.Intersection | undefined {
     this.ndc.set(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    return this.raycaster.intersectObjects(objects, false)[0];
+    return this.raycaster.intersectObjects(objects, true)[0];
   }
 
   /** The tooltip text for a pick result, using `tipFor(index)` when present (instanced/point layers) or the static `tip`. */

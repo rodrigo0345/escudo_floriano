@@ -76,6 +76,13 @@ export class SceneEngine {
     this.rafId = requestAnimationFrame(loop);
   }
 
+  /** The 3D city is meant to be seen from street level: bring the near plane and the zoom limit in (and back out when it is off). */
+  setCloseUp(on: boolean): void {
+    this.camera.near = on ? 0.4 : 1;
+    this.camera.updateProjectionMatrix();
+    this.controls.minDistance = on ? 4 : 30;
+  }
+
   /** Frames a world point from the south-southwest, the default viewing angle for an ignition. */
   focusOn(x: number, y: number, z: number): void {
     this.controls.target.set(x, y, z);

@@ -3,6 +3,7 @@ import type { Georef } from '@/domain/georef';
 
 import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
+import { PhotorealLayer, type CitySource } from './layers/photorealLayer';
 import { PlanLayer } from './layers/planLayer';
 import { UnitLayer } from './layers/unitLayer';
 import { RoadLayer } from './layers/roadLayer';
@@ -40,6 +41,8 @@ export class World {
   readonly fire: FireLayer;
   readonly units: UnitLayer;
   readonly smoke: SmokeSystem;
+  /** The photoreal 3D city from local tiles (off by default; see `PhotorealLayer`). */
+  readonly city: PhotorealLayer;
 
   constructor(
     private readonly engine: SceneEngine,
@@ -57,9 +60,13 @@ export class World {
     this.fire = new FireLayer(geo);
     this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
+    this.city = new PhotorealLayer(geo, location.id as string);
+    // while the city draws, the terrain's imagery steps aside and only the fire stays on top of it
+    this.city.onVisibleChange = (visible) => this.terrain.setOverlay(visible);
 
     const scene = engine.scene;
     scene.add(
+      this.city.group,
       this.terrain.mesh,
       this.roads.mesh,
       this.assets.group,
@@ -81,6 +88,18 @@ export class World {
     return [...this.units.pickables, ...this.assets.pickables, ...this.water.pickables, ...this.plan.pickables];
   }
 
+  /** Shows or hides the 3D city. Close-up navigation (a nearer camera plane and zoom limit) comes with it. */
+  setCity(on: boolean, source: CitySource = 'local', apiKey = ''): boolean {
+    const started = this.city.setEnabled(on, this.engine.camera, this.engine.renderer, source, apiKey);
+    this.engine.setCloseUp(on && started);
+    return started;
+  }
+
+  /** Per frame, before drawing. */
+  updateCity(): void {
+    this.city.update(this.engine.camera, this.engine.renderer, this.engine.controls.target);
+  }
+
   focusOnLatLon(lat: number, lon: number): void {
     const [x, y, z] = this.geo.world(lat, lon, 0);
     this.engine.focusOn(x, y, z);
@@ -89,6 +108,7 @@ export class World {
   dispose(): void {
     const scene = this.engine.scene;
     scene.remove(
+      this.city.group,
       this.terrain.mesh,
       this.roads.mesh,
       this.assets.group,
@@ -102,7 +122,8 @@ export class World {
     this.plan.dispose();
     this.wind.dispose();
     this.units.clear();
-    this.terrain.geometry.dispose();
+    this.city.dispose();
+    this.terrain.dispose();
     this.roads.mesh.geometry.dispose();
     this.smoke.points.geometry.dispose();
   }
