@@ -131,4 +131,57 @@ public class RoutingTests
         Assert.DoesNotContain(4, offRoad.EdgeIds);
         Assert.Contains(5, offRoad.EdgeIds);
     }
+
+    static double AverageKmh(TravelProfile profile, RoadEdge edge) => edge.LengthCells * Spec.CellM / 1000 / (profile.Minutes(edge, Spec.CellM)!.Value / 60);
+
+    [Fact]
+    public void Dirt_roads_are_slower_by_quality_and_heavy_vehicles_suffer_more_on_them()
+    {
+        var road = Edge(10, "tertiary", "a", "b", false, 2, 5, 12, 5);
+        var good = Edge(11, "track", "a", "b", false, 2, 5, 12, 5) with { TrackType = "grade2" };
+        var rough = Edge(12, "track", "a", "b", true, 2, 5, 12, 5) with { TrackType = "grade5" };
+        var ordinary = Speeds.Profile(allowOffRoad: true, emergency: false);
+        Assert.True(AverageKmh(ordinary, road) > AverageKmh(ordinary, good));
+        Assert.True(AverageKmh(ordinary, good) > AverageKmh(ordinary, rough));
+
+        var light = Speeds.Profile(allowOffRoad: true, emergency: false, vehicleType: "all_terrain_patrol");
+        var heavy = Speeds.Profile(allowOffRoad: true, emergency: false, vehicleType: "tanker_large");
+        Assert.True(AverageKmh(light, good) > AverageKmh(heavy, good));
+    }
+
+    [Fact]
+    public void Sirens_speed_up_paved_roads_but_not_dirt_roads()
+    {
+        var road = Edge(10, "tertiary", "a", "b", false, 2, 5, 12, 5);
+        var dirt = Edge(12, "track", "a", "b", true, 2, 5, 12, 5) with { TrackType = "grade4" };
+        Assert.True(AverageKmh(Speeds.Profile(emergency: true), road) > AverageKmh(Speeds.Profile(emergency: false), road));
+        Assert.Equal(AverageKmh(Speeds.Profile(allowOffRoad: true, emergency: true), dirt), AverageKmh(Speeds.Profile(allowOffRoad: true, emergency: false), dirt), 6);
+    }
+
+    [Fact]
+    public void Sharp_bends_slow_a_road_and_heavy_vehicles_are_capped()
+    {
+        var straight = Edge(10, "secondary", "a", "b", false, 2, 5, 12, 5);
+        var winding = Edge(11, "secondary", "a", "b", false, 2, 5, 3, 5, 3, 6, 4, 6, 4, 7, 5, 7, 5, 8, 6, 8, 6, 9, 7, 9);
+        var profile = Speeds.Profile();
+        Assert.True(AverageKmh(profile, straight) > AverageKmh(profile, winding));
+
+        var motorway = Edge(12, "motorway", "a", "b", false, 2, 5, 12, 5);
+        Assert.True(AverageKmh(Speeds.Profile(weightT: 12), motorway) < AverageKmh(Speeds.Profile(weightT: 2), motorway));
+    }
+
+    [Fact]
+    public void A_posted_speed_limit_replaces_the_class_default_and_binds_every_vehicle()
+    {
+        var unposted = Edge(10, "tertiary", "a", "b", false, 2, 5, 12, 5);
+        var slow = unposted with { MaxSpeedKmh = 30 };
+        var fast = unposted with { MaxSpeedKmh = 90 };
+        var profile = Speeds.Profile(emergency: false);
+        Assert.True(AverageKmh(profile, slow) < AverageKmh(profile, unposted));
+        Assert.True(AverageKmh(profile, fast) > AverageKmh(profile, unposted));
+
+        var dirt = Edge(11, "track", "a", "b", true, 2, 5, 12, 5) with { TrackType = "grade1", MaxSpeedKmh = 20 };
+        Assert.True(AverageKmh(Speeds.Profile(allowOffRoad: true, emergency: false, vehicleType: "all_terrain_patrol"), dirt) <= 20); // o limite assinalado vale também na terra
+        Assert.True(AverageKmh(Speeds.Profile(weightT: 12), fast with { MaxSpeedKmh = 40 }) <= 40); // os pesados nunca passam do limite da via
+    }
 }

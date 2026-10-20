@@ -70,10 +70,10 @@ public sealed class PostgisMapStore : IMapReader, IMapWriter
             var (lat, lon) = spec.ToLatLon(n.X, n.Y);
             return w.Put(loc, n.Id, Wgs84.Factory.CreatePoint(new Coordinate(lon, lat)));
         }, ct);
-        await Copy(c, "road_edges", "location_id,id,name,ref,highway,a,b,length_m,off_road,tracktype,width_m,geom", edges, async (w, e) =>
+        await Copy(c, "road_edges", "location_id,id,name,ref,highway,a,b,length_m,off_road,tracktype,width_m,max_speed_kmh,geom", edges, async (w, e) =>
         {
             var coords = Enumerable.Range(0, e.Pts.Length / 2).Select(i => { var (lat, lon) = spec.ToLatLon(e.Pts[2 * i], e.Pts[2 * i + 1]); return new Coordinate(lon, lat); }).ToArray();
-            await w.Put(loc, e.Id, e.Name, e.Ref, e.Highway, e.A, e.B, e.LengthCells * spec.CellM, e.OffRoad, e.TrackType, e.WidthM, Wgs84.Factory.CreateLineString(coords));
+            await w.Put(loc, e.Id, e.Name, e.Ref, e.Highway, e.A, e.B, e.LengthCells * spec.CellM, e.OffRoad, e.TrackType, e.WidthM, e.MaxSpeedKmh, Wgs84.Factory.CreateLineString(coords));
         }, ct);
         await tx.CommitAsync(ct);
     }
@@ -83,7 +83,7 @@ public sealed class PostgisMapStore : IMapReader, IMapWriter
         var spec = Locations.Get(loc).Spec;
         await using var c = await _db.OpenConnectionAsync(ct);
         var edges = new List<RoadEdge>();
-        await foreach (var r in Query(c, "SELECT id,name,ref,highway,a,b,geom,off_road,tracktype,width_m FROM road_edges WHERE location_id=@l ORDER BY id", loc, ct))
+        await foreach (var r in Query(c, "SELECT id,name,ref,highway,a,b,geom,off_road,tracktype,width_m,max_speed_kmh FROM road_edges WHERE location_id=@l ORDER BY id", loc, ct))
         {
             var g = (LineString)r.GetFieldValue<Geometry>(6);
             var pts = new double[g.NumPoints * 2];
@@ -93,7 +93,7 @@ public sealed class PostgisMapStore : IMapReader, IMapWriter
                 pts[2 * i] = x; pts[2 * i + 1] = y;
             }
             edges.Add(new RoadEdge(r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), pts,
-                RoadGeometry.CellsOf(pts, spec), RoadGeometry.Length(pts), r.GetBoolean(7), r.Str(8), r.Dbl(9)));
+                RoadGeometry.CellsOf(pts, spec), RoadGeometry.Length(pts), r.GetBoolean(7), r.Str(8), r.Dbl(9), r.Dbl(10)));
         }
         var nodes = new Dictionary<string, RoadNode>();
         await foreach (var r in Query(c, "SELECT id,geom FROM road_nodes WHERE location_id=@l", loc, ct))
