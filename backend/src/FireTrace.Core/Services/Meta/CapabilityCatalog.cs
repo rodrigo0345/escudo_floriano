@@ -15,7 +15,7 @@ public static class CapabilityCatalog
         WeatherVariables: new[]
         {
             Yes("windKmh"), Yes("windFromDeg"), Yes("tempC"), Yes("humidityPct"), Yes("gustKmh", "só informativa: o motor usa o vento médio"),
-            Yes("precipitationMmH", "aumenta a humidade relativa"), No("pressureHpa", "aceite mas não usada"), No("cloudCoverPct", "aceite mas não usada"), No("hainesIndex", "aceite mas não usada"),
+            Yes("precipitationMmH", "molha o combustível morto (mais depressa o fino) e aumenta a humidade relativa"), No("pressureHpa", "aceite mas não usada"), Yes("cloudCoverPct", "reduz a radiação solar que aquece e seca o combustível"), No("hainesIndex", "aceite mas não usada"),
         },
         WeatherEvents: new[]
         {

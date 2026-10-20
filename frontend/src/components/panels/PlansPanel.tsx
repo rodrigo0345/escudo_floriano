@@ -57,9 +57,9 @@ export function PlansPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<Plan | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
     if (!baseId) return;
-    setLoading(true);
+    if (!silent) setLoading(true); // a background refresh must not flash "A carregar…"
     setError(null);
     try {
       const [baseline, listed] = await Promise.all([simulationsApi.get(baseId), plansApi.listForSimulation(baseId)]);
@@ -77,6 +77,21 @@ export function PlansPanel() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // The `agents` service publishes plans (and runs their what-ifs) a minute or so after a baseline finishes: keep looking while
+  // there are none, a what-if is still running, or a plan is under 3 minutes old and has no what-if yet.
+  const waiting =
+    plans.length === 0 ||
+    plans.some((p) => {
+      const status = runs.get(p.id as string)?.status;
+      if (status === 'queued' || status === 'running') return true;
+      return !status && Date.now() - Date.parse(String(p.createdAt ?? '')) < 3 * 60_000;
+    });
+  useEffect(() => {
+    if (!baseId || !waiting) return undefined;
+    const timer = setInterval(() => void refresh(true), 8000);
+    return () => clearInterval(timer);
+  }, [baseId, waiting, refresh]);
 
   const simulate = async (plan: PlanSummary) => {
     if (!baseId) return;
@@ -125,7 +140,10 @@ export function PlansPanel() {
       {loading ? <p className="note">A carregar planos…</p> : null}
       {error ? <p className="note">Erro: {error}</p> : null}
       {!loading && !error && !plans.length ? (
-        <p className="note">Ainda não há planos para esta simulação. Corra o orquestrador dos agentes (<code>python -m firetrace_agents --simulation-id {baseId}</code>).</p>
+        <p className="note">
+          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho cerca de um minuto depois de a base terminar; esta lista atualiza-se.
+          Sem o serviço: <code>python -m firetrace_agents --simulation-id {baseId}</code>.
+        </p>
       ) : null}
 
       {plans.map((plan) => {
