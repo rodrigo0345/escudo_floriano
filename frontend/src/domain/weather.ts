@@ -14,6 +14,68 @@ export interface InterpolatedWeather {
   fineFuelMoisturePct: number | null;
 }
 
+/** Mean conditions of a weather series, with wind direction averaged on the circle. */
+export interface WeatherBaseStats {
+  windKmh: number;
+  dirDeg: number;
+  humPct: number;
+  tempC: number;
+}
+
+/** Mean weather over a series; `null` when there is nothing to average. */
+export function weatherMeans(samples: WeatherSample[]): WeatherBaseStats | null {
+  const usable = samples.filter((s) => Number.isFinite(s.windKmh) || Number.isFinite(s.humidityPct) || Number.isFinite(s.tempC));
+  if (!usable.length) return null;
+  let windSum = 0;
+  let windN = 0;
+  let humSum = 0;
+  let humN = 0;
+  let tempSum = 0;
+  let tempN = 0;
+  let sin = 0;
+  let cos = 0;
+  for (const s of usable) {
+    if (Number.isFinite(s.windKmh)) {
+      windSum += s.windKmh!;
+      windN++;
+    }
+    if (Number.isFinite(s.humidityPct)) {
+      humSum += s.humidityPct!;
+      humN++;
+    }
+    if (Number.isFinite(s.tempC)) {
+      tempSum += s.tempC!;
+      tempN++;
+    }
+    if (Number.isFinite(s.windFromDeg)) {
+      const rad = (s.windFromDeg! * Math.PI) / 180;
+      sin += Math.sin(rad);
+      cos += Math.cos(rad);
+    }
+  }
+  const dir = Math.atan2(sin, cos) * (180 / Math.PI);
+  return {
+    windKmh: windN ? windSum / windN : 0,
+    dirDeg: (dir + 360) % 360,
+    humPct: humN ? humSum / humN : 0,
+    tempC: tempN ? tempSum / tempN : 0,
+  };
+}
+
+
+/** Provider base at the scenario start: the first sample, with means as a fallback for missing fields. */
+export function weatherBaseAtStart(samples: WeatherSample[]): WeatherBaseStats | null {
+  const means = weatherMeans(samples);
+  const first = samples[0];
+  if (!first || !means) return means;
+  return {
+    windKmh: Number.isFinite(first.windKmh) ? first.windKmh! : means.windKmh,
+    dirDeg: Number.isFinite(first.windFromDeg) ? first.windFromDeg! : means.dirDeg,
+    humPct: Number.isFinite(first.humidityPct) ? first.humidityPct! : means.humPct,
+    tempC: Number.isFinite(first.tempC) ? first.tempC! : means.tempC,
+  };
+}
+
 /**
  * Interpolates `series` (sorted by time) to `startMs + minute * 60000`. Used by the HUD and
  * the sim form preview chart, which both need "the weather at a specific instant" rather than

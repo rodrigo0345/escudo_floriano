@@ -24,6 +24,7 @@ export function TopBar() {
   const run = useAppStore((s) => s.run);
   const tab = useAppStore((s) => s.tab);
   const setTab = useAppStore((s) => s.setTab);
+  const setHelpOpen = useAppStore((s) => s.setHelpOpen);
   const roadsCut = useAppStore((s) => s.run?.impact?.at(s.t).cut.length ?? 0);
   const facilityCount = useAppStore((s) => s.data?.facilities.length ?? 0);
   const { selectScenario } = useSimulationActions();
@@ -70,6 +71,9 @@ export function TopBar() {
         ))}
       </nav>
       <div className={styles.spacer} />
+      <button className={styles.helpLink} onClick={() => setHelpOpen(true)} title="Atalhos de teclado (?)">
+        Atalhos
+      </button>
       <a className={styles.apiLink} href="/swagger" target="_blank" rel="noopener noreferrer" title="Documentação interativa da API (Swagger)">
         API
       </a>

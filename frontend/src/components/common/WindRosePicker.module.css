@@ -1,0 +1,80 @@
+.rose {
+  width: 100%;
+  max-width: 190px;
+  margin: 0 auto;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+  outline: none;
+}
+
+.rose:focus-visible .rim {
+  stroke: var(--acc);
+  stroke-width: 2;
+}
+
+.rim {
+  fill: var(--panel2);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.inner {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 0.8;
+  stroke-dasharray: 2 41;
+}
+
+.tickMajor {
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+
+.tick {
+  stroke: var(--mut);
+  stroke-width: 1.2;
+}
+
+.tickMinor {
+  stroke: var(--mut);
+  stroke-width: 0.7;
+  opacity: 0.75;
+}
+
+.label {
+  fill: var(--fg);
+  font-size: 7.6px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--panel2);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.cardinal {
+  fill: var(--fg);
+  font-size: 8.8px;
+  font-weight: 800;
+}
+
+.north {
+  fill: var(--acc);
+  font-size: 10px;
+}
+
+.shaft {
+  stroke: var(--acc);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.arrowHead {
+  fill: var(--acc);
+}
+
+.hub {
+  fill: var(--fg);
+  stroke: var(--panel2);
+  stroke-width: 1;
+}

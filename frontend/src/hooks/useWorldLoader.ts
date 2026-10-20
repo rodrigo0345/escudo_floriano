@@ -25,9 +25,10 @@ export function useWorldLoader(): void {
     world.terrain.ready.then(() => setHint('')).catch((e: Error) => setHint(`Imagem: ${e.message}`));
     void world.terrain.setLayer(baseLayer);
     const center = data.location.weatherPoint ?? data.location.center;
-    world.fire.setIgnition(center.lat, center.lon, 'Ignição');
+    const initial = [{ position: { lat: center.lat, lon: center.lon }, label: 'Foco 1' }];
+    world.fire.setIgnitions(initial);
     world.focusOnLatLon(center.lat, center.lon);
-    useAppStore.getState().setIgnition({ lat: center.lat, lon: center.lon });
+    useAppStore.getState().setIgnitions(initial);
     setWorld(world);
     return () => {
       setWorld(null);
