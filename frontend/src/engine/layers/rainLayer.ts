@@ -1,14 +1,18 @@
 import * as THREE from 'three';
 
 const DROP_COUNT = 1600;
-const BOUNDS_XZ = 380; // 380m radius around camera target
-const BOUNDS_Y = 220;  // 220m fall height
+// In FireTrace coordinates, 1 world unit = 10 meters.
+// BOUNDS_XZ = 160 units => 1600 m (1.6 km) across the camera focal area.
+// BOUNDS_Y  = 75 units  => 750 m vertical fall column above ground.
+const BOUNDS_XZ = 160;
+const BOUNDS_Y = 75;
 
 /**
  * 3D Rain Particle Layer:
- * - Streaks fall at realistic velocity with wind-induced horizontal drift.
- * - Dynamically visible when precipitationMmH > 0.
- * - Follows the camera focus area so rain particles are always centered around current view.
+ * - Streaks fall and slant realistically along wind direction (north = -z, east = +x).
+ * - 1 world unit = 10 meters.
+ * - Dynamically visible and modulated in opacity when precipitationMmH > 0.
+ * - Follows the camera focus area so rain particles remain centered in the viewport.
  */
 export class RainLayer {
   readonly group = new THREE.Group();
@@ -17,19 +21,22 @@ export class RainLayer {
   private readonly lines: THREE.LineSegments;
   private readonly positions: Float32Array;
   private readonly velocities: Float32Array;
+  private readonly lengths: Float32Array;
   private active = false;
 
   constructor() {
     this.positions = new Float32Array(DROP_COUNT * 2 * 3);
     this.velocities = new Float32Array(DROP_COUNT);
+    this.lengths = new Float32Array(DROP_COUNT);
 
     for (let i = 0; i < DROP_COUNT; i++) {
       const x = (Math.random() - 0.5) * BOUNDS_XZ;
       const y = Math.random() * BOUNDS_Y;
       const z = (Math.random() - 0.5) * BOUNDS_XZ;
-      const streakLen = 2.2 + Math.random() * 3.0;
+      const streakLen = 1.6 + Math.random() * 1.8; // 16m to 34m world streak length
+      this.lengths[i] = streakLen;
 
-      // Top of streak
+      // Top of streak (initial vertical)
       this.positions[i * 6] = x;
       this.positions[i * 6 + 1] = y + streakLen;
       this.positions[i * 6 + 2] = z;
@@ -39,14 +46,15 @@ export class RainLayer {
       this.positions[i * 6 + 4] = y;
       this.positions[i * 6 + 5] = z;
 
-      this.velocities[i] = 130 + Math.random() * 60; // fall speed units/s
+      // Fall speed: ~18 to 26 units/s (180 to 260 m/s visual fall rate for crisp streaks)
+      this.velocities[i] = 18 + Math.random() * 8;
     }
 
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
 
     this.material = new THREE.LineBasicMaterial({
-      color: 0x98b8dc,
+      color: 0x9bc2e6,
       transparent: true,
       opacity: 0.55,
       depthWrite: false,
@@ -72,44 +80,77 @@ export class RainLayer {
       this.active = true;
     }
 
-    // Rain intensity modulates opacity
-    this.material.opacity = Math.min(0.72, 0.22 + (precipRateMmH / 12) * 0.45);
+    // Rain intensity modulates opacity (0.28 to 0.75)
+    this.material.opacity = Math.min(0.75, 0.28 + (precipRateMmH / 10) * 0.42);
 
-    // Wind drift vector: wind blows FROM windFromDeg, so drift is toward (from + 180)
-    const windRad = ((windFromDeg + 180) * Math.PI) / 180;
-    const windSpeedUnits = (windKmh / 3.6) * 0.35;
-    const driftX = Math.sin(windRad) * windSpeedUnits * dt;
-    const driftZ = Math.cos(windRad) * windSpeedUnits * dt;
+    // Wind direction: wind blows FROM windFromDeg towards (windFromDeg + 180).
+    // In FireTrace: North = -z, East = +x.
+    // Direction vector of air movement:
+    const fromRad = (windFromDeg * Math.PI) / 180;
+    const dirX = -Math.sin(fromRad); // blowing toward East if from West (270°)
+    const dirZ = Math.cos(fromRad);  // blowing toward South (+z) if from North (0°)
+
+    // Drift ratio: under 40 km/h wind, drift is ~0.55 of fall velocity
+    const driftRatio = Math.min(0.85, (Math.max(0, windKmh) / 45) * 0.6);
 
     if (cameraTarget) {
       this.group.position.set(cameraTarget.x, cameraTarget.y, cameraTarget.z);
     }
 
     const pos = this.positions;
-    for (let i = 0; i < DROP_COUNT; i++) {
-      const dy = this.velocities[i] * dt;
-      const idx = i * 6;
+    const halfX = BOUNDS_XZ / 2;
 
-      pos[idx + 1] -= dy;
+    for (let i = 0; i < DROP_COUNT; i++) {
+      const vy = this.velocities[i];
+      const dy = vy * dt;
+      const driftDist = vy * driftRatio * dt;
+      const dx = dirX * driftDist;
+      const dz = dirZ * driftDist;
+
+      const idx = i * 6;
+      const len = this.lengths[i];
+      const slantX = dirX * driftRatio * len;
+      const slantZ = dirZ * driftRatio * len;
+
+      // Bottom position advances
+      pos[idx + 3] += dx;
       pos[idx + 4] -= dy;
-      pos[idx] += driftX;
-      pos[idx + 3] += driftX;
-      pos[idx + 2] += driftZ;
-      pos[idx + 5] += driftZ;
+      pos[idx + 5] += dz;
+
+      // Top position stays slanted upwind from bottom
+      pos[idx] = pos[idx + 3] - slantX;
+      pos[idx + 1] = pos[idx + 4] + len;
+      pos[idx + 2] = pos[idx + 5] - slantZ;
+
+      // Wrap boundaries horizontally
+      if (pos[idx + 3] > halfX) {
+        pos[idx + 3] -= BOUNDS_XZ;
+        pos[idx] -= BOUNDS_XZ;
+      } else if (pos[idx + 3] < -halfX) {
+        pos[idx + 3] += BOUNDS_XZ;
+        pos[idx] += BOUNDS_XZ;
+      }
+      if (pos[idx + 5] > halfX) {
+        pos[idx + 5] -= BOUNDS_XZ;
+        pos[idx + 2] -= BOUNDS_XZ;
+      } else if (pos[idx + 5] < -halfX) {
+        pos[idx + 5] += BOUNDS_XZ;
+        pos[idx + 2] += BOUNDS_XZ;
+      }
 
       // Reset when below ground relative to camera focus
-      if (pos[idx + 4] < -40) {
+      if (pos[idx + 4] < -8) {
         const x = (Math.random() - 0.5) * BOUNDS_XZ;
-        const y = BOUNDS_Y - Math.random() * 25;
+        const y = BOUNDS_Y - Math.random() * 8;
         const z = (Math.random() - 0.5) * BOUNDS_XZ;
-        const streakLen = 2.2 + Math.random() * 3.0;
 
-        pos[idx] = x;
-        pos[idx + 1] = y + streakLen;
-        pos[idx + 2] = z;
         pos[idx + 3] = x;
         pos[idx + 4] = y;
         pos[idx + 5] = z;
+
+        pos[idx] = x - slantX;
+        pos[idx + 1] = y + len;
+        pos[idx + 2] = z - slantZ;
       }
     }
     this.geometry.attributes.position.needsUpdate = true;

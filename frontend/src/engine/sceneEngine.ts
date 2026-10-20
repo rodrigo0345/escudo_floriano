@@ -89,11 +89,12 @@ export class SceneEngine {
 
   /**
    * Updates sun angle, directional light, ambient sky/ground light, sky color, and fog
-   * according to real solar elevation in Guimarães (41.44°N, 8.29°W) and cloud cover.
+   * according to real solar elevation at the current terrain coordinates (defaulting to Guimarães: 41.44°N, 8.29°W)
+   * and cloud cover.
    */
-  updateAtmosphere(timestampMs: number, cloudCoverPct = 0): void {
-    const LAT_RAD = (41.442 * Math.PI) / 180;
-    const LON_DEG = -8.295;
+  updateAtmosphere(timestampMs: number, cloudCoverPct = 0, latDeg = 41.442, lonDeg = -8.295): void {
+    const LAT_RAD = (latDeg * Math.PI) / 180;
+    const LON_DEG = lonDeg;
     const date = new Date(timestampMs);
 
     const startOfYear = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
@@ -135,7 +136,7 @@ export class SceneEngine {
     const cloudFactor = Math.min(1, Math.max(0, cloudCoverPct / 100));
 
     // Cache to prevent redundant color operations and DOM updates
-    const cacheKey = `${Math.floor(timestampMs / 10000)}_${Math.round(cloudCoverPct)}`;
+    const cacheKey = `${Math.floor(timestampMs / 10000)}_${Math.round(cloudCoverPct)}_${Math.round(latDeg * 100)}_${Math.round(lonDeg * 100)}`;
     if (cacheKey === this.lastAtmosphereKey) return;
     this.lastAtmosphereKey = cacheKey;
 

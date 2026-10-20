@@ -47,13 +47,16 @@ export function useFrameLoop(): void {
         world.smoke.update(tf, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio());
 
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
-        engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0);
+        engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0, world.geo.centerLat, world.geo.centerLon);
+
+        const precipMmH = w?.precipitationMmH ?? 0;
+        world.terrain.setWetness(precipMmH > 0 ? Math.min(1, precipMmH / 8) : 0);
 
         const rainDt = lastRainTs ? Math.min((ts - lastRainTs) / 1000, 0.1) : 0.016;
         lastRainTs = ts;
         world.rain.update(
           rainDt,
-          w?.precipitationMmH ?? 0,
+          precipMmH,
           w?.windKmh ?? 0,
           w?.windFromDeg ?? 0,
           engine.controls.target,
