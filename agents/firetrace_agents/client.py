@@ -163,6 +163,13 @@ class FiretraceClient:
             cursor = page.get("nextCursor")
         return items
 
+    def list_organizations(self, org_type: str | None = None) -> list[dict[str, Any]]:
+        """``GET /organizations`` (optionally of one ``type``, e.g. ``civil_protection``)."""
+        params: dict[str, Any] = {"limit": 200}
+        if org_type:
+            params["type"] = org_type
+        return list(self._request("GET", "/organizations", params=params).get("items", []))
+
     def list_personnel_pools(self) -> list[dict[str, Any]]:
         page = self._request("GET", "/personnel-pools")
         items: list[dict[str, Any]] = list(page.get("items", []))
@@ -195,6 +202,30 @@ class FiretraceClient:
                 raise ApiProblem(response.status_code, response.json())
             raise ApiProblem(response.status_code, {"code": "http_error", "title": response.text[:400]})
         return response.json()
+
+    def run_scenario(self, scenario: dict[str, Any], *, label: str, wait_seconds: int = 120, timeout_seconds: float = 600.0) -> dict[str, Any]:
+        """``POST /simulations`` with an inline scenario (not stored as a scenario), waited for. Returns the terminal simulation:
+        a failed one is returned too (see :meth:`wait_for_simulation`), so callers branch on ``status``."""
+        if self._validate:
+            validate_against_spec("ScenarioInput", scenario)
+        response = self._http.post(
+            "/simulations",
+            json={"scenario": scenario, "label": label, "kind": "baseline"},
+            headers={"Prefer": f"wait={wait_seconds}"},
+        )
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            if "application/problem+json" in content_type:
+                raise ApiProblem(response.status_code, response.json())
+            raise ApiProblem(response.status_code, {"code": "http_error", "title": response.text[:400]})
+        simulation: dict[str, Any] = response.json()
+        if simulation.get("status") in {"queued", "running"}:
+            simulation = self.wait_for_simulation(simulation["id"], timeout_seconds=timeout_seconds)
+        return simulation
+
+    def get_perimeters(self, simulation_id: str, *, t_min: int) -> dict[str, Any]:
+        """``GET /simulations/{id}/perimeters?tMin=``: the fire's outline at ``t_min`` (a ``FeatureCollection``)."""
+        return self._request("GET", self._fill("/simulations/{simulationId}/perimeters", simulationId=simulation_id), params={"tMin": t_min})
 
     def validate_plan(self, plan_input: dict[str, Any]) -> dict[str, Any]:
         """``POST /plans/validate``: the backend's ``PlanValidation`` (``valid`` + ``issues[]`` with stable ``code``)."""

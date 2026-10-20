@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 /** An object that can carry a static tooltip (`tip`) or compute one per-instance (`tipFor`, for `Points`/`InstancedMesh`). */
 export type Pickable = THREE.Object3D & {
-  userData: { tip?: string; tipFor?: (index: number) => string };
+  userData: { tip?: string; tipFor?: (index: number) => string; tipForFace?: (face: number) => string };
 };
 
 /** Wraps `THREE.Raycaster` with the normalized-device-coordinate math every pointer handler needs. */
@@ -27,6 +27,7 @@ export class Picker {
   static tooltipFor(hit: THREE.Intersection | undefined): string | null {
     if (!hit) return null;
     const data = hit.object.userData as Pickable['userData'];
+    if (data.tipForFace && hit.faceIndex != null) return data.tipForFace(hit.faceIndex) || null; // merged meshes: one tooltip per triangle
     if (data.tipFor && hit.index != null) return data.tipFor(hit.index);
     return data.tip ?? null;
   }

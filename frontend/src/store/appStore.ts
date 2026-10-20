@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { Capabilities, Location, Smoke } from '@/api';
+import type { Capabilities, Location, Plan, Smoke } from '@/api';
 
 import type { BaseLayer, Banner, BannerKind, Ignition, Job, LocationData, PanelTab, Progress, RescueOrigin, RunData } from './types';
 
@@ -23,6 +23,8 @@ export interface AppState {
   scenarioId: string | null;
   ignition: Ignition | null;
   run: RunData | null;
+  /** The agents' plan drawn on the map (the one whose what-if run is on screen); `null` = nothing drawn. */
+  activePlan: Plan | null;
   /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
   baseSimulationId: string | null;
   job: Job | null;
@@ -56,6 +58,7 @@ export interface AppState {
   setIgnition: (ignition: Ignition | null) => void;
   setRun: (run: RunData | null) => void;
   setBaseSimulationId: (simulationId: string | null) => void;
+  setActivePlan: (plan: Plan | null) => void;
   setImpact: (impact: RunData['impact']) => void;
   setJob: (job: Job | null) => void;
   setProgress: (progress: Progress | null) => void;
@@ -86,6 +89,7 @@ export const useAppStore = create<AppState>((set) => ({
   ignition: null,
   run: null,
   baseSimulationId: null,
+  activePlan: null,
   job: null,
   progress: null,
   smokeInfo: null,
@@ -112,6 +116,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIgnition: (ignition) => set({ ignition }),
   setRun: (run) => set({ run }),
   setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
+  setActivePlan: (activePlan) => set({ activePlan }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
   setJob: (job) => set({ job }),
   setProgress: (progress) => set({ progress }),

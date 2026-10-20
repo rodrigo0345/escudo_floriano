@@ -35,7 +35,9 @@ from typing import Any, Iterable
 from .client import ApiProblem, FiretraceClient
 from .contracts import UNSAFE_ON_WIRE, validate_against_spec
 from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
-from .sectors import Assignment, Sector, assign_units, plan_sectors
+from .capacity import line_budget_m
+from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
+from .sectors import Assignment, Sector, assign_units, plan_sectors, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 
 
@@ -60,6 +62,7 @@ class CycleResult:
     published: dict[str, str] = field(default_factory=dict)  # variant → plan id
     validation: dict[str, dict[str, Any]] = field(default_factory=dict)  # variant → backend `PlanValidation`
     assignments: dict[str, Assignment] = field(default_factory=dict)  # agent id → sector and place it was given
+    life: LifePlan | None = None  # who is in the fire's way, who is evacuated in time, who shelters (None: nobody at risk)
 
     def reasons_log(self) -> list[str]:
         """The reasons every firefighter gave, in reporting order."""
@@ -130,22 +133,30 @@ class OrchestratorAgent:
         title_prefix: str = "Plano de resposta",
         publish: bool = True,
         at_minute: int | None = None,
+        stage_minutes: int | None = None,
+        concentration: int | None = None,
+        life_horizon_minutes: int = 180,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
 
         ``at_minute`` is the decision instant (minutes since ignition). Without it the situation is the
         end of the run, which is rarely what a commander decides on.
+
+        ``stage_minutes`` makes the lines as long as each unit can build in that time (see ``capacity.py``); without it
+        every unit lays the tier's fixed length. ``concentration`` additionally spends those metres on that many of the most
+        dangerous sectors, as one barrier each, instead of spreading the units over the front.
         """
         simulation = self._simulation(simulation_id)
         ignitions = ((simulation or {}).get("scenarioSnapshot") or {}).get("ignitions") or []
         situation = situation_from_simulation(
             simulation_id,
-            threatened=self.client.get_threatened(simulation_id, horizon_minutes=horizon_minutes, t_min=at_minute),
+            threatened=self.client.get_threatened(simulation_id, horizon_minutes=max(horizon_minutes, life_horizon_minutes), t_min=at_minute),
             summary=self.client.get_summary(simulation_id),
             horizon_minutes=horizon_minutes,
             at_minute=at_minute,
             rules=self._load_rules(),
             ignition=ignitions[0].get("position") if ignitions else None,
+            life_horizon_minutes=life_horizon_minutes,
         )
         if not self.agents:
             self.pull_fleet()
@@ -153,7 +164,8 @@ class OrchestratorAgent:
             raise RuntimeError("no firefighter agents available from the fleet")
 
         result = CycleResult(simulation_id=simulation_id)
-        result.assignments = self._assign_sectors(situation, simulation)
+        result.assignments = self._assign_sectors(situation, simulation, stage_minutes, concentration)
+        result.life = self._plan_life(situation, location_id, result.assignments)
         for agent in self.agents:
             message = agent.decide(situation, result.assignments.get(agent.agent_id))
             result.decisions.append(message)
@@ -179,7 +191,9 @@ class OrchestratorAgent:
         except ApiProblem:
             return None
 
-    def _assign_sectors(self, situation: Situation, simulation: dict[str, Any] | None) -> dict[str, Assignment]:
+    def _assign_sectors(
+        self, situation: Situation, simulation: dict[str, Any] | None, stage_minutes: int | None = None, concentration: int | None = None
+    ) -> dict[str, Assignment]:
         """Spread the units over the fire front instead of letting each one aim at the head.
 
         The front comes from the backend's spread vectors one horizon ahead of the decision (where the fire will be
@@ -201,7 +215,101 @@ class OrchestratorAgent:
             if sectors:
                 break
         units = [(agent.agent_id, agent.tier.value) for agent in self.agents]
-        return assign_units(units, sectors, situation.people_in_danger_within())
+        budgets = (
+            {a.agent_id: line_budget_m(a.tier.value, a.observation.crew_onboard, stage_minutes, situation.rules) for a in self.agents}
+            if stage_minutes
+            else None
+        )
+        # places are not dealt out here: the life planner decides who looks after whom (see `_plan_life`)
+        return assign_units(units, sectors, [], budgets=budgets, concentration=concentration)
+
+    def _people_at(self, asset: dict[str, Any], location_id: str) -> tuple[int, str]:
+        """How many people are there: the forecast says it for places; for a facility without a count, the area statistics, else an assumption."""
+        if asset.get("population"):
+            return int(asset["population"]), "forecast"
+        position = asset.get("position")
+        if position:
+            try:
+                ring = zone_around(float(position["lat"]), float(position["lon"]), 0.0, 200.0, 0, 12)
+                stats = self.client.get_area_stats(location_id, ring)
+                counted = int(stats.get("estimatedPeople") or 0) + sum(int(f.get("capacity") or 0) for f in stats.get("facilities") or [])
+                if counted > 0:
+                    return counted, "area-stats"
+            except ApiProblem:
+                pass
+        return ASSUMED_PEOPLE_UNKNOWN_FACILITY, "assumed"
+
+    def _plan_life(self, situation: Situation, location_id: str, assignments: dict[str, Assignment]) -> LifePlan | None:
+        """Decide who evacuates what (vulnerable and most urgent first) and who shelters; hands each place its units.
+
+        Squads (and vehicles that carry passengers) evacuate; fire engines able to defend buildings defend the threatened places.
+        Everyone else keeps fighting the fire.
+        """
+        from dataclasses import replace  # local: only this method rewrites assignments
+
+        assets = situation.people_in_danger_within(situation.life_horizon_minutes)
+        if not assets:
+            return None
+        now = float(situation.at_minute or 0)
+        items = []
+        for asset in assets:
+            people, source = self._people_at(asset, location_id)
+            arrival = asset["arrivalMinute"]
+            items.append(AtRisk(
+                id=str(asset["id"]), name=str(asset.get("name") or asset["id"]), kind=str(asset.get("assetType") or "place"), position=asset.get("position") or {},
+                people=people, vulnerable=bool(asset.get("vulnerable")), arrival_p10=float(arrival.get("p10", arrival["p50"])), arrival_p50=float(arrival["p50"]),
+                people_source=source, asset=asset,
+            ))
+        evacuators = []
+        for agent in self.agents:
+            obs = agent.observation
+            if agent.tier.value == "squad":
+                evacuators.append(Evacuator.on_foot(agent.agent_id, obs.crew_onboard))
+            elif obs.passenger_capacity > 0 and obs.capabilities & {"evacuation_transport", "traffic_control", "perimeter_security"}:
+                evacuators.append(Evacuator.by_vehicle(agent.agent_id, obs.passenger_capacity))
+        margin = float((((situation.rules or {}).get("safety") or {}).get("withdrawWhenFireArrivesInMinutes")) or 10.0)
+        plan = plan_life(items, evacuators, now=now, margin_min=margin)
+        by_id = {d.item.id: d for d in plan.decisions}
+        for decision in plan.decisions:
+            for agent_id in decision.responders:
+                if agent_id in assignments:
+                    assignments[agent_id] = replace(assignments[agent_id], place=decision.item.asset)
+        defenders = [a for a in self.agents if a.tier.value == "truck" and "structure_protection" in a.observation.capabilities and a.agent_id not in {r for d in plan.decisions for r in d.responders}]
+        for decision in sorted(plan.decisions, key=lambda d: d.item.priority):
+            for agent in defenders[:DEFENDERS_PER_ITEM]:
+                if agent.agent_id in assignments:
+                    assignments[agent.agent_id] = replace(assignments[agent.agent_id], place=decision.item.asset)
+            defenders = defenders[DEFENDERS_PER_ITEM:]
+        return plan if by_id else None
+
+    def _command_organization(self) -> str:
+        """The organization that issues advisories to the public: civil protection if the backend has one, else the first unit's."""
+        if getattr(self, "_command_org", None):
+            return self._command_org
+        try:
+            orgs = self.client.list_organizations("civil_protection")
+        except ApiProblem:
+            orgs = []
+        self._command_org = str(orgs[0]["id"]) if orgs else (_organization_of_agent(self.agents[0]) if self.agents else "org-unknown")
+        return self._command_org
+
+    def _shelter_actions(self, result: "CycleResult") -> list[dict[str, Any]]:
+        """`shelter_in_place` actions for the places the planner could not evacuate in time."""
+        actions = []
+        for decision in (result.life.decisions if result.life else ()):
+            if decision.action != "shelter":
+                continue
+            item = decision.item
+            if not item.position:
+                continue
+            actions.append({
+                "id": f"shelter-{item.id}", "type": "shelter_in_place", "title": f"Abrigar no local: {item.name}",
+                "organizationId": self._command_organization(), "priority": "critical", "rationale": decision.reason,
+                "area": zone_around(float(item.position["lat"]), float(item.position["lon"]), 0.0, 250.0, 0, 16),
+                "placeIds": [item.id], "guidance": "Ficar em casa, janelas e portas fechadas, afastado das fachadas viradas ao fogo; seguir as indicações da Proteção Civil.",
+                "durationMinutes": 90,
+            })
+        return actions
 
     def _load_rules(self) -> dict[str, Any] | None:
         """The backend's own numbers (`GET /rules`); a server without them leaves the agents on their defaults."""
@@ -394,6 +502,11 @@ class OrchestratorAgent:
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
             actions.append(action)
             summary.append(f"- **{message.agent_id}** ({message.tier.value}, {message.objective}): {message.reason}")
+        if result.life and result.life.decisions:
+            actions.extend(self._shelter_actions(result))
+            summary.append("")
+            summary.append(f"### Vidas ({result.life.report.line()})")
+            summary.extend(f"- {d.reason}" for d in result.life.decisions)
         if issues_lines:
             summary.append("")
             summary.append("### Ajustes do orchestrador")
@@ -442,6 +555,10 @@ class OrchestratorAgent:
 # -------------------------------------------------------------------------------
 def _organization_of(message: DecisionMessage) -> str:
     return (message.organization_id or "").strip() or "org-unknown"
+
+
+def _organization_of_agent(agent: Any) -> str:
+    return (agent.observation.organization_id or "").strip() or "org-unknown"
 
 
 def _alert_level(result: CycleResult, life_first: bool) -> str:

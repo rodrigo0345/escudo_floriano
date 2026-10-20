@@ -65,6 +65,8 @@ class Assignment:
     sector: Sector | None = None
     slot: int = 0
     place: dict[str, Any] | None = None  # a threatened place/facility (`ThreatenedAsset`)
+    segment_m: float | None = None  # how much line this unit can build this stage (None = the tier's fixed length)
+    offset_m: float = 0.0  # where along the barrier its segment sits, from the sector's centre (laid end to end with the others)
 
 
 def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12) -> list[Sector]:
@@ -88,12 +90,74 @@ def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit
     return kept
 
 
-def assign_units(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]]) -> dict[str, Assignment]:
+def slot_shift(slot: int, step_m: float) -> float:
+    """Slot 0 stays put; 1, 2, 3, 4... move to alternate sides, one ``step_m`` further each pair (never zero for slot > 0)."""
+    return ((slot + 1) // 2) * step_m * (1 if slot % 2 else -1)
+
+
+def assign_units(
+    units: Sequence[tuple[str, str]],
+    sectors: Sequence[Sector],
+    places: Sequence[dict[str, Any]],
+    *,
+    budgets: dict[str, float] | None = None,
+    concentration: int | None = None,
+) -> dict[str, Assignment]:
     """``units`` are ``(agent_id, tier)``; helicopters pick first, then trucks, then squads (stable by id).
 
     Each unit takes the least-used sector of its tier's share; ``slot`` counts the units already there, so they can be
     laid side by side along the front. Threatened places are dealt round-robin within each tier, most urgent first.
+
+    With ``budgets`` (metres of line per unit) every unit's line is as long as it can build. With ``concentration`` too, the
+    metres are spent on the ``concentration`` most dangerous sectors, in proportion to their danger, and the units of a sector
+    are laid end to end as **one barrier** instead of piled up in parallel.
     """
+    if budgets is not None and concentration:
+        return _assign_barriers(units, sectors, places, budgets, concentration)
+    assigned = _assign_by_tier(units, sectors, places)
+    if budgets is None:
+        return assigned
+    return {
+        agent_id: Assignment(a.sector, a.slot, a.place, segment_m=budgets.get(agent_id), offset_m=slot_shift(a.slot, budgets.get(agent_id) or 0.0))
+        for agent_id, a in assigned.items()
+    }
+
+
+def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], budgets: dict[str, float], concentration: int) -> dict[str, Assignment]:
+    order = {"helicopter": 0, "truck": 1, "squad": 2}
+    ranked = sorted(units, key=lambda u: (order.get(u[1], 9), u[0]))
+    top = list(sectors[: max(1, concentration)])
+    out: dict[str, Assignment] = {}
+    dealt: dict[str, int] = {}
+
+    def place_for(tier: str) -> dict[str, Any] | None:
+        if not places:
+            return None
+        place = places[dealt.get(tier, 0) % len(places)]
+        dealt[tier] = dealt.get(tier, 0) + 1
+        return place
+
+    if not top:
+        return {agent_id: Assignment(place=place_for(tier), segment_m=budgets.get(agent_id)) for agent_id, tier in ranked}
+    total_danger = sum(s.danger for s in top) or 1.0
+    weight = {s: max(s.danger / total_danger, 1e-6) for s in top}
+    allocated = {s: 0.0 for s in top}
+    members: dict[Sector, list[tuple[str, str]]] = {s: [] for s in top}
+    for agent_id, tier in ranked:
+        b = budgets.get(agent_id) or 0.0
+        sector = min(top, key=lambda s: ((allocated[s] + b) / weight[s], top.index(s)))  # fill each sector in proportion to its danger
+        allocated[sector] += b
+        members[sector].append((agent_id, tier))
+    for sector, group in members.items():
+        total, cumulative = allocated[sector], 0.0
+        for slot, (agent_id, tier) in enumerate(group):
+            segment = budgets.get(agent_id) or 0.0
+            out[agent_id] = Assignment(sector, slot, place_for(tier), segment_m=segment, offset_m=cumulative + segment / 2 - total / 2)
+            cumulative += segment
+    return out
+
+
+def _assign_by_tier(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]]) -> dict[str, Assignment]:
     n = len(sectors)
     pools: dict[str, Sequence[Sector]] = {
         "helicopter": sectors[: max(1, math.ceil(n * HELICOPTER_SHARE))],
@@ -121,8 +185,17 @@ def assign_units(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], pl
 
 def _shifted(lat: float, lon: float, across_deg: float, slot: int, step_m: float) -> tuple[float, float]:
     """Slot 0 stays put; 1, 2, 3, 4... move to alternate sides along the front, one ``step_m`` further each pair."""
-    shift = ((slot + 1) // 2) * step_m * (1 if slot % 2 else -1)
+    shift = slot_shift(slot, step_m)
     return destination(lat, lon, across_deg, shift) if shift else (lat, lon)
+
+
+def line_segment(lat: float, lon: float, bearing_deg: float, length_m: float, offset_m: float = 0.0) -> dict[str, Any]:
+    """A piece of barrier across the fire's path: ``length_m`` long, its centre ``offset_m`` along the barrier from the sector."""
+    across = (bearing_deg + 90.0) % 360.0
+    c_lat, c_lon = destination(lat, lon, across, offset_m) if offset_m else (lat, lon)
+    a_lat, a_lon = destination(c_lat, c_lon, across, length_m / 2)
+    b_lat, b_lon = destination(c_lat, c_lon, across, -length_m / 2)
+    return {"type": "LineString", "coordinates": [[a_lon, a_lat], [b_lon, b_lat]]}
 
 
 def line_across(lat: float, lon: float, bearing_deg: float, half_length_m: float, slot: int = 0) -> dict[str, Any]:

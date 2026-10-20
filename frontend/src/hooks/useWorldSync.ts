@@ -18,6 +18,8 @@ export function useWorldSync(): void {
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const run = useAppStore((s) => s.run);
+  const activePlan = useAppStore((s) => s.activePlan);
+  const locationData = useAppStore((s) => s.data);
   const t = useAppStore((s) => s.t);
   const probMode = useAppStore((s) => s.probMode);
   const detailCache = useRef(new Map<string, Detail>());
@@ -40,6 +42,15 @@ export function useWorldSync(): void {
   useEffect(() => {
     if (world) world.smoke.enabled = smokeEnabled;
   }, [world, smokeEnabled]);
+
+  // the agents' plan on the terrain (a structure-protection effect names a place, so places and facilities are looked up by id)
+  useEffect(() => {
+    if (!world) return;
+    const where = new Map<string, { lat: number; lon: number }>();
+    for (const p of locationData?.places ?? []) where.set(p.id as string, p.position);
+    for (const f of locationData?.facilities ?? []) where.set(f.id as string, f.position);
+    world.plan.setPlan(activePlan, where);
+  }, [world, activePlan, locationData]);
 
   // a new run invalidates cached per-minute detail
   useEffect(() => {

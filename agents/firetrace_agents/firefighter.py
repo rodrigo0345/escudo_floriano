@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .contracts import OBJECTIVES, INTERVENTION_TYPES, UNSAFE_ON_WIRE
-from .sectors import Assignment, Sector, line_across, zone_around
+from .sectors import Assignment, Sector, line_across, line_segment, zone_around
 from .tiers import FirefighterTier, tier_for_vehicle
 
 # Spec ``Responsibility`` -> vehicle capabilities that let a vehicle take it (the backend warns
@@ -61,6 +61,8 @@ class Situation:
     """The backend's ``GET /rules`` (safety distances, suppression effectiveness...). ``None`` = defaults below."""
     ignition: dict[str, Any] | None = None
     """Where the fire started (the scenario's first ignition): the position of last resort."""
+    life_horizon_minutes: int = 180
+    """How far ahead the life planner looks: emptying a town takes hours, so it looks further than the fire fight does."""
     focus: Sector | None = None
     """The stretch of front this agent was assigned. When set, position, bearing, speed and intensity are *its* sector's."""
 
@@ -156,10 +158,10 @@ class Situation:
         arrivals = [asset["arrivalMinute"]["p50"] for asset in self.threatened_places]
         return min(arrivals) if arrivals else None
 
-    def people_in_danger_within(self) -> list[dict[str, Any]]:
-        """Threatened places whose fire arrival (p50) falls inside the horizon."""
-        horizon = self.horizon_minutes
-        return [asset for asset in self.threatened_places if asset["arrivalMinute"]["p50"] <= horizon]
+    def people_in_danger_within(self, horizon: int | None = None) -> list[dict[str, Any]]:
+        """Threatened places whose fire arrival (p50) falls inside the horizon (the fighting horizon unless another is given)."""
+        limit = self.horizon_minutes if horizon is None else horizon
+        return [asset for asset in self.threatened_places if asset["arrivalMinute"]["p50"] <= limit]
 
 
 def situation_from_simulation(
@@ -171,8 +173,10 @@ def situation_from_simulation(
     at_minute: int | None = None,
     rules: dict[str, Any] | None = None,
     ignition: dict[str, Any] | None = None,
+    life_horizon_minutes: int = 180,
 ) -> Situation:
     return Situation(
+        life_horizon_minutes=life_horizon_minutes,
         simulation_id=simulation_id,
         horizon_minutes=horizon_minutes,
         threatened=threatened,
@@ -316,9 +320,12 @@ class FirefighterAgent:
         self._assignment = assignment or Assignment()
         if self._assignment.sector is not None:
             situation = replace(situation, focus=self._assignment.sector)  # position, bearing, speed and intensity of *its* sector
-        in_danger = situation.people_in_danger_within()
-        if in_danger and self._assignment.place is not None:
-            in_danger = [self._assignment.place]  # each unit looks after its own place, not all of them
+        if self._assignment.place is not None:
+            in_danger = [self._assignment.place]  # the life planner gave this unit its own place (possibly beyond the fighting horizon)
+        elif assignment is not None:
+            in_danger = []  # an orchestrator is in charge and gave this unit no place: it keeps fighting the fire
+        else:
+            in_danger = situation.people_in_danger_within()  # no orchestrator: every unit reacts to the people in its horizon
         if in_danger:
             proposals, reason, confidence = self._protect_life(situation, in_danger)
             objective = PROTECT_LIFE
@@ -363,6 +370,9 @@ class FirefighterAgent:
         """A line *across* the fire's path at the unit's sector (or at ``position``), as long as its tier can build;
         units sharing a sector are laid side by side (``slot``) instead of on top of each other."""
         at = position or situation.anchor
+        if position is None and self._assignment.segment_m:
+            # the orchestrator measured what this unit can build in the stage, and where its piece sits in the barrier
+            return line_segment(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, self._assignment.segment_m, self._assignment.offset_m)
         half = situation.zone_radius_m * LINE_FACTOR[self.tier]
         return line_across(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, half, self._assignment.slot)
 

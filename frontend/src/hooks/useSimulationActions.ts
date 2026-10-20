@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { simulationsApi, type Simulation, type SimulationRequest } from '@/api';
+import { plansApi, simulationsApi, type Simulation, type SimulationRequest } from '@/api';
 import { Impact } from '@/domain/impact';
 import { formatDateTime, formatTime } from '@/domain/weather';
 import { useWorld } from '@/engine/EngineContext';
@@ -69,10 +69,21 @@ export function useSimulationActions() {
       });
       const first = simulation.scenarioSnapshot.ignitions[0].position;
       state.setRun(run);
+      // opened by id the picker must name *this* fire, not the first one: by scenario id, else by the snapshot's name, else "custom"
+      const ownScenario = simulation.scenarioId ?? data.scenarios.find((s) => s.name === simulation.scenarioSnapshot.name)?.id ?? 'custom';
       if (simulation.kind !== 'what_if') {
         state.setBaseSimulationId(run.id); // the plans panel lists plans made for this baseline
-        state.setScenario(simulation.scenarioId ?? 'custom'); // opened by id: the scenario picker must name *this* fire, not the first one
-      } // a plan's what-if is the same fire as its baseline: the picker keeps pointing at it
+        state.setScenario(ownScenario);
+      } else if (!useAppStore.getState().scenarioId) {
+        state.setScenario(ownScenario); // a plan's run opened directly; from the plans panel the picker already points at its fire
+      }
+      // draw the plan whose what-if this is; a baseline has none
+      if (simulation.kind === 'what_if' && simulation.planId) {
+        plansApi
+          .get(simulation.planId as string)
+          .then((plan) => useAppStore.getState().run?.id === run.id && useAppStore.getState().setActivePlan(plan))
+          .catch((e: Error) => console.warn('plano no mapa:', e.message));
+      } else state.setActivePlan(null);
       state.setIgnition({ lat: first.lat, lon: first.lon });
       world.fire.setIgnition(first.lat, first.lon, `Ignição ${formatDateTime(run.startMs)}`);
       if (!framedFirstRun) {
