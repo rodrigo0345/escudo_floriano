@@ -2,10 +2,13 @@ import * as THREE from 'three';
 
 const DROP_COUNT = 1600;
 // In FireTrace coordinates, 1 world unit = 10 meters.
-// BOUNDS_XZ = 160 units => 1600 m (1.6 km) across the camera focal area.
-// BOUNDS_Y  = 75 units  => 750 m vertical fall column above ground.
-const BOUNDS_XZ = 160;
-const BOUNDS_Y = 75;
+// BOUNDS_XZ = 180 units => 1800 m across the camera focal area.
+// CLOUD_BASE_Y = 72 units => 720m altitude, exactly matching the underside of the cloud deck.
+// Rain strictly originates at or below CLOUD_BASE_Y and falls towards ground level (Y ~ 0).
+const BOUNDS_XZ = 180;
+const CLOUD_BASE_Y = 72;
+const GROUND_Y = -6;
+const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
 
 /**
  * 3D Rain Particle Layer:
@@ -31,14 +34,14 @@ export class RainLayer {
 
     for (let i = 0; i < DROP_COUNT; i++) {
       const x = (Math.random() - 0.5) * BOUNDS_XZ;
-      const y = Math.random() * BOUNDS_Y;
+      const y = GROUND_Y + Math.random() * RAIN_FALL_RANGE;
       const z = (Math.random() - 0.5) * BOUNDS_XZ;
       const streakLen = 1.6 + Math.random() * 1.8; // 16m to 34m world streak length
       this.lengths[i] = streakLen;
 
       // Top of streak (initial vertical)
       this.positions[i * 6] = x;
-      this.positions[i * 6 + 1] = y + streakLen;
+      this.positions[i * 6 + 1] = Math.min(CLOUD_BASE_Y, y + streakLen);
       this.positions[i * 6 + 2] = z;
 
       // Bottom of streak
@@ -94,7 +97,9 @@ export class RainLayer {
     const driftRatio = Math.min(0.85, (Math.max(0, windKmh) / 45) * 0.6);
 
     if (cameraTarget) {
-      this.group.position.set(cameraTarget.x, cameraTarget.y, cameraTarget.z);
+      // Anchored at ground level Y=0 so raindrop altitudes strictly map to world elevation.
+      // Follows cameraTarget X and Z horizontally so precipitation stays in focus.
+      this.group.position.set(cameraTarget.x, 0, cameraTarget.z);
     }
 
     const pos = this.positions;
@@ -117,12 +122,12 @@ export class RainLayer {
       pos[idx + 4] -= dy;
       pos[idx + 5] += dz;
 
-      // Top position stays slanted upwind from bottom
+      // Top position stays slanted upwind from bottom, clamped to cloud base
       pos[idx] = pos[idx + 3] - slantX;
-      pos[idx + 1] = pos[idx + 4] + len;
+      pos[idx + 1] = Math.min(CLOUD_BASE_Y, pos[idx + 4] + len);
       pos[idx + 2] = pos[idx + 5] - slantZ;
 
-      // Wrap boundaries horizontally
+      // Wrap boundaries horizontally around focus area
       if (pos[idx + 3] > halfX) {
         pos[idx + 3] -= BOUNDS_XZ;
         pos[idx] -= BOUNDS_XZ;
@@ -138,10 +143,10 @@ export class RainLayer {
         pos[idx + 2] += BOUNDS_XZ;
       }
 
-      // Reset when below ground relative to camera focus
-      if (pos[idx + 4] < -8) {
+      // Reset when below ground level - respawn strictly inside the underside of the clouds
+      if (pos[idx + 4] < GROUND_Y) {
         const x = (Math.random() - 0.5) * BOUNDS_XZ;
-        const y = BOUNDS_Y - Math.random() * 8;
+        const y = CLOUD_BASE_Y - Math.random() * 5;
         const z = (Math.random() - 0.5) * BOUNDS_XZ;
 
         pos[idx + 3] = x;
@@ -149,7 +154,7 @@ export class RainLayer {
         pos[idx + 5] = z;
 
         pos[idx] = x - slantX;
-        pos[idx + 1] = y + len;
+        pos[idx + 1] = Math.min(CLOUD_BASE_Y, y + len);
         pos[idx + 2] = z - slantZ;
       }
     }

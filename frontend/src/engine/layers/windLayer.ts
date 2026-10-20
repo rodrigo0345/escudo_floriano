@@ -5,7 +5,7 @@ import { windColor } from '@/domain/colors';
 import type { Georef } from '@/domain/georef';
 import { sampleWeatherAt } from '@/domain/weather';
 
-const MAX_TOTAL_INSTANCES = 500;
+const MAX_TOTAL_INSTANCES = 2000;
 const ACTIVE_WINDOW_MIN = 25;
 const MIN_INTENSITY_KWM = 350;
 const INFLOW_DECAY_M = 900;
@@ -234,7 +234,7 @@ export class WindLayer {
 
     const tryPlaceCandidate = (wx: number, wz: number): boolean => {
       if (placed.length >= MAX_TOTAL_INSTANCES) return false;
-      if (Math.abs(wx) >= this.geo.W * 0.48 || Math.abs(wz) >= this.geo.H * 0.48) return false;
+      if (Math.abs(wx) >= this.geo.W * 0.495 || Math.abs(wz) >= this.geo.H * 0.495) return false;
 
       const { heading, speedKmh, isFireZone } = computeVectorAt(wx, wz);
 
@@ -292,17 +292,18 @@ export class WindLayer {
       }
     }
 
-    // --- STEP B: Regional ambient grid across the territory ---
-    const ambStepM = 520 / densityExp;
+    // --- STEP B: Regional ambient grid across the whole territory ---
+    // Scaled to span seamlessly across all quadrants (north, south, east, west)
+    const ambStepM = 620 / densityExp;
     const ambStepUnits = ambStepM / this.geo.unit;
-    const xMin = -this.geo.W * 0.46;
-    const xMax = this.geo.W * 0.46;
-    const zMin = -this.geo.H * 0.46;
-    const zMax = this.geo.H * 0.46;
+    const xMin = -this.geo.W * 0.485;
+    const xMax = this.geo.W * 0.485;
+    const zMin = -this.geo.H * 0.485;
+    const zMax = this.geo.H * 0.485;
 
-    for (let wz = zMin; wz <= zMax; wz += ambStepUnits) {
+    gridLoop: for (let wz = zMin; wz <= zMax; wz += ambStepUnits) {
       for (let wx = xMin; wx <= xMax; wx += ambStepUnits) {
-        if (placed.length >= MAX_TOTAL_INSTANCES) break;
+        if (placed.length >= MAX_TOTAL_INSTANCES) break gridLoop;
         tryPlaceCandidate(wx, wz);
       }
     }

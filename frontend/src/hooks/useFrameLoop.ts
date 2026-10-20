@@ -83,6 +83,7 @@ export function useFrameLoop(): void {
             precipMmH,
             engine.isNight,
             engine.controls.target,
+            engine.camera,
           );
         }
       }

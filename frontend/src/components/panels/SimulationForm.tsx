@@ -56,6 +56,7 @@ export function SimulationForm() {
   const [values, setValues] = useState<SimulationFormValues>(() => defaultFormValues(run));
   const [weatherTouched, setWeatherTouched] = useState(false);
   const [preview, setPreview] = useState<WeatherSample[] | null>(null);
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const baseState = useProviderBase(run, locationId, values.start, values.duration);
   const base = baseState.base;
   const baseKey = locationId ? `${locationId}|${values.start}|${values.duration}` : null;
@@ -183,6 +184,7 @@ export function SimulationForm() {
     const next = [...values.customEvents, ev];
     setValues((v) => ({ ...v, customEvents: next }));
     setCustomEvents(next);
+    setExpandedEventId(ev.id);
   };
 
   const updateCustomRangeEvent = (id: string, patch: Partial<TimelineRangeEvent>) => {
@@ -315,11 +317,15 @@ export function SimulationForm() {
           ) : null}
         </div>
 
-        {/* Range-based Weather Events Section (Requirement 1 & 1.1) */}
+        {/* Compact Range-based Weather Events Section */}
         <div className={styles.rangeEventsSection}>
           <div className={styles.rangeEventsHead}>
-            <h4>Eventos Meteorológicos no Tempo (Janelas T+)</h4>
-            <span>Adicione intervalos personalizados para chuva, vento, neblina ou trovoada</span>
+            <div className={styles.rangeHeadRow}>
+              <h4>Eventos no Tempo (T+)</h4>
+              {values.customEvents.length > 0 && (
+                <span className={styles.eventCountBadge}>{values.customEvents.length}</span>
+              )}
+            </div>
           </div>
 
           {/* Quick-add buttons */}
@@ -328,7 +334,7 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('rain')}
-              title="Adicionar intervalo com precipitação"
+              title="Adicionar intervalo com chuva"
             >
               + 🌧️ Chuva
             </button>
@@ -336,7 +342,7 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('storm')}
-              title="Adicionar trovoada com vento forte e chuva intensa"
+              title="Adicionar trovoada com vento e chuva"
             >
               + ⛈️ Trovoada
             </button>
@@ -344,7 +350,7 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('clouds')}
-              title="Adicionar período com neblina / nuvens densas"
+              title="Adicionar neblina / nuvens densas"
             >
               + 🌫️ Neblina
             </button>
@@ -352,7 +358,7 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('wind_shift')}
-              title="Adicionar rotação da direção do vento"
+              title="Adicionar rotação do vento"
             >
               + 💨 Vento
             </button>
@@ -360,7 +366,7 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('heat_dry')}
-              title="Adicionar período de calor e ar seco"
+              title="Adicionar calor e seca"
             >
               + ☀️ Calor
             </button>
@@ -369,24 +375,24 @@ export function SimulationForm() {
               className={styles.quickAddBtn}
               onClick={addSecondIgnition}
               disabled={ignitions.length >= maxIgnitions}
-              title="Adicionar um segundo foco de ignição"
+              title="Adicionar foco secundário"
             >
               + 🔥 2.º Foco
             </button>
           </div>
 
-          {/* Mini-timeline track showing scheduled events */}
+          {/* Slim mini-timeline track showing scheduled event spans */}
           {values.customEvents.length > 0 && (
             <div className={styles.miniTimelineWrap}>
               <div className={styles.miniTimelineTrack}>
                 {values.customEvents.map((ev) => {
                   const left = Math.min(100, Math.max(0, (ev.startMinute / values.duration) * 100));
                   const width = Math.min(100 - left, Math.max(4, ((ev.endMinute - ev.startMinute) / values.duration) * 100));
-                  let bg = 'rgba(56, 189, 248, 0.7)';
-                  if (ev.type === 'storm') bg = 'rgba(168, 85, 247, 0.7)';
-                  if (ev.type === 'clouds') bg = 'rgba(148, 163, 184, 0.7)';
-                  if (ev.type === 'wind_shift' || ev.type === 'wind_scale') bg = 'rgba(251, 191, 36, 0.7)';
-                  if (ev.type === 'heat_dry') bg = 'rgba(248, 113, 113, 0.7)';
+                  let bg = 'rgba(56, 189, 248, 0.8)';
+                  if (ev.type === 'storm') bg = 'rgba(168, 85, 247, 0.8)';
+                  if (ev.type === 'clouds') bg = 'rgba(148, 163, 184, 0.8)';
+                  if (ev.type === 'wind_shift' || ev.type === 'wind_scale') bg = 'rgba(251, 191, 36, 0.8)';
+                  if (ev.type === 'heat_dry') bg = 'rgba(248, 113, 113, 0.8)';
 
                   return (
                     <div
@@ -396,7 +402,7 @@ export function SimulationForm() {
                         left: `${left}%`,
                         width: `${width}%`,
                         background: bg,
-                        opacity: ev.enabled ? 1 : 0.4,
+                        opacity: ev.enabled ? 1 : 0.35,
                       }}
                       title={`${ev.label}: T+${ev.startMinute}–${ev.endMinute} min`}
                     />
@@ -405,229 +411,250 @@ export function SimulationForm() {
               </div>
               <div className={styles.miniTimelineTicks}>
                 <span>T+0</span>
-                <span>T+{Math.round(values.duration / 2)}</span>
-                <span>T+{values.duration} min</span>
+                <span>T+{values.duration}m</span>
               </div>
             </div>
           )}
 
-          {/* List of custom event cards */}
+          {/* Compact collapsible list of custom event items */}
           <div className={styles.customEventsList}>
             {values.customEvents.length === 0 ? (
-              <div className={styles.noEventsNote}>
-                Sem eventos temporais agendados. Use os botões acima ou clique na timeline inferior para marcar períodos de chuva ou alterações de vento.
-              </div>
+              <span className={styles.noEventsNote}>
+                Sem eventos temporais. Clique na timeline inferior ou use os botões acima.
+              </span>
             ) : (
-              values.customEvents.map((ev) => (
-                <div key={ev.id} className={`${styles.eventCard} ${!ev.enabled ? styles.eventDisabled : ''}`}>
-                  <div className={styles.eventCardHeader}>
-                    <label className={styles.eventCardTitle}>
-                      <input
-                        type="checkbox"
-                        checked={ev.enabled}
-                        onChange={(e) => updateCustomRangeEvent(ev.id, { enabled: e.target.checked })}
-                      />
-                      <span>
-                        {ev.type === 'rain' && '🌧️ Chuva'}
-                        {ev.type === 'storm' && '⛈️ Trovoada'}
-                        {ev.type === 'clouds' && '🌫️ Neblina / Nuvens'}
-                        {ev.type === 'wind_shift' && '💨 Rotação de Vento'}
-                        {ev.type === 'wind_scale' && '🌪️ Rajadas de Vento'}
-                        {ev.type === 'heat_dry' && '☀️ Calor e Seca'}
+              values.customEvents.map((ev) => {
+                const isExpanded = expandedEventId === ev.id;
+                let summaryText = '';
+                if (ev.type === 'rain') summaryText = `${ev.intensityMmH ?? 6} mm/h`;
+                else if (ev.type === 'storm') summaryText = `${ev.intensityMmH ?? 15} mm/h · ${ev.windKmh ?? 42} km/h`;
+                else if (ev.type === 'clouds') summaryText = `${ev.cloudCoverPct ?? 85}%`;
+                else if (ev.type === 'wind_shift') summaryText = `${ev.windFromDeg ?? 270}° ${compass(ev.windFromDeg ?? 270)}`;
+                else if (ev.type === 'wind_scale') summaryText = `${Math.round((ev.windFactor ?? 1.5) * 100)}%`;
+                else if (ev.type === 'heat_dry') summaryText = `+${ev.tempDeltaC ?? 4}°C · ${ev.humidityDeltaPct ?? -15}%`;
+
+                return (
+                  <div key={ev.id} className={`${styles.eventCardCompact} ${!ev.enabled ? styles.eventDisabled : ''}`}>
+                    <div className={styles.eventRowHead}>
+                      <label className={styles.eventRowLabel}>
+                        <input
+                          type="checkbox"
+                          checked={ev.enabled}
+                          onChange={(e) => updateCustomRangeEvent(ev.id, { enabled: e.target.checked })}
+                        />
+                        <span className={styles.eventTypeName}>
+                          {ev.type === 'rain' && '🌧️ Chuva'}
+                          {ev.type === 'storm' && '⛈️ Trovoada'}
+                          {ev.type === 'clouds' && '🌫️ Neblina'}
+                          {ev.type === 'wind_shift' && '💨 Vento'}
+                          {ev.type === 'wind_scale' && '🌪️ Rajadas'}
+                          {ev.type === 'heat_dry' && '☀️ Calor'}
+                        </span>
+                      </label>
+                      <span className={styles.eventTimePill}>
+                        T+{ev.startMinute}–{ev.endMinute}m
                       </span>
-                    </label>
-
-                    <div className={styles.eventCardActions}>
-                      <button
-                        type="button"
-                        className={styles.eventCardDelete}
-                        onClick={() => removeCustomRangeEvent(ev.id)}
-                        title="Remover evento"
-                      >
-                        ✕
-                      </button>
+                      <span className={styles.eventSummaryPill} title={summaryText}>
+                        {summaryText}
+                      </span>
+                      <div className={styles.eventRowActions}>
+                        <button
+                          type="button"
+                          className={styles.eventExpandBtn}
+                          onClick={() => setExpandedEventId(isExpanded ? null : ev.id)}
+                          title={isExpanded ? 'Recolher' : 'Ajustar parâmetros'}
+                        >
+                          {isExpanded ? '▲' : '▼'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.eventDeleteBtn}
+                          onClick={() => removeCustomRangeEvent(ev.id)}
+                          title="Remover evento"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Interval range controls */}
-                  <div className={styles.eventCardRange}>
-                    <span>De T+</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={ev.endMinute - 5}
-                      step={5}
-                      value={ev.startMinute}
-                      onChange={(e) => {
-                        const val = Math.max(0, Math.min(ev.endMinute - 5, +e.target.value || 0));
-                        updateCustomRangeEvent(ev.id, { startMinute: val });
-                      }}
-                    />
-                    <span>até T+</span>
-                    <input
-                      type="number"
-                      min={ev.startMinute + 5}
-                      max={values.duration}
-                      step={5}
-                      value={ev.endMinute}
-                      onChange={(e) => {
-                        const val = Math.min(values.duration, Math.max(ev.startMinute + 5, +e.target.value || 0));
-                        updateCustomRangeEvent(ev.id, { endMinute: val });
-                      }}
-                    />
-                    <span>min</span>
-                  </div>
-
-                  {/* Parameter sliders per event type */}
-                  <div className={styles.eventCardControls}>
-                    {ev.type === 'rain' && (
-                      <>
-                        <label>
-                          <span>
-                            Intensidade: <b>{ev.intensityMmH ?? 6.0} mm/h</b>
-                          </span>
+                    {/* Detailed controls rendered only when expanded */}
+                    {isExpanded && (
+                      <div className={styles.eventExpandedBody}>
+                        <div className={styles.eventCardRange}>
+                          <span>T+</span>
                           <input
-                            type="range"
-                            min={1}
-                            max={30}
-                            step={0.5}
-                            value={ev.intensityMmH ?? 6.0}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { intensityMmH: +e.target.value })}
-                          />
-                        </label>
-                        <div className={styles.eventCardNote}>
-                          ☁️ Nuvens formam-se gradualmente 40 min antes de T+{ev.startMinute} min.
-                        </div>
-                      </>
-                    )}
-
-                    {ev.type === 'storm' && (
-                      <>
-                        <label>
-                          <span>
-                            Chuva Forte: <b>{ev.intensityMmH ?? 15.0} mm/h</b>
-                          </span>
-                          <input
-                            type="range"
-                            min={5}
-                            max={50}
-                            step={1}
-                            value={ev.intensityMmH ?? 15.0}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { intensityMmH: +e.target.value })}
-                          />
-                        </label>
-                        <label>
-                          <span>
-                            Vento: <b>{ev.windKmh ?? 42} km/h</b>
-                          </span>
-                          <input
-                            type="range"
-                            min={20}
-                            max={90}
-                            step={2}
-                            value={ev.windKmh ?? 42}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
-                          />
-                        </label>
-                      </>
-                    )}
-
-                    {ev.type === 'clouds' && (
-                      <label>
-                        <span>
-                          Neblina / Nuvens: <b>{ev.cloudCoverPct ?? 85}%</b>
-                        </span>
-                        <input
-                          type="range"
-                          min={20}
-                          max={100}
-                          step={5}
-                          value={ev.cloudCoverPct ?? 85}
-                          onChange={(e) => updateCustomRangeEvent(ev.id, { cloudCoverPct: +e.target.value })}
-                        />
-                      </label>
-                    )}
-
-                    {ev.type === 'wind_shift' && (
-                      <>
-                        <label>
-                          <span>
-                            Direção: <b>{ev.windFromDeg ?? 270}° ({compass(ev.windFromDeg ?? 270)})</b>
-                          </span>
-                          <input
-                            type="range"
+                            type="number"
                             min={0}
-                            max={360}
-                            step={15}
-                            value={ev.windFromDeg ?? 270}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { windFromDeg: +e.target.value })}
-                          />
-                        </label>
-                        <label>
-                          <span>
-                            Velocidade: <b>{ev.windKmh ?? 35} km/h</b>
-                          </span>
-                          <input
-                            type="range"
-                            min={5}
-                            max={100}
-                            step={1}
-                            value={ev.windKmh ?? 35}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
-                          />
-                        </label>
-                      </>
-                    )}
-
-                    {ev.type === 'wind_scale' && (
-                      <label>
-                        <span>
-                          Multiplicador Vento: <b>{ev.windFactor ?? 1.7}x</b>
-                        </span>
-                        <input
-                          type="range"
-                          min={1.1}
-                          max={3.0}
-                          step={0.1}
-                          value={ev.windFactor ?? 1.7}
-                          onChange={(e) => updateCustomRangeEvent(ev.id, { windFactor: +e.target.value })}
-                        />
-                      </label>
-                    )}
-
-                    {ev.type === 'heat_dry' && (
-                      <>
-                        <label>
-                          <span>
-                            Aumento Temp: <b>+{ev.tempDeltaC ?? 6} °C</b>
-                          </span>
-                          <input
-                            type="range"
-                            min={1}
-                            max={12}
-                            step={1}
-                            value={ev.tempDeltaC ?? 6}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { tempDeltaC: +e.target.value })}
-                          />
-                        </label>
-                        <label>
-                          <span>
-                            Queda Humidade: <b>{ev.humidityDeltaPct ?? -20} %</b>
-                          </span>
-                          <input
-                            type="range"
-                            min={-40}
-                            max={-5}
+                            max={ev.endMinute - 5}
                             step={5}
-                            value={ev.humidityDeltaPct ?? -20}
-                            onChange={(e) => updateCustomRangeEvent(ev.id, { humidityDeltaPct: +e.target.value })}
+                            value={ev.startMinute}
+                            onChange={(e) => {
+                              const val = Math.max(0, Math.min(ev.endMinute - 5, +e.target.value || 0));
+                              updateCustomRangeEvent(ev.id, { startMinute: val });
+                            }}
                           />
-                        </label>
-                      </>
+                          <span>a</span>
+                          <input
+                            type="number"
+                            min={ev.startMinute + 5}
+                            max={values.duration}
+                            step={5}
+                            value={ev.endMinute}
+                            onChange={(e) => {
+                              const val = Math.min(values.duration, Math.max(ev.startMinute + 5, +e.target.value || 0));
+                              updateCustomRangeEvent(ev.id, { endMinute: val });
+                            }}
+                          />
+                          <span>min</span>
+                        </div>
+
+                        <div className={styles.eventCardControls}>
+                          {ev.type === 'rain' && (
+                            <label>
+                              <span>
+                                Intensidade: <b>{ev.intensityMmH ?? 6.0} mm/h</b>
+                              </span>
+                              <input
+                                type="range"
+                                min={1}
+                                max={30}
+                                step={0.5}
+                                value={ev.intensityMmH ?? 6.0}
+                                onChange={(e) => updateCustomRangeEvent(ev.id, { intensityMmH: +e.target.value })}
+                              />
+                            </label>
+                          )}
+
+                          {ev.type === 'storm' && (
+                            <>
+                              <label>
+                                <span>
+                                  Chuva: <b>{ev.intensityMmH ?? 15.0} mm/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={50}
+                                  step={1}
+                                  value={ev.intensityMmH ?? 15.0}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { intensityMmH: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Vento: <b>{ev.windKmh ?? 42} km/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={20}
+                                  max={90}
+                                  step={2}
+                                  value={ev.windKmh ?? 42}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {ev.type === 'clouds' && (
+                            <label>
+                              <span>
+                                Neblina / Nuvens: <b>{ev.cloudCoverPct ?? 85}%</b>
+                              </span>
+                              <input
+                                type="range"
+                                min={20}
+                                max={100}
+                                step={5}
+                                value={ev.cloudCoverPct ?? 85}
+                                onChange={(e) => updateCustomRangeEvent(ev.id, { cloudCoverPct: +e.target.value })}
+                              />
+                            </label>
+                          )}
+
+                          {ev.type === 'wind_shift' && (
+                            <>
+                              <label>
+                                <span>
+                                  Direção: <b>{ev.windFromDeg ?? 270}° ({compass(ev.windFromDeg ?? 270)})</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={360}
+                                  step={15}
+                                  value={ev.windFromDeg ?? 270}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windFromDeg: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Velocidade: <b>{ev.windKmh ?? 35} km/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={100}
+                                  step={1}
+                                  value={ev.windKmh ?? 35}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {ev.type === 'wind_scale' && (
+                            <label>
+                              <span>
+                                Multiplicador Vento: <b>{ev.windFactor ?? 1.7}x</b>
+                              </span>
+                              <input
+                                type="range"
+                                min={1.1}
+                                max={3.0}
+                                step={0.1}
+                                value={ev.windFactor ?? 1.7}
+                                onChange={(e) => updateCustomRangeEvent(ev.id, { windFactor: +e.target.value })}
+                              />
+                            </label>
+                          )}
+
+                          {ev.type === 'heat_dry' && (
+                            <>
+                              <label>
+                                <span>
+                                  Aumento Temp: <b>+{ev.tempDeltaC ?? 6} °C</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={1}
+                                  max={12}
+                                  step={1}
+                                  value={ev.tempDeltaC ?? 6}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { tempDeltaC: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Queda Humidade: <b>{ev.humidityDeltaPct ?? -20} %</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={-40}
+                                  max={-5}
+                                  step={5}
+                                  value={ev.humidityDeltaPct ?? -20}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { humidityDeltaPct: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
