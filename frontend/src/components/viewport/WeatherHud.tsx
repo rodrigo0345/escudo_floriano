@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
@@ -62,12 +62,12 @@ export function WeatherHud() {
         </div>
       ) : null}
       {fireRiskLevel(weather) === 'extreme' ? (
-        <div className={styles.extremeAlert} title="Condições meteorológicas extremas de propagação de incêndio rural">
-          🚨 <b>RISCO EXTREMO · Regra 30-30-30</b> (T&gt;30°C · HR&lt;30% · V&gt;30 km/h)
+        <div className={styles.extremeAlert} title="Condições meteorológicas extremas de propagação de incêndio rural (Regra dos 30-30-30: Temp ≥ 30°C, Humidade ≤ 30%, Vento/Rajadas ≥ 30 km/h)">
+          🚨 <b>RISCO EXTREMO · Regra 30-30-30</b> (T≥30°C · HR≤30% · V≥30 km/h)
         </div>
       ) : fireRiskLevel(weather) === 'high' ? (
-        <div className={styles.highRiskAlert} title="Calor excessivo e ar seco aumentam significativamente a combustibilidade dos combustíveis finos">
-          ⚠️ <b>Risco Elevado · Calor e Seca</b> ({Math.round(weather.tempC)}°C · {Math.round(weather.humidityPct)}% HR)
+        <div className={styles.highRiskChip} title="Calor excessivo e ar seco aumentam a combustibilidade dos combustíveis finos (T ≥ 30°C · HR ≤ 30%)">
+          ⚠️ <span>Risco Elevado · Calor e Seca</span>
         </div>
       ) : null}
       <div className={styles.hudRows}>

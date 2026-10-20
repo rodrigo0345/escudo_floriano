@@ -1,4 +1,4 @@
-﻿import { useEffect } from 'react';
+import { useEffect } from 'react';
 
 import { sampleWeatherAt } from '@/domain/weather';
 import { useEngine, useWorld } from '@/engine/EngineContext';
@@ -20,6 +20,7 @@ export function useFrameLoop(): void {
   useEffect(() => {
     if (!engine || !world) return;
     let last = 0;
+    let lastRainTs = 0;
     return engine.onFrame((ts) => {
       const s = useAppStore.getState();
       const run = s.run;
@@ -47,8 +48,11 @@ export function useFrameLoop(): void {
 
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
         engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0);
+
+        const rainDt = lastRainTs ? Math.min((ts - lastRainTs) / 1000, 0.1) : 0.016;
+        lastRainTs = ts;
         world.rain.update(
-          dt,
+          rainDt,
           w?.precipitationMmH ?? 0,
           w?.windKmh ?? 0,
           w?.windFromDeg ?? 0,

@@ -1,4 +1,4 @@
-﻿import type { WeatherSample } from '@/api';
+import type { WeatherSample } from '@/api';
 
 import { lerp, lerpDeg } from './colors';
 

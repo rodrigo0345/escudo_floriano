@@ -1,4 +1,4 @@
-﻿import * as THREE from 'three';
+import * as THREE from 'three';
 
 const DROP_COUNT = 1600;
 const BOUNDS_XZ = 380; // 380m radius around camera target

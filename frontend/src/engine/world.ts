@@ -1,4 +1,4 @@
-﻿import type { Facility, Location, Place, RoadCollection, VegetationInfo, WaterPoint } from '@/api';
+import type { Facility, Location, Place, RoadCollection, VegetationInfo, WaterPoint } from '@/api';
 import type { Georef } from '@/domain/georef';
 
 import { AssetLayer } from './layers/assetLayer';
