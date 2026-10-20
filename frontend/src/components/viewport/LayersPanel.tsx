@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import type { WaterPointKind } from '@/api';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
+import { windColorCss } from '@/domain/colors';
 import { useEngine, useWorld } from '@/engine/EngineContext';
 import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
@@ -22,17 +23,22 @@ const VIEW_MODES: { value: ViewModeName; label: string }[] = [
 ];
 const ELEVATION_GRADIENT = 'linear-gradient(90deg,#669e66,#9ec273,#dbd68c,#cca673,#ad8c73,#ebe6e0)';
 const SMOKE_LEGEND = ['neblina', 'reduzida', 'fraca', 'densa'];
+const WIND_LEGEND = [5, 15, 30, 50].map((kmh) => ({ label: `${kmh} km/h`, color: windColorCss(kmh) }));
 
 /** 3D/2D switch, base-layer switch, smoke overlay toggle, the legend for the active base layer, and water-point filters. */
 export function LayersPanel() {
   return (
     <div className={styles.layers}>
-      <ViewModeSwitch />
-      <BaseLayerSwitch />
-      <OverlayBox />
-      <PlanBox />
-      <BaseLayerLegend />
-      <WaterBox />
+      <div className={styles.layerControls}>
+        <ViewModeSwitch />
+        <BaseLayerSwitch />
+      </div>
+      <div className={styles.layerPanel}>
+        <WaterBox />
+        <OverlayBox />
+        <PlanBox />
+        <BaseLayerLegend />
+      </div>
     </div>
   );
 }
@@ -63,18 +69,55 @@ function BaseLayerSwitch() {
 function OverlayBox() {
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const setSmokeEnabled = useAppStore((s) => s.setSmokeEnabled);
+  const windEnabled = useAppStore((s) => s.windEnabled);
+  const setWindEnabled = useAppStore((s) => s.setWindEnabled);
+  const windDensity = useAppStore((s) => s.windDensity);
+  const setWindDensity = useAppStore((s) => s.setWindDensity);
   return (
-    <div className={styles.box}>
-      <label className={styles.overlayRow}>
-        <input type="checkbox" checked={smokeEnabled} onChange={(e) => setSmokeEnabled(e.target.checked)} /> Fumo
-      </label>
-      {smokeEnabled ? (
-        <div className={styles.overlayLegend}>
-          <LegendDots items={SMOKE_LEGEND.map((label, i) => ({ label, color: `rgba(${190 - i * 38},${185 - i * 41},${175 - i * 41},${0.25 + i * 0.22})` }))} />
-          <span className="mut">estradas sem visibilidade a castanho</span>
-        </div>
-      ) : null}
-    </div>
+    <section className={styles.layerSection}>
+      <div className={styles.sectionHead}>
+        <b className={styles.sectionTitle}>Sobreposições</b>
+        <span className={styles.sectionMeta}>camadas</span>
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow}>
+          <input type="checkbox" checked={smokeEnabled} onChange={(e) => setSmokeEnabled(e.target.checked)} />
+          <span>Fumo</span>
+        </label>
+        {smokeEnabled ? (
+          <div className={styles.overlayLegend}>
+            <LegendDots items={SMOKE_LEGEND.map((label, i) => ({ label, color: `rgba(${190 - i * 38},${185 - i * 41},${175 - i * 41},${0.25 + i * 0.22})` }))} />
+            <span className={styles.legendNote}>estradas sem visibilidade a castanho</span>
+          </div>
+        ) : null}
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow}>
+          <input type="checkbox" checked={windEnabled} onChange={(e) => setWindEnabled(e.target.checked)} />
+          <span>Vento 3D</span>
+        </label>
+        {windEnabled ? (
+          <div className={styles.overlayLegend}>
+            <LegendDots items={WIND_LEGEND} />
+            <div className={styles.densityRow}>
+              <span className={styles.densityLabel}>Densidade</span>
+              <input
+                type="range"
+                className={styles.densitySlider}
+                min={20}
+                max={100}
+                step={5}
+                value={windDensity}
+                onChange={(e) => setWindDensity(+e.target.value)}
+                aria-label="Densidade das setas de vento"
+              />
+              <span className={styles.densityValue}>{windDensity}%</span>
+            </div>
+            <span className={styles.legendNote}>campo com concentração e deflexão junto ao fogo</span>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -120,33 +163,41 @@ function BaseLayerLegend() {
 
   if (baseLayer === 'satellite') {
     return (
-      <div className={styles.box}>
-        <b>{world?.terrain.sourceLabel ?? 'Satélite'}</b>
-        <br />
-        <span className="mut">árvores, plantações, caminhos e edifícios visíveis</span>
-      </div>
+      <section className={styles.layerSection}>
+        <div className={styles.sectionHead}>
+          <b className={styles.sectionTitle}>{world?.terrain.sourceLabel ?? 'Satélite'}</b>
+          <span className={styles.sectionMeta}>base</span>
+        </div>
+        <span className={styles.sectionNote}>árvores, plantações, caminhos e edifícios visíveis</span>
+      </section>
     );
   }
   if (baseLayer === 'topo') {
     const { min, max } = data.location.elevationM ?? {};
     return (
-      <div className={styles.box}>
-        <b>Topografia</b>
+      <section className={styles.layerSection}>
+        <div className={styles.sectionHead}>
+          <b className={styles.sectionTitle}>Topografia</b>
+          <span className={styles.sectionMeta}>elevação</span>
+        </div>
         <div className={styles.ramp} style={{ background: ELEVATION_GRADIENT }} />
         <div className={styles.rampLabels}>
           <span>{min != null ? `${Math.round(min)} m` : ''}</span>
           <span>{max != null ? `${Math.round(max)} m` : ''}</span>
         </div>
-        <span className="mut">curvas de nível de 20 m (mestras de 100 m) e relevo sombreado</span>
-      </div>
+        <span className={styles.sectionNote}>curvas de nível de 20 m (mestras de 100 m) e relevo sombreado</span>
+      </section>
     );
   }
   const rows = data.vegetation.classes
     .filter((k) => (k.sharePct ?? 0) >= 0.05)
     .sort((a, b) => (b.sharePct ?? 0) - (a.sharePct ?? 0));
   return (
-    <div className={styles.box}>
-      <b>Tipos de árvores e vegetação</b>
+    <section className={styles.layerSection}>
+      <div className={styles.sectionHead}>
+        <b className={styles.sectionTitle}>Vegetação</b>
+        <span className={styles.sectionMeta}>{rows.length} classes</span>
+      </div>
       {rows.map((k) => (
         <div className={styles.lg} key={k.id}>
           <i style={{ background: k.color }} />
@@ -154,8 +205,8 @@ function BaseLayerLegend() {
           <small>{(k.sharePct ?? 0).toFixed(1)}%</small>
         </div>
       ))}
-      <span className="mut">eucaliptal por fenologia (Sentinel-2): provável, sem verdade de terreno</span>
-    </div>
+      <span className={styles.sectionNote}>eucaliptal por fenologia (Sentinel-2): provável, sem verdade de terreno</span>
+    </section>
   );
 }
 
@@ -173,10 +224,14 @@ function WaterBox() {
   const kinds = (Object.keys(WATER_KINDS) as WaterPointKind[]).filter((k) => counts[k]);
   if (!kinds.length) return null;
   const trucks = data.waterPoints.filter((p) => p.truckAccessible).length;
+  const total = kinds.reduce((sum, k) => sum + (counts[k] ?? 0), 0);
 
   return (
-    <div className={styles.box}>
-      <b>Água para combate</b>
+    <section className={styles.layerSection}>
+      <div className={styles.sectionHead}>
+        <b className={styles.sectionTitle}>Água para combate</b>
+        <span className={styles.sectionMeta}>{total} pontos</span>
+      </div>
       {kinds.map((k) => (
         <label className={styles.waterKind} key={k}>
           <input
@@ -192,7 +247,7 @@ function WaterBox() {
           <small>{counts[k]}</small>
         </label>
       ))}
-      <span className="mut">{trucks} acessíveis a autotanque · passe o rato sobre um ponto para ver o detalhe</span>
-    </div>
+      <span className={styles.sectionNote}>{trucks} acessíveis a autotanque · passe o rato sobre um ponto para ver o detalhe</span>
+    </section>
   );
 }

@@ -17,6 +17,8 @@ export function useWorldSync(): void {
   const world = useWorld();
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
+  const windEnabled = useAppStore((s) => s.windEnabled);
+  const windDensity = useAppStore((s) => s.windDensity);
   const run = useAppStore((s) => s.run);
   const activePlan = useAppStore((s) => s.activePlan);
   const locationData = useAppStore((s) => s.data);
@@ -42,6 +44,25 @@ export function useWorldSync(): void {
   useEffect(() => {
     if (world) world.smoke.enabled = smokeEnabled;
   }, [world, smokeEnabled]);
+
+  // convective-wind field: reload with the run, then follow the playback minute
+  useEffect(() => {
+    if (!world) return;
+    world.wind.setEnabled(windEnabled);
+    world.wind.setDensity(windDensity);
+    if (!run) {
+      world.wind.setRun(null);
+      return;
+    }
+    world.wind.setRun(run);
+    world.wind.setTime(t);
+  }, [world, run?.id, windEnabled]);
+  useEffect(() => {
+    if (world) {
+      world.wind.setDensity(windDensity);
+      if (run) world.wind.setTime(t);
+    }
+  }, [world, run?.id, t, windDensity]);
 
   // the agents' plan on the terrain (a structure-protection effect names a place, so places and facilities are looked up by id)
   useEffect(() => {
