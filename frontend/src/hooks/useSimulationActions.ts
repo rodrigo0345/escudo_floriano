@@ -81,7 +81,13 @@ export function useSimulationActions() {
       if (simulation.kind === 'what_if' && simulation.planId) {
         plansApi
           .get(simulation.planId as string)
-          .then((plan) => useAppStore.getState().run?.id === run.id && useAppStore.getState().setActivePlan(plan))
+          .then((plan) => {
+            const store = useAppStore.getState();
+            if (store.run?.id !== run.id) return; // another simulation was loaded meanwhile
+            store.setActivePlan(plan);
+            // a plan's run opened directly (`?sim=`): its baseline is named in the plan, so the plans panel can list its siblings
+            if (!store.baseSimulationId && plan.basis?.simulationId) store.setBaseSimulationId(plan.basis.simulationId as string);
+          })
           .catch((e: Error) => console.warn('plano no mapa:', e.message));
       } else state.setActivePlan(null);
       state.setIgnition({ lat: first.lat, lon: first.lon });

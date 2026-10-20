@@ -1,107 +1,81 @@
 # firetrace-agents
 
-AI planning agents for wildfire response, written **contract-first** against
-[`api-spec/openapi.json`](../api-spec/openapi.json) — the single source of truth for
-every endpoint, field and enum they use (see [`AGENTS.md`](../AGENTS.md)).
+Wildfire response agents, written **contract-first** against [`api-spec/openapi.json`](../api-spec/openapi.json) — the single
+source of truth for every endpoint, field and enum they use (see [`AGENTS.md`](../AGENTS.md) and [`PROTOCOL.md`](../PROTOCOL.md)).
 
-## What's in here
+An **orchestrator** (central command) and **firefighter agents** (squad, fire truck, combat helicopter) read the backend's fire
+simulation, decide what to do with a stated reason, publish plans **A** (life first) and **B** (burned area first), and — in a
+*campaign* — keep deciding as the fire evolves over the whole simulated period.
+
+## Modules (`firetrace_agents/`)
 
 | Module | Role |
 |---|---|
-| `firetrace_agents/contracts.py` | Loads the OpenAPI contract and exposes `validate_against_spec` — runtime checks that any payload the agents send **validates against the spec** before it leaves the process. Also holds the enum pools (`INTERVENTION_TYPES`, `ACTION_TYPES`, `OBJECTIVES`, `RESPONSIBILITIES`) pulled from the spec. |
-| `firetrace_agents/client.py` | `FiretraceClient`: thin typed wrapper over the API (capabilities, simulations, threatened report, summary, vehicles, personnel-pools, plans, plan-simulation). Rejects `problem+json` errors by machine-readable `code`, and validates outgoing payloads itself. |
-| `firetrace_agents/tiers.py` | The **tier matrix**: who may perform which `Intervention`. Squad and truck can never perform `aerial_drop`; `road_closure` and `backfire` are orchestrator-only (command level). |
-| `firetrace_agents/firefighter.py` | One agent per combat unit — squad member (personnel pool), fire truck (vehicle), combat helicopter (vehicle). Perceives via `GET /simulations/{id}/threatened` + `/summary`, decides with a quantified `reason`. |
-| `firetrace_agents/orchestrator.py` | Central command: builds the team from the live fleet, collects decisions, guards them (tier matrix + `GET /capabilities` gating + resource conflicts), and publishes **plans A and B** via `POST /plans` (A = life first, B = area first). Eventual non-firefighter agents plug into `AgentRegistry` without touching this logic. |
+| `contracts.py` | Loads the contract; `validate_against_spec` checks every payload before it leaves. `UNSAFE_ON_WIRE`: interventions the spec lists but the live backend rejects (today `fuel_removal`). |
+| `client.py` | `FiretraceClient`: typed wrapper over the API. Base URL **includes `/api/v1`**. Errors come as `ApiProblem` with the stable `code`. A failed simulation is *returned*, not raised. |
+| `tiers.py` | The tier matrix: who may perform which intervention (a squad or a truck never performs `aerial_drop`). |
+| `firefighter.py` | One agent per unit. Perceives `threatened` + `summary` (+ `/rules`), decides with a quantified `reason`. Works the sector it was given. |
+| `sectors.py` | Turns the backend's predicted spread vectors into ranked **sectors** of the fire front and assigns units to them (or lays their lines end to end as one barrier). |
+| `capacity.py` | How many metres of line a unit builds in a stage. **Only one rate is the backend's** (`FireLineRateMPerHourPerPerson`, 30 m/h per person); the rest are assumptions, marked in the file. |
+| `life.py` | **Lives**: for each place in the fire's way, evacuate in time or shelter in place; vulnerable first. A model, not a backend measure (see limits). |
+| `orchestrator.py` | Builds the team from the live fleet, collects decisions, guards them (tier matrix, `/capabilities`, resource conflicts), validates with `POST /plans/validate`, publishes plans A and B. |
+| `campaign.py` | The rolling-horizon loop: forecast → plan → choose → execute → next state, with a **chained control** (same chain, no response). |
 
-## The priority rules
+## Scripts (`scripts/`), run from the repo root
 
-* **Fire reaching people within the decision horizon** → objective `protect_life`:
-  ground tiers *evacuate first, combat only afterwards* (the combat action carries
-  `trigger: {kind: on_action_complete, actionId: <evacuation action>}` and
-  `dependsOn` the evacuation). The helicopter cannot evacuate people — its
-  life-saving move is an `aerial_drop` with retardant *ahead* of the fire head, and
-  its reason says explicitly "não evacuo; travo a frente".
-* **Fire in an isolated region** → objective `minimize_burned_area`: each tier uses
-  its strongest tool(s) — helicopter → `aerial_drop` on the head; truck → direct
-  `crew_deployment`, switching to an indirect wet `fire_line` when the fire outruns
-  crews; squad → `fire_line` handline, or `fuel_removal` (hand tools) when the fire
-  is tame enough.
-* Every `DecisionMessage` carries a **reason** — quantified (arrival minutes, people
-  at risk, intensities) — which the orchestrator forwards verbatim into
-  `action.rationale`, so the operator sees each agent's justification.
-
-Interventions used: `aerial_drop`, `crew_deployment`, `fire_line`, `fuel_removal`,
-`structure_protection`, `evacuation`. `road_closure`, `backfire` and other
-command-level moves are reserved for the orchestrator/command agent.
-
-## Setup (once)
-
-The package is installed editable into `agents/.venv`, so `import firetrace_agents`
-works from **anywhere** — everything below runs from the **repo root**:
+Start the backend first (`docker compose up -d --build backend`; the first start loads the map data, see `backend/README.md`).
 
 ```powershell
-& .\agents\.venv\Scripts\python -m pip install -e agents  # already done; rerun after pulling
+python agents\scripts\seed_fleet.py                         # demo fleet for Guimarães (idempotent; the backend also seeds its own)
+python agents\scripts\compare_plans.py --scenario sc-penha --at-minute 60    # plans A/B with the full fleet, then without helicopters/trucks/squads
+python agents\scripts\robustness.py --scenario sc-penha --at-minute 60       # the same plans on a wrong wind forecast
+python agents\scripts\run_campaign.py --scenario sc-penha --start 60         # decide every 30 min; compares with the chained control
+python -m firetrace_agents --simulation-id <id> --at-minute 60               # one decision, plans A and B
 ```
 
-## Tests (contract tests)
+Results are printed, never written to files. Everything created in the backend is titled `[lab]`; nothing is deleted.
+Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` (tab **Planos** lists the plans of a baseline and draws them).
+
+## How a plan is made
+
+1. `GET /simulations/{id}/threatened`, `/summary`, `/vectors` and `GET /rules` give the situation (never a guessed position).
+2. The orchestrator ranks the fire-front **sectors** and gives each unit one (and a place, if the life planner picks it).
+3. Each agent proposes with a reason; plans A and B are composed (B: trucks fight from the start, squads evacuate), validated, published.
+4. In a **campaign** this is repeated every stage on a fresh forecast, and fire lines (permanent) are carried to the next stage.
+
+## Limits you should know before trusting a number
+
+* **The backend now honours `start`, `durationMinutes` and `effectDurationMinutes`** (checked after merging `main`). Offsets count from the scenario start,
+  so a decision taken at T+N is written with `start` = N. A campaign is still a chain of short simulations starting at `initialFire`, because there is no exact "resume".
+* **Continuing from an outline is not exact**: a chained run ends ~9% larger than the uninterrupted one. Compare with the chained control, not the original run.
+* **The backend never applies an evacuation** to `populationExposed` (checked in code and by experiment), so lives are the agents' own model with
+  explicit assumptions (`life.py`). Only 2 of the 6 built-in scenarios put people in the fire's way.
+* **Planning sees the forecast's own fire** (perfect foresight unless `--forecast-wind-shift` is used), starts the response with the whole fleet on site, and
+  has no water, fatigue or travel time yet. Treat reductions as upper bounds.
+* `fuel_removal` (the only tool that truly blocks the fire) is disabled: the spec and the backend disagree on its shape.
+
+## Open proposals for the spec / backend (not applied: they belong to those verticals)
+
+Each was found by running the agents against the live backend; the evidence is in the limits above.
+
+1. **`InterventionFuelRemoval`**: the spec requires `effectiveness` and has no `removal`; the backend requires `removal` (`all|understory|trees`) and knows no `effectiveness`.
+   The spec's shape answers HTTP 400. It is the only tool that truly blocks the fire (a 30 m break with `removal: all` stopped ~4x more than a fire line of the same length).
+2. **Evacuation has no effect** on `GET /simulations/{id}/impact` (`populationExposed`), although `/capabilities` says it does. Nothing in `Services/` consumes `EvacuationIntervention`.
+3. **`fuel_break`** is a supported action type in `/capabilities` and the backend, but missing from the spec's `ActionType`.
+4. **A what-if does not point back to its plan** (`parentSimulationId` is empty; `?planId=` is not a filter): add `GET /plans/{id}/simulations` or fill `parentSimulationId`.
+5. **`RoadCutsCache` key** is only the simulation id: after the road network is ingested, cached cuts have 0 edges and `/threatened` answers 500 until a restart. Key it by network version.
+6. **Exact continuation**: `initialFire` from an outline restarts the fire and ends ~9% larger. A "resume from simulation X at minute T" would remove the error.
+7. Nice to have: facilities such as camp sites report no `population`; the seeder creates no helicopters and no evacuation transport.
+
+## Tests
 
 ```powershell
-# from the repo root
-.\agents\.venv\Scripts\python -m pytest agents -q
+.\agents\.venv\Scripts\python -m pytest agents -q      # or: uv run --with httpx --with jsonschema --with pytest python -m pytest agents -q
 ```
 
-(From inside `agents/`, `.\.venv\Scripts\python -m pytest` still works.)
-
-Individual test files also run standalone — `python agents\tests\test_tiers.py`
-executes that file's tests via pytest (the modules detect direct execution —
-e.g. the VS Code "Run Python File" button — and delegate to pytest instead of
-failing on relative imports).
-
-The suite is **pure contract testing**: every payload the runtime can emit (each
-intervention type, every action, plans A and B for both situations) is validated with
-`jsonschema` (Draft 2020-12) against the whole `api-spec/openapi.json` document.
-Fixtures use `httpx.MockTransport` — no live backend needed. When the contract
-changes, the tests fail loudly instead of the real server.
-
-There is deliberately **no live-fire progress demo yet**: no `backend/` exists in the
-repo. Two ways to get one later:
-
-```powershell
-# 1) mock from the spec itself
-npx @stoplight/prism-cli mock api-spec/openapi.json
-
-# 2) or a real backend when it lands
-$env:FIRETRACE_BASE_URL = "http://localhost:8000"
-```
-
-* `FiretraceClient` reads `FIRETRACE_BASE_URL` for endpoint URLs (default: `http://localhost:8080`), validates outgoing payloads itself, and raises `ApiProblem` when the server answers `problem+json` — always branch on `code`, not message. `FIRETRACE_SPEC` points at an alternative spec file for the validators.
-* `OrchestratorAgent.run_cycle` and `simulate_plan` will then exercise `POST /plans` → `POST /plans/{id}/simulate` against the live data in plan-conformance tests.
-
-## Running the agents against a server
-
-```powershell
-# terminal 1 — from the repo root: a server built from the spec itself
-npx @stoplight/prism-cli mock api-spec/openapi.json
-
-# terminal 2 — from the repo root
-.\agents\.venv\Scripts\python -m firetrace_agents --base-url http://localhost:4010
-# (equivalent console script when the venv is activated: firetrace-run --base-url …)
-```
-
-Or set `$env:FIRETRACE_BASE_URL` once and use `--simulate` to also run the
-what-if (`POST /plans/{id}/simulate`) of plan A. Useful flags: `--simulation-id`,
-`--horizon 60`, `--location-id`, `--no-publish` (compose, don't POST),
-`--plans-json` (dump the full payloads).
-
-## Environment
-
-`httpx`, `jsonschema`, `pytest` — pinned in `pyproject.toml`. Python ≥ 3.11.
+The suite is contract and logic testing against `httpx.MockTransport` (no live backend); the scripts above are the live checks.
 
 ## Adding an agent kind
 
-The orchestrator keeps an `AgentRegistry`; any agent object answering `decide(...)`
-with a message carrying `objective`, `reason` (never empty) and typed proposals can
-register — the guard step only needs `tier`/`can_execute` equivalents. Firefighter
-white-lists live in `tiers.py`; extend `TIER_PERMISSIONS` there, and add the matching
-`Intervention*` schema to the spec (PR first) before the agents can emit it.
+The orchestrator keeps an `AgentRegistry`; any agent answering `decide(situation, assignment)` with a message carrying `objective`, a non-empty
+`reason` and typed proposals can register. Firefighter white-lists live in `tiers.py`; a new `Intervention*` needs its schema in the spec first.

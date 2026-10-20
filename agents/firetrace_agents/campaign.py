@@ -90,6 +90,7 @@ class StageResult:
     issues: int
     why: str = ""
     life: str = ""  # the life planner's account for this stage: at risk, evacuated in time, sheltered, exposed (a model, not a backend measure)
+    life_report: Any = None  # the same as a `LifeReport` (None when nobody was in the fire's way)
 
 
 @dataclass
@@ -238,6 +239,7 @@ class Campaign:
                 new_lines=new_lines, carried_lines=len(carried), forecast_id=forecast["id"], execution_id=executed["id"],
                 issues=sum(len(v.get("issues", [])) for v in result.validation.values()) if result else 0, why=why,
                 life=result.life.report.line() if result and result.life else "",
+                life_report=result.life.report if result and result.life else None,
             )
             out.stages.append(stage)
             if on_stage:

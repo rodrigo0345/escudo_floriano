@@ -498,6 +498,13 @@ class OrchestratorAgent:
                 # The backend ignores `trigger`/`dependsOn` when it simulates a plan: it only reads each effect's own
                 # `start`. So "attack after the evacuation" has to be written into the effect's start time too.
                 intervention["start"] = {"offsetMinutes": _follow_up_delay(by_id.get(proposal.trigger.get("actionId")))}
+            decided_at = int(situation.at_minute or 0)
+            if decided_at:
+                # the backend honours `start`: offsets count from the scenario start, so a decision taken at T+N begins at N (+ its own delay)
+                for key in ("start", "completeBy"):
+                    spec = intervention.get(key)
+                    if isinstance(spec, dict) and "offsetMinutes" in spec:
+                        intervention[key] = {**spec, "offsetMinutes": spec["offsetMinutes"] + decided_at}
             action["simulationEffects"] = [intervention]
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
             actions.append(action)

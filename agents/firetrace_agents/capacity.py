@@ -3,14 +3,14 @@
 Without a limit every unit could lay a long line every stage for free and *where* the lines go would not matter. With one,
 the metres are scarce and the orchestrator has to spend them where they count.
 
-Only one build rate is stated by the backend: ``FuelRemoval.CrewRateMPerHourPerPerson = 15`` (appsettings; a validator
-warns ``fuel_break_slow`` with it). The rest are **assumptions to calibrate** with the corporations, kept here in one place.
+The backend states the rate of a hand-built fire line: ``Interventions.FireLineRateMPerHourPerPerson = 30`` (appsettings, "valor de
+partida, a calibrar com as corporações"). The rest are **assumptions to calibrate** with the corporations, kept here in one place.
 """
 from __future__ import annotations
 
 from typing import Any
 
-GROUND_RATE_M_PER_H_PER_PERSON = 15.0  # backend: FuelRemoval.CrewRateMPerHourPerPerson
+GROUND_RATE_M_PER_H_PER_PERSON = 30.0  # backend: Interventions.FireLineRateMPerHourPerPerson (appsettings; was 15 before main's update)
 WET_LINE_FACTOR = 2.0  # assumption: a hose line goes down faster than a hand line
 AERIAL_WATER_DISTANCE_KM = 5.0  # assumption (Rules.aerial.limits.maxDistanceToWaterKm is 10)
 DROP_LENGTH_M = 80.0  # assumption: the length one bucket drop covers

@@ -9,8 +9,8 @@ from firetrace_agents.sectors import Sector, assign_units, distance_m, line_segm
 
 class TestBudget:
     def test_people_on_foot_build_at_the_backends_rate(self):
-        # backend: FuelRemoval.CrewRateMPerHourPerPerson = 15 -> 16 people, half an hour
-        assert line_budget_m("squad", 16, 30) == pytest.approx(120)
+        # backend: Interventions.FireLineRateMPerHourPerPerson = 30 -> 16 people, half an hour
+        assert line_budget_m("squad", 16, 30) == pytest.approx(240)
 
     def test_a_hose_line_goes_down_faster_than_a_hand_line(self):
         assert line_budget_m("truck", 5, 30) > line_budget_m("squad", 5, 30)
