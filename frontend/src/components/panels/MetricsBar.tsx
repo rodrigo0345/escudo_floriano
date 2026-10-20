@@ -1,3 +1,8 @@
+/**
+ * @deprecated DEADCODE: Componente órfão (100% dead code).
+ * Não é importado nem renderizado por nenhum componente do frontend.
+ * As métricas do incêndio foram integradas nos novos painéis laterais e de incidentes.
+ */
 import { StatCard } from '@/components/common/StatCard';
 import { compass } from '@/domain/georef';
 import { useWorld } from '@/engine/EngineContext';

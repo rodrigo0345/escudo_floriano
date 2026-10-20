@@ -7,8 +7,10 @@ const WHOLE_RUN_PADDING_MIN = 720;
 
 export type WeatherMode = 'provider' | 'manual';
 
+/** @deprecated DEADCODE: Sistema legado de presets meteorológicos fixos; substituído por TimelineRangeEvent / customEvents */
 export type PresetId = 'front' | 'breeze' | 'afternoon' | 'rain_shower' | 'storm' | 'fog' | 'second_ignition';
 
+/** @deprecated DEADCODE: Estrutura legada de presets meteorológicos */
 export interface PresetWeatherEvent {
   id: PresetId;
   label: string;
@@ -55,6 +57,7 @@ export interface SimulationFormValues {
   precipitationMmH: number;
   cloudCoverPct: number;
   members: number;
+  /** @deprecated DEADCODE: Presets legados; substituídos por customEvents (TimelineRangeEvent) */
   presetEvents: PresetWeatherEvent[];
   customEvents: TimelineRangeEvent[];
 }
@@ -156,7 +159,7 @@ export function createTimelineRangeEvent(
   }
 }
 
-/** The one-click recipes for weather shifts, rain, storms, fog, and secondary ignitions. */
+/** @deprecated DEADCODE: The one-click recipes for weather shifts, rain, storms, fog, and secondary ignitions (substituído por TimelineRangeEvent). */
 export function createPresetEvents(duration: number): PresetWeatherEvent[] {
   return [
     {
@@ -276,7 +279,7 @@ export function createPresetEvents(duration: number): PresetWeatherEvent[] {
   ];
 }
 
-/** Rebuild preset windows after the duration changes, preserving which presets are enabled. */
+/** @deprecated DEADCODE: Rebuild preset windows after the duration changes, preserving which presets are enabled. */
 export function resizePresetEvents(presets: PresetWeatherEvent[], duration: number): PresetWeatherEvent[] {
   const defaults = createPresetEvents(duration);
   return presets.map((p) => ({ ...p, events: defaults.find((d) => d.id === p.id)?.events ?? p.events }));
@@ -291,6 +294,7 @@ export function resizeCustomEvents(events: TimelineRangeEvent[], duration: numbe
   });
 }
 
+/** @deprecated DEADCODE: Validação de disponibilidade de presets meteorológicos legados */
 export const presetAvailable = (id: PresetId, duration: number, baseWindKmh?: number | null): boolean => {
   if (id === 'second_ignition') return true;
   if (id === 'fog') return duration >= 30;
@@ -371,7 +375,7 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
     }
   }
 
-  // Process legacy presets
+  // DEADCODE: Process legacy presets (mantido apenas por compatibilidade com snapshots antigos)
   for (const preset of v.presetEvents ?? []) {
     if (!preset.enabled || !presetAvailable(preset.id, v.duration, v.mode === 'provider' ? base?.windKmh : undefined)) continue;
     events.push(...preset.events);
