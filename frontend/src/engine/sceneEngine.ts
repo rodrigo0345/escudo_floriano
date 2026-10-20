@@ -225,20 +225,11 @@ export class SceneEngine {
       }
     }
 
-    // Visibility reduction from smoke and rain (1 world unit = 10m)
-    if (this.scene.fog instanceof THREE.Fog && visibilityM != null && visibilityM > 0) {
-      const visUnits = visibilityM / 10;
-      const maxFar = Math.max(300, visUnits * 1.35);
-      const maxNear = Math.max(60, maxFar * 0.22);
-      this.scene.fog.far = Math.min(this.scene.fog.far, maxFar);
-      this.scene.fog.near = Math.min(this.scene.fog.near, maxNear);
-
-      // Under dense smoke (<3000m), tint fog with smoky ash tone
-      if (visibilityM < 3000) {
-        const smokeFactor = Math.min(0.55, (3000 - visibilityM) / 3000);
-        this.skyColorScratch.lerp(this.tmpColorB.setHex(0x5a5048), smokeFactor);
-        this.scene.fog.color.copy(this.skyColorScratch);
-      }
+    // Atmospheric smoke haze tint on distant horizon (never blinding the tactical camera or occluding terrain)
+    if (this.scene.fog instanceof THREE.Fog && visibilityM != null && visibilityM > 0 && visibilityM < 3000) {
+      const smokeFactor = Math.min(0.3, (3000 - visibilityM) / 3000);
+      this.skyColorScratch.lerp(this.tmpColorB.setHex(0x5a5048), smokeFactor);
+      this.scene.fog.color.copy(this.skyColorScratch);
     }
   }
 
