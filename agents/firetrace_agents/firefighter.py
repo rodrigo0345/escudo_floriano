@@ -383,6 +383,8 @@ class FirefighterAgent:
 
     # -- branch 1: people in the path → evacuate first ----------------------------
     def _protect_life(self, situation: Situation, in_danger: list[dict[str, Any]]) -> tuple[list[ActionProposal], str, float]:
+        if in_danger[0].get("assetType") == "building_zone":
+            return self._defend_zone(situation, in_danger[0])
         arrival = min(asset["arrivalMinute"]["p50"] for asset in in_danger)
         names = ", ".join(str(asset.get("name") or asset["id"]) for asset in in_danger)
         people = sum(int(asset.get("population") or 0) for asset in in_danger)
@@ -475,6 +477,39 @@ class FirefighterAgent:
         quantified = f"evacuar primeiro ({people} pessoas; margem {self.SAFETY_MARGIN_MIN} min), depois {follow_ups[0].intervention['type']} em sequência."
         reason = f"{base} A minha decisão pela regra 'vidas primeiro': {quantified}"
         return [evacuation, *follow_ups], reason, 0.75
+
+    def _defend_zone(self, situation: Situation, zone: dict[str, Any]) -> tuple[list[ActionProposal], str, float]:
+        """Defend a patch of ground with houses on it (not a backend place): the engine stays and wets the buildings.
+
+        The target is the zone's geometry. Engines assigned to the same zone each carry their own effectiveness and the backend
+        multiplies them, so three engines on one zone protect it far more than one.
+        """
+        effectiveness = situation.suppression_effectiveness(self.observation.crew_onboard, self.observation.water_capacity_l)
+        arrival = float(zone["arrivalMinute"]["p50"])
+        buildings, people = int(zone.get("buildings") or 0), int(zone.get("population") or 0)
+        protection = ActionProposal(
+            action_type="structure_protection",
+            title=f"Defender {buildings} edifícios (zona {zone['id']})",
+            proposal_id=f"prot-{self.agent_id}",
+            intervention={
+                "type": "structure_protection",
+                "label": f"Defesa {zone['id']}",
+                "start": {"offsetMinutes": 0},
+                "geometry": zone["geometry"],
+                "effectiveness": effectiveness,
+            },
+            priority="high",
+            resources=self._ground_resources("structure_protection"),
+            expected_effect=f"Reduz os edifícios perdidos nesta zona (eficácia ~{effectiveness:.0%} por viatura, pelas regras do servidor).",
+            confidence=0.7,
+            safety_notes="Defender a partir da zona já ardida ou de segurança; retirar se o fogo chegar em menos do que o limite das regras.",
+            extra_action_fields={"targets": [{"geometry": zone["geometry"], "label": str(zone["name"])}], "tactic": "wetting"},
+        )
+        reason = (
+            f"O fogo previsto chega a {buildings} edifícios ({people} pessoas) em ~{arrival:.0f} min e nenhuma localidade os cobre: "
+            f"defendo esta zona (eficácia ~{effectiveness:.0%} com {self.observation.crew_onboard} pessoas e {self.observation.water_capacity_l:.0f} L)."
+        )
+        return [protection], reason, 0.7
 
     def _protect_structures(
         self, situation: Situation, in_danger: list[dict[str, Any]], base: str, arrival: float, people: int, names: str

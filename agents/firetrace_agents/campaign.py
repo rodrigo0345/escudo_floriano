@@ -122,10 +122,14 @@ class Campaign:
         concentrations: tuple[int, ...] = (1, 3, 6),
         response: bool = True,
         life_horizon_minutes: int = 180,
+        building_zones: tuple[int, ...] = (0,),
+        building_weight_ha: float = 10.0,
     ) -> None:
         if policy not in {"A", "B", "best"}:
             raise ValueError("policy must be 'A', 'B' or 'best'")
         self.capacity, self.concentrations, self.response = capacity, tuple(concentrations), response
+        self.building_zones = tuple(building_zones)  # candidate numbers of house zones the engines defend (0 = none)
+        self.building_weight_ha = building_weight_ha  # how many hectares of burned area one building is worth when choosing between candidates
         self.life_horizon = life_horizon_minutes
         self.client, self.orchestrator, self.baseline = client, orchestrator, baseline
         self.snapshot = baseline["scenarioSnapshot"]
@@ -156,6 +160,21 @@ class Campaign:
     def _burned(self, simulation: dict[str, Any]) -> float:
         return float((simulation.get("stats") or {}).get("burnedHa") or 0.0)
 
+    def _new_buildings(self, simulation: dict[str, Any], already: float | None = None) -> float:
+        """Buildings the window itself affected. A run restarted from an outline also counts the houses inside that outline, with
+        none of the protection earlier windows gave them, so the count at minute 0 of the same run is taken off."""
+        total = float((simulation.get("stats") or {}).get("buildingsAffected") or 0.0)
+        if already is None:
+            already = self._buildings_in_outline(simulation)
+        return max(total - already, 0.0)
+
+    def _buildings_in_outline(self, simulation: dict[str, Any]) -> float:
+        try:
+            first = self.client.get_summary(simulation["id"], step_minutes=self.stage)["milestones"][0]
+        except (ApiProblem, KeyError, IndexError):
+            return 0.0
+        return float(first.get("buildingsAffected") or 0.0) if first.get("tMin") == 0 else 0.0
+
     def _plan(self, forecast: dict[str, Any], t0: int, perimeter: dict[str, Any] | None, carried: list[dict[str, Any]]) -> tuple[str, dict[str, Any], str, CycleResult]:
         """Candidate plans (concentration × A/B), each tried on the forecast; the one that burns least wins.
 
@@ -166,28 +185,41 @@ class Campaign:
         configs: list[int | None] = list(self.concentrations) if self.capacity else [None]
         candidates: list[tuple[str, str, dict[str, Any], CycleResult]] = []
         for conc in configs:
-            result = self.orchestrator.run_cycle(
-                forecast["id"], horizon_minutes=self.horizon, at_minute=0, location_id=self.snapshot["locationId"], title_prefix=f"[campanha T+{t0}] Plano",
-                publish=False, stage_minutes=self.stage if self.capacity else None, concentration=(conc or None) if self.capacity else None,
-                life_horizon_minutes=self.life_horizon,
-            )
-            tag = "∞" if conc is None else ("L" if conc == 0 else f"K{conc}")
-            for variant, plan in (("A", result.plan_a), ("B", result.plan_b)):
-                if self.policy in {"A", "B"} and variant != self.policy:
-                    continue
-                candidates.append((f"{tag}/{variant}", variant, plan, result))
+            for zones in self.building_zones:
+                result = self.orchestrator.run_cycle(
+                    forecast["id"], horizon_minutes=self.horizon, at_minute=0, location_id=self.snapshot["locationId"], title_prefix=f"[campanha T+{t0}] Plano",
+                    publish=False, stage_minutes=self.stage if self.capacity else None, concentration=(conc or None) if self.capacity else None,
+                    life_horizon_minutes=self.life_horizon, building_zones=zones,
+                )
+                if zones and not result.zones:
+                    continue  # no houses to defend: the same plan as without zones
+                tag = ("∞" if conc is None else ("L" if conc == 0 else f"K{conc}")) + (f"+D{zones}" if zones else "")
+                for variant, plan in (("A", result.plan_a), ("B", result.plan_b)):
+                    if self.policy in {"A", "B"} and variant != self.policy:
+                        continue
+                    candidates.append((f"{tag}/{variant}", variant, plan, result))
         if len(candidates) == 1:
             label, variant, plan, result = candidates[0]
             if self.publish and result.validation.get(variant, {}).get("valid") is not False:
                 self.client.create_plan(plan)
             return label, plan, "único candidato", result
+        # With house zones among the candidates the area alone no longer says which plan is best: each new building counts as
+        # ``building_weight_ha`` hectares burned (an assumption, not a backend number).
+        weighted = any(self.building_zones)
         scored: list[tuple[float, int, str, dict[str, Any], CycleResult]] = []
         for index, (label, _variant, plan, result) in enumerate(candidates):
             scenario = scenario_at(self.snapshot, t0, horizon, perimeter=perimeter, interventions=[*carried, *plan_effects(plan)], name=f"[lab] previsão {label}")
             sim = self.client.run_scenario(scenario, label=f"[lab] previsão {label} T+{t0}")
-            scored.append((self._burned(sim) if sim.get("status") == "succeeded" else float("inf"), index, label, plan, result))
+            if sim.get("status") != "succeeded":
+                value = float("inf")
+            elif weighted:
+                value = self._burned(sim) + self.building_weight_ha * self._new_buildings(sim)
+            else:
+                value = self._burned(sim)
+            scored.append((value, index, label, plan, result))
         best = min(scored, key=lambda s: (s[0], s[1]))
-        why = " ".join(f"{s[2]}={s[0]:.0f}" for s in scored) + " (ha na previsão)"
+        unit = f"(ha + {self.building_weight_ha:g} ha por edifício, na previsão)" if weighted else "(ha na previsão)"
+        why = " ".join(f"{s[2]}={s[0]:.0f}" for s in scored) + " " + unit
         if self.publish and best[4].validation.get(best[2][-1], {}).get("valid") is not False:
             self.client.create_plan(best[3])
         return best[2], best[3], why, best[4]
@@ -199,6 +231,7 @@ class Campaign:
             self.orchestrator.pull_fleet()
         carried: list[dict[str, Any]] = []
         perimeter: dict[str, Any] | None = None
+        buildings_total = 0.0
         t0, k = self.start, 0
         if t0 > 0:
             perimeter = self._outline(self.baseline["id"], t0)  # joining a fire already burning: the baseline's outline is the state
@@ -233,9 +266,10 @@ class Campaign:
             new_lines = sum(1 for e in effects if e.get("type") in PERMANENT)
             carried = carry_over(carried, effects)
             stats = executed.get("stats") or {}
+            buildings_total += self._new_buildings(executed)  # cumulative, counted window by window (see `_new_buildings`)
             stage = StageResult(
                 k=k, t0=t0, t1=t0 + window, plan=variant, area_ha=self._burned(executed), crown_ha=float(stats.get("crownFireHa") or 0.0),
-                buildings=int(stats.get("buildingsAffected") or 0), baseline_ha=self._baseline_area_at(t0 + window), actions=len(plan.get("actions", [])),
+                buildings=int(round(buildings_total)), baseline_ha=self._baseline_area_at(t0 + window), actions=len(plan.get("actions", [])),
                 new_lines=new_lines, carried_lines=len(carried), forecast_id=forecast["id"], execution_id=executed["id"],
                 issues=sum(len(v.get("issues", [])) for v in result.validation.values()) if result else 0, why=why,
                 life=result.life.report.line() if result and result.life else "",

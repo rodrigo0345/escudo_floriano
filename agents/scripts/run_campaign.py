@@ -19,14 +19,14 @@ from compare_plans import baseline_for  # noqa: E402
 from firetrace_agents import ApiProblem, FiretraceClient, OrchestratorAgent  # noqa: E402
 from firetrace_agents.campaign import Campaign, StageResult, plan_effects, scenario_at  # noqa: E402
 
-HEADER = f"{'fase':<5}{'T+min':>8}{'plano':>7}{'área ha':>10}{'base':>11}{'controlo':>10}{'Δ ctrl':>7}{'copas ha':>10}{'edif.':>7}{'ações':>7}{'linhas':>8}{'aviso':>7}  porquê"
+HEADER = f"{'fase':<5}{'T+min':>8}{'plano':>7}{'área ha':>10}{'base':>11}{'controlo':>10}{'Δ ctrl':>7}{'copas ha':>10}{'edif.':>7}{'edif.ctrl':>10}{'ações':>7}{'linhas':>8}{'aviso':>7}  porquê"
 
 
 def pct(value: float, base: float | None) -> str:
     return f"{(value - base) / base * 100:+.0f}%" if base else "-"
 
 
-def make_printer(control: dict[int, float]):
+def make_printer(control: dict[int, float], control_buildings: dict[int, int]):
     """One row per stage: the campaign's area against the original baseline and against the chained control (same chain, no response)."""
 
     def print_stage(stage: StageResult) -> None:
@@ -34,7 +34,7 @@ def make_printer(control: dict[int, float]):
         ctrl = control.get(stage.t1)
         print(
             f"{stage.k:<5}{f'{stage.t0}-{stage.t1}':>8}{stage.plan:>7}{stage.area_ha:>10.0f}{base:>11}{(f'{ctrl:.0f}' if ctrl is not None else '-'):>10}{pct(stage.area_ha, ctrl):>7}"
-            f"{stage.crown_ha:>10.0f}{stage.buildings:>7}{stage.actions:>7}{stage.carried_lines:>8}{stage.issues:>7}  {stage.why}",
+            f"{stage.crown_ha:>10.0f}{stage.buildings:>7}{control_buildings.get(stage.t1, '-'):>10}{stage.actions:>7}{stage.carried_lines:>8}{stage.issues:>7}  {stage.why}",
             flush=True,
         )
         if stage.life:
@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--publish", action="store_true", help="also publish the chosen plan of each stage (POST /plans)")
     parser.add_argument("--unlimited", action="store_true", help="no limit on the line each unit can build (what the first campaign did)")
     parser.add_argument("--concentration", default="1,3,6", help="candidates: on how many of the most dangerous sectors to spend the line (comma list; 0 = units spread over the front)")
+    parser.add_argument("--building-zones", default="0", help="candidates: how many patches of houses the fire engines defend (comma list; 0 = none, e.g. 0,10)")
     args = parser.parse_args(argv)
 
     client = FiretraceClient(base_url=args.base_url)
@@ -89,11 +90,12 @@ def main(argv: list[str] | None = None) -> int:
               + (f" · previsão com vento errado {args.forecast_wind_shift:+.0f}°" if args.forecast_wind_shift else "") + " ===")
         print(HEADER)
         common = dict(stage_minutes=args.stage, horizon_minutes=args.horizon, policy=args.policy, forecast_wind_shift_deg=args.forecast_wind_shift,
-                      start_minute=args.start, until_minute=args.until, capacity=not args.unlimited, concentrations=tuple(int(c) for c in args.concentration.split(",")))
+                      start_minute=args.start, until_minute=args.until, capacity=not args.unlimited, concentrations=tuple(int(c) for c in args.concentration.split(",")),
+                      building_zones=tuple(int(z) for z in args.building_zones.split(",")))
         # the control first: the same chain of stages with no response (it carries the small error that restarting from an outline adds)
         control = Campaign(client, orchestrator, baseline, response=False, **common).run()
         campaign = Campaign(client, orchestrator, baseline, publish=args.publish, **common)
-        result = campaign.run(on_stage=make_printer({s.t1: s.area_ha for s in control.stages}))
+        result = campaign.run(on_stage=make_printer({s.t1: s.area_ha for s in control.stages}, {s.t1: s.buildings for s in control.stages}))
         if result.stopped:
             print(f"  (parou: {result.stopped})")
         if result.final_ha is not None:

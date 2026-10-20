@@ -47,6 +47,11 @@ Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` 
 
 * **The backend now honours `start`, `durationMinutes` and `effectDurationMinutes`** (checked after merging `main`). Offsets count from the scenario start,
   so a decision taken at T+N is written with `start` = N. A campaign is still a chain of short simulations starting at `initialFire`, because there is no exact "resume".
+* **What the campaign gains depends on how the backend models effects.** With the `native` engine (effects are time windows; a fire line is not direct
+  suppression) `scripts/evaluate.py` gives a median change in burned area against the chained control of **−5%** (response from minute 0) and **−1%** (from
+  minute 90), across 5 scenarios; only Penha (−15%) and Santa Marinha (−25%) gain with an early start, and without trucks nothing does. Before `main` was merged
+  (effects held from the start of the window) the same matrix gave −61% and −28%: those numbers are obsolete. Fire lines alone cut ~3% in a probe; a
+  `fuel_removal` break cut ~12% (see proposal 1).
 * **Continuing from an outline is not exact**: a chained run ends ~9% larger than the uninterrupted one. Compare with the chained control, not the original run.
 * **The backend never applies an evacuation** to `populationExposed` (checked in code and by experiment), so lives are the agents' own model with
   explicit assumptions (`life.py`). Only 2 of the 6 built-in scenarios put people in the fire's way.

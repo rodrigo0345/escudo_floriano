@@ -189,6 +189,24 @@ class FiretraceClient:
             json_body={"geometry": geometry},
         )
 
+    def get_location(self, location_id: str) -> dict[str, Any]:
+        """``GET /locations/{id}``: bounds and the grid (size, cell size, north-west corner) every simulation of it uses."""
+        return self._request("GET", self._fill("/locations/{locationId}", locationId=location_id))
+
+    def list_buildings(self, location_id: str, *, limit: int = 20000) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/buildings``: one point per grid cell with its building count and estimated people."""
+        page = self._request("GET", self._fill("/locations/{locationId}/buildings", locationId=location_id), params={"limit": limit})
+        return list(page.get("features", []))
+
+    def get_ignition_grid(self, simulation_id: str) -> bytes:
+        """``GET /simulations/{id}/grids/ignition``: the raw int16 grid (minute the fire reaches each cell, -1 = never)."""
+        response = self._http.get(self._fill("/simulations/{simulationId}/grids/ignition", simulationId=simulation_id))
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            problem = response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]}
+            raise ApiProblem(response.status_code, problem)
+        return response.content
+
     # -- decisions -------------------------------------------------------------
     def create_plan(self, plan_input: dict[str, Any], *, prefer_wait: int | None = None) -> dict[str, Any]:
         """``POST /plans`` — publish a plan (variant ``A`` or ``B``), in ``proposed`` status."""
