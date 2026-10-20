@@ -187,40 +187,41 @@ export class SceneEngine {
       }
     } else if (elevationDeg > -10) {
       const t = (elevationDeg + 10) / 10;
-      this.sunColorScratch.setHex(0x384260).lerp(this.tmpColorA.setHex(0xcc5522), t);
-      this.skyColorScratch.setHex(0x182030).lerp(this.tmpColorA.setHex(0x604044), t);
-      this.hemiSkyScratch.setHex(0x1c2438).lerp(this.tmpColorA.setHex(0x884844), t);
-      this.hemiGroundScratch.setHex(0x0e121a);
+      this.sunColorScratch.setHex(0x98b8e0).lerp(this.tmpColorA.setHex(0xcc5522), t);
+      this.skyColorScratch.setHex(0x0f1524).lerp(this.tmpColorA.setHex(0x604044), t);
+      this.hemiSkyScratch.setHex(0x384a68).lerp(this.tmpColorA.setHex(0x884844), t);
+      this.hemiGroundScratch.setHex(0x1e2a3c).lerp(this.tmpColorA.setHex(0x281812), t);
 
       this.sunLight.color.copy(this.sunColorScratch);
-      this.sunLight.intensity = 0.45 * t + 0.2;
+      this.sunLight.intensity = 0.85 - 0.01 * t; // Smooth transition: 0.84 at sunset, 0.85 at night
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
-      this.hemiLight.intensity = 0.45 * t + 0.3;
+      this.hemiLight.intensity = 0.72 + 0.03 * t; // 0.75 at sunset, 0.72 at night
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {
         this.scene.fog.color.copy(this.skyColorScratch);
-        this.scene.fog.near = 900;
-        this.scene.fog.far = 4800;
+        this.scene.fog.near = 1200 + 200 * (1 - t);
+        this.scene.fog.far = 6000 + 1200 * (1 - t);
       }
     } else {
-      this.sunColorScratch.setHex(0x5c759e);
-      this.skyColorScratch.setHex(0x0a0f18);
-      this.hemiSkyScratch.setHex(0x151c2a);
-      this.hemiGroundScratch.setHex(0x05080e);
+      // Tactical moonlit night: clear terrain relief and orthophoto visibility without pitch-black gloom
+      this.sunColorScratch.setHex(0x98b8e0);
+      this.skyColorScratch.setHex(0x0f1524);
+      this.hemiSkyScratch.setHex(0x384a68);
+      this.hemiGroundScratch.setHex(0x1e2a3c);
 
       this.sunLight.color.copy(this.sunColorScratch);
-      this.sunLight.intensity = 0.28;
+      this.sunLight.intensity = 0.85;
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
-      this.hemiLight.intensity = 0.25;
+      this.hemiLight.intensity = 0.72;
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {
         this.scene.fog.color.copy(this.skyColorScratch);
-        this.scene.fog.near = 700;
-        this.scene.fog.far = 3800;
+        this.scene.fog.near = 1400;
+        this.scene.fog.far = 7200;
       }
     }
 

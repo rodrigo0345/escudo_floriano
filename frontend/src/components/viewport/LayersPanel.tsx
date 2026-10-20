@@ -80,14 +80,18 @@ function OverlayBox() {
         <span className={styles.sectionMeta}>camadas</span>
       </div>
       <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow}>
+        <label className={styles.overlayRow} title="Aproximação visual ilustrativa gerada por partículas GPU; sem massa nem dinâmica real sobre a propagação do fogo">
           <input type="checkbox" checked={smokeEnabled} onChange={(e) => setSmokeEnabled(e.target.checked)} />
           <span>Fumo</span>
+          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
         </label>
         {smokeEnabled ? (
           <div className={styles.overlayLegend}>
             <LegendDots items={SMOKE_LEGEND.map((label, i) => ({ label, color: `rgba(${190 - i * 38},${185 - i * 41},${175 - i * 41},${0.25 + i * 0.22})` }))} />
             <span className={styles.legendNote}>estradas sem visibilidade a castanho</span>
+            <div className={styles.legendDisclaimer}>
+              ⚠️ <em>Aviso operacional:</em> A pluma de fumo 3D é uma aproximação visual ilustrativa de partículas GPU. Não possui peso físico nem dinâmica real sobre a propagação do incêndio.
+            </div>
           </div>
         ) : null}
       </div>
