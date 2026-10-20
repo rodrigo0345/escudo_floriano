@@ -68,7 +68,7 @@
 
 .chart {
   width: 100%;
-  height: 150px;
+  height: 155px;
   background: var(--panel2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -202,4 +202,536 @@
   padding: 3px 4px;
   font-size: 11px;
   text-align: center;
+}
+
+/* Weather / Meteo Tab Upgrades (Epic E7) */
+.weatherCard {
+  background: color-mix(in srgb, var(--panel2) 75%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.weatherCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weatherCardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dangerBadge {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conditionsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metricTile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  display: grid;
+  gap: 2px;
+}
+
+.metricTile span {
+  font-size: 11px;
+  color: var(--mut);
+}
+
+.metricTile b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.metricTile small {
+  font-size: 10.5px;
+  color: var(--mut);
+  line-height: 1.25;
+}
+
+.rule30Active {
+  background: color-mix(in srgb, #ef4444 14%, var(--panel2));
+  border: 1px solid #ef4444;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.rule30Normal {
+  background: color-mix(in srgb, var(--panel2) 50%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.rule30Header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rule30Desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg);
+}
+
+.rule30Criteria {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.criteriaChip {
+  font-size: 10.5px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  display: grid;
+  gap: 1px;
+  text-align: center;
+}
+
+.criteriaMet {
+  border-color: #ef4444;
+  color: #f87171;
+  background: color-mix(in srgb, #ef4444 12%, var(--panel));
+  font-weight: 600;
+}
+
+.criteriaUnmet {
+  color: var(--mut);
+}
+
+.eventList {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.eventRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+
+.eventTag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.seriesActiveRow {
+  background: color-mix(in srgb, var(--acc) 18%, var(--panel2)) !important;
+  border-left: 2px solid var(--acc);
+}
+
+/* ---- Compact Range-based Interactive Weather Events Manager ---- */
+.rangeEventsSection {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel2) 65%, transparent);
+}
+
+.rangeEventsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rangeHeadRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rangeHeadRow h4 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.eventCountBadge {
+  font-size: 10px;
+  font-family: var(--mono);
+  background: var(--acc);
+  color: #000;
+  padding: 1px 5px;
+  border-radius: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.quickAddRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.quickAddBtn {
+  padding: 2px 6px !important;
+  font-size: 10px !important;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  width: auto !important;
+  transition: all 0.1s ease;
+  line-height: 1.4 !important;
+}
+
+.quickAddBtn:hover {
+  background: color-mix(in srgb, var(--acc) 18%, var(--panel));
+  border-color: var(--acc);
+}
+
+.miniTimelineWrap {
+  display: grid;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.miniTimelineTrack {
+  position: relative;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.miniEventBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+
+.miniTimelineTicks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8.5px;
+  font-family: var(--mono);
+  color: var(--mut);
+  padding: 0 1px;
+}
+
+.customEventsList {
+  display: grid;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.noEventsNote {
+  font-size: 10.5px;
+  color: var(--mut);
+  line-height: 1.3;
+  padding: 2px 0;
+}
+
+.eventCardCompact {
+  display: grid;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  transition: background 0.15s ease;
+}
+
+.eventDisabled {
+  opacity: 0.45;
+}
+
+.eventRowHead {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  min-height: 26px !important;
+}
+
+.eventCheckbox {
+  display: inline-block !important;
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px !important;
+  max-width: 14px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  cursor: pointer;
+  vertical-align: middle !important;
+  align-self: center !important;
+  accent-color: var(--acc);
+}
+
+.eventTypeName {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1 !important;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.eventTimePill {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 9.5px;
+  font-family: var(--mono);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--mut);
+  white-space: nowrap;
+  line-height: 1 !important;
+}
+
+.eventSummaryPill {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 10px;
+  color: var(--acc);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  text-align: right;
+  padding-right: 2px;
+  line-height: 1 !important;
+}
+
+.eventRowActions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 2px;
+}
+
+.eventExpandBtn {
+  background: transparent !important;
+  border: none !important;
+  color: var(--mut) !important;
+  font-size: 10px !important;
+  cursor: pointer;
+  padding: 2px 4px !important;
+  width: auto !important;
+  line-height: 1;
+}
+
+.eventExpandBtn:hover {
+  color: var(--fg) !important;
+}
+
+.eventDeleteBtn {
+  background: transparent !important;
+  border: none !important;
+  color: #f87171 !important;
+  font-size: 11px !important;
+  cursor: pointer;
+  padding: 2px 4px !important;
+  width: auto !important;
+  line-height: 1;
+}
+
+.eventDeleteBtn:hover {
+  color: #ef4444 !important;
+}
+
+.eventExpandedBody {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  font-size: 10.5px;
+}
+
+/* Scope & Dimension Controls (Point 2) */
+.eventScopeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+}
+
+.scopeLabel {
+  color: var(--mut);
+  font-weight: 500;
+}
+
+.scopeButtons {
+  display: flex;
+  gap: 3px;
+}
+
+.scopeBtn {
+  padding: 2px 6px !important;
+  font-size: 10px !important;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel2);
+  color: var(--mut);
+  cursor: pointer;
+  width: auto !important;
+  line-height: 1.3 !important;
+  transition: all 0.12s ease;
+}
+
+.scopeBtn:hover {
+  color: var(--fg);
+  border-color: var(--acc);
+}
+
+.scopeBtnActive {
+  background: color-mix(in srgb, var(--acc) 22%, var(--panel2)) !important;
+  border-color: var(--acc) !important;
+  color: var(--fg) !important;
+  font-weight: 600;
+}
+
+.localSpotControls {
+  display: grid;
+  gap: 5px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+}
+
+.spotPickerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.spotPickerBtn {
+  padding: 2px 6px !important;
+  font-size: 10px !important;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  width: auto !important;
+  line-height: 1.3 !important;
+}
+
+.spotPickerBtn:hover {
+  border-color: var(--acc);
+}
+
+.spotCoord {
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--mut);
+}
+
+.radiusLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.radiusLabel input[type='range'] {
+  width: 100%;
+  accent-color: var(--acc);
+  height: 14px;
+}
+
+.eventCardRange {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--mut);
+}
+
+.eventCardRange input {
+  width: 44px !important;
+  padding: 1px 3px !important;
+  font-size: 10px !important;
+  text-align: center;
+  font-family: var(--mono);
+}
+
+.eventCardControls {
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.eventCardControls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10.5px;
+}
+
+.eventCardControls input[type='range'] {
+  width: 100%;
+  accent-color: var(--acc);
+  height: 14px;
+}
+
+.eventCardNote {
+  font-size: 10.5px;
+  color: #93c5fd;
+  line-height: 1.3;
 }

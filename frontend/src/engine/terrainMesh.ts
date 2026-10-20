@@ -208,6 +208,21 @@ export class TerrainMesh {
     return material;
   }
 
+  private currentWetness = 0;
+
+  /** Modulates roughness and metalness to give the terrain a wet sheen and darker tone during rain. */
+  setWetness(wetFactor: number): void {
+    const factor = Math.min(1, Math.max(0, wetFactor));
+    if (Math.abs(this.currentWetness - factor) < 0.05) return;
+    this.currentWetness = factor;
+    const targetRoughness = 0.95 - factor * 0.45;
+    const targetMetalness = factor * 0.12;
+    for (const m of this.materials) {
+      m.roughness = targetRoughness;
+      m.metalness = targetMetalness;
+    }
+  }
+
   // ------------------------------------------------------------ base layers
   async setLayer(name: BaseLayerName): Promise<void> {
     if (name !== 'satellite' && !this.layerTex[name]) {
