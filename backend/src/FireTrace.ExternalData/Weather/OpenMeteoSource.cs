@@ -20,8 +20,8 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
     {
         from = Hour(from);
         to = Hour(to).AddHours(1);
-        var cached = await LoadAsync(locationId, from, to, ct);
-        if (cached.Count >= (int)(to - from).TotalHours + 1) return cached;
+        var (cached, detailed) = await LoadAsync(locationId, from, to, ct);
+        if (detailed && cached.Count >= (int)(to - from).TotalHours + 1) return cached; // horas guardadas antes das rajadas, chuva e nuvens obtêm-se outra vez
 
         // ERA5 lags a few days behind: the recent past comes from the forecast/analysis endpoint
         var cutoff = time.GetUtcNow().UtcDateTime.Date.AddDays(-options.Era5ArchiveLagDays);
@@ -35,7 +35,7 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
             var start = from.UtcDateTime.Date < cutoff ? new DateTimeOffset(cutoff, TimeSpan.Zero) : from;
             await StoreAsync(locationId, await FetchAsync(options.ForecastBaseUrl, ForecastProvider, point, start, to, ct), ct);
         }
-        return await LoadAsync(locationId, from, to, ct);
+        return (await LoadAsync(locationId, from, to, ct)).Rows;
     }
 
     static DateTimeOffset Hour(DateTimeOffset t) => new(t.UtcDateTime.Date.AddHours(t.UtcDateTime.Hour), TimeSpan.Zero);
@@ -44,7 +44,7 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
     {
         var inv = CultureInfo.InvariantCulture;
         var url = $"{baseUrl}?latitude={p.Lat.ToString(inv)}&longitude={p.Lon.ToString(inv)}&start_date={from.UtcDateTime:yyyy-MM-dd}&end_date={to.UtcDateTime:yyyy-MM-dd}" +
-                  "&hourly=wind_speed_10m,wind_direction_10m,relative_humidity_2m,temperature_2m&wind_speed_unit=kmh&timezone=UTC";
+                  "&hourly=wind_speed_10m,wind_direction_10m,relative_humidity_2m,temperature_2m,wind_gusts_10m,precipitation,cloud_cover&wind_speed_unit=kmh&timezone=UTC";
         using var doc = JsonDocument.Parse(await http.GetStringAsync(url, ct));
         var hourly = doc.RootElement.GetProperty("hourly");
         var times = hourly.GetProperty("time").EnumerateArray().ToArray();
@@ -55,7 +55,7 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
             double? wind = Value("wind_speed_10m", i), dir = Value("wind_direction_10m", i), rh = Value("relative_humidity_2m", i), temp = Value("temperature_2m", i);
             if (wind is null || dir is null || rh is null || temp is null) continue;
             var ts = DateTimeOffset.Parse(times[i].GetString()! + ":00Z", inv, DateTimeStyles.AssumeUniversal);
-            if (ts >= from && ts <= to) result.Add(new HourlyWeather(ts, wind.Value, dir.Value, rh.Value, temp.Value, provider));
+            if (ts >= from && ts <= to) result.Add(new HourlyWeather(ts, wind.Value, dir.Value, rh.Value, temp.Value, provider, Value("wind_gusts_10m", i), Value("precipitation", i), Value("cloud_cover", i)));
         }
         return result;
     }
@@ -65,18 +65,20 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
         await using var connection = await db.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
         foreach (var s in items)
-            await connection.ExecuteAsync(@"INSERT INTO weather_obs(location_id,ts,provider,wind_kmh,wind_from,rh,temp_c) VALUES (@loc,@ts,@provider,@w,@d,@rh,@t)
-                ON CONFLICT (location_id,ts) DO UPDATE SET provider=@provider,wind_kmh=@w,wind_from=@d,rh=@rh,temp_c=@t",
-                new { loc = locationId, ts = s.Time.UtcDateTime, provider = s.Provider, w = (float)s.WindKmh, d = (float)s.WindFromDeg, rh = (float)s.HumidityPct, t = (float)s.TempC }, tx);
+            await connection.ExecuteAsync(@"INSERT INTO weather_obs(location_id,ts,provider,wind_kmh,wind_from,rh,temp_c,gust_kmh,precip_mmh,cloud_pct,detail_version) VALUES (@loc,@ts,@provider,@w,@d,@rh,@t,@g,@p,@c,1)
+                ON CONFLICT (location_id,ts) DO UPDATE SET provider=@provider,wind_kmh=@w,wind_from=@d,rh=@rh,temp_c=@t,gust_kmh=@g,precip_mmh=@p,cloud_pct=@c,detail_version=1",
+                new { loc = locationId, ts = s.Time.UtcDateTime, provider = s.Provider, w = (float)s.WindKmh, d = (float)s.WindFromDeg, rh = (float)s.HumidityPct, t = (float)s.TempC, g = (float?)s.GustKmh, p = (float?)s.PrecipitationMmH, c = (float?)s.CloudCoverPct }, tx);
         await tx.CommitAsync(ct);
     }
 
-    async Task<IReadOnlyList<HourlyWeather>> LoadAsync(string locationId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    /// <summary>As horas guardadas e se todas já trazem rajadas, precipitação e nebulosidade (as guardadas antes disso têm de ser pedidas outra vez).</summary>
+    async Task<(List<HourlyWeather> Rows, bool Detailed)> LoadAsync(string locationId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
     {
         await using var connection = await db.OpenConnectionAsync(ct);
-        var rows = await connection.QueryAsync("SELECT ts,provider,wind_kmh,wind_from,rh,temp_c FROM weather_obs WHERE location_id=@loc AND ts BETWEEN @f AND @t ORDER BY ts",
-            new { loc = locationId, f = from.UtcDateTime, t = to.UtcDateTime });
-        return rows.Select(r => new HourlyWeather(new DateTimeOffset(DateTime.SpecifyKind((DateTime)r.ts, DateTimeKind.Utc)), (double)(float)r.wind_kmh, (double)(float)r.wind_from,
-            (double)(float)r.rh, (double)(float)r.temp_c, (string)r.provider)).ToList();
+        var rows = (await connection.QueryAsync("SELECT ts,provider,wind_kmh,wind_from,rh,temp_c,gust_kmh,precip_mmh,cloud_pct,detail_version FROM weather_obs WHERE location_id=@loc AND ts BETWEEN @f AND @t ORDER BY ts",
+            new { loc = locationId, f = from.UtcDateTime, t = to.UtcDateTime })).ToList();
+        var hours = rows.Select(r => new HourlyWeather(new DateTimeOffset(DateTime.SpecifyKind((DateTime)r.ts, DateTimeKind.Utc)), (double)(float)r.wind_kmh, (double)(float)r.wind_from,
+            (double)(float)r.rh, (double)(float)r.temp_c, (string)r.provider, (double?)(float?)r.gust_kmh, (double?)(float?)r.precip_mmh, (double?)(float?)r.cloud_pct)).ToList();
+        return (hours, rows.All(r => (short)r.detail_version >= 1));
     }
 }

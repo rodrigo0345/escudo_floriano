@@ -22,6 +22,22 @@ public static class DeadFuelMoisture
         return Math.Clamp(m / 100.0, s.MinEquilibriumMoisture, s.MaxEquilibriumMoisture);
     }
 
+    /// <summary>
+    /// Humidade de equilíbrio (fração) junto ao combustível: com sol a superfície aquece acima do ar (até `SolarHeatingMaxC` à radiação de referência) e, com o mesmo vapor de água,
+    /// a humidade relativa à superfície desce. De noite ou sem radiação é o equilíbrio do ar.
+    /// </summary>
+    public static double SurfaceEquilibrium(WeatherPoint w, FuelMoistureSettings s)
+    {
+        double heating = s.SolarHeatingMaxC * Math.Clamp(w.SolarRadiationWm2 / s.SolarReferenceWm2, 0, 1);
+        if (heating <= 0) return EquilibriumMoisture(w.HumidityPct, w.TempC, s);
+        double surface = w.TempC + heating;
+        return EquilibriumMoisture(Psychrometrics.SurfaceHumidityPct(w.HumidityPct, w.TempC, surface), surface, s);
+    }
+
+    /// <summary>A chuva de um minuto (mm) molha uma classe de combustível em direção à saturação: depressa o fino (poucos décimos de mm), devagar o grosso.</summary>
+    static double Wet(double moisturePct, double mm, double interceptMm, double saturationPct) =>
+        moisturePct >= saturationPct ? moisturePct : moisturePct + (saturationPct - moisturePct) * (1 - Math.Exp(-mm / interceptMm));
+
     public static IReadOnlyList<Row> Series(WeatherTrack wx, int dtMetSeconds, int bands, FuelMoistureSettings s, int spinUpMin, FuelMoistureSpec? spec = null)
     {
         var rows = new List<Row>();
@@ -38,7 +54,7 @@ public static class DeadFuelMoisture
         }
 
         double bias = spec?.DeadBiasPct ?? 0;
-        double Eq(int minute) { var w = wx.At(minute); return EquilibriumMoisture(w.HumidityPct, w.TempC, s) * 100 * wx.MoistScale + bias; }
+        double Eq(int minute) => SurfaceEquilibrium(wx.At(minute), s) * 100 * wx.MoistScale + bias;
         double mean = Enumerable.Range(-spinUpMin, spinUpMin + 1).Where(m => m % s.EquilibriumSampleMinutes == 0).Average(Eq);
         double m1 = Eq(-spinUpMin), m10 = mean, m100 = mean; // os grossos começam no equilíbrio médio do período anterior
         int minute = -spinUpMin;
@@ -49,6 +65,10 @@ public static class DeadFuelMoisture
             {
                 double e = Eq(minute);
                 m1 += (e - m1) * (1 - Math.Exp(-1 / s.TimeLag1hMinutes)); m10 += (e - m10) * (1 - Math.Exp(-1 / s.TimeLag10hMinutes)); m100 += (e - m100) * (1 - Math.Exp(-1 / s.TimeLag100hMinutes));
+                if (wx.At(minute).PrecipitationMmH / 60 is > 0 and var rainMm)
+                {
+                    m1 = Wet(m1, rainMm, s.RainIntercept1hMm, s.RainSaturationPct); m10 = Wet(m10, rainMm, s.RainIntercept10hMm, s.RainSaturationPct); m100 = Wet(m100, rainMm, s.RainIntercept100hMm, s.RainSaturationPct);
+                }
             }
             var w = wx.At(target);
             rows.Add(new Row(w.WindKmh, w.WindFromDeg, Math.Max(m1, s.MinDeadMoisturePct), Math.Max(m10, s.MinDeadMoisturePct), Math.Max(m100, s.MinDeadMoisturePct),
