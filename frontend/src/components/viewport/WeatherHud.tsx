@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
-import { fireRiskLevel, sampleWeatherAt } from '@/domain/weather';
+import { fireRiskLevel, findUpcomingWeatherShift, groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
 import { useEngine } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
@@ -18,10 +18,16 @@ export function WeatherHud() {
   const run = useAppStore((s) => s.run);
   const t = useAppStore((s) => s.t);
   const scenarioId = useAppStore((s) => s.scenarioId);
+  const smokeInfo = useAppStore((s) => s.smokeInfo);
   const arrow = useRef<SVGGElement>(null);
   const windToDeg = useRef(0);
 
   const weather = useMemo(() => (run ? sampleWeatherAt(run.weather, run.startMs, t) : null), [run, t]);
+  const upcomingShift = useMemo(
+    () => (run ? findUpcomingWeatherShift(run.weather, run.startMs, t) : null),
+    [run, t],
+  );
+  const visibilityM = useMemo(() => groundVisibilityFromSmoke(smokeInfo), [smokeInfo]);
   windToDeg.current = weather ? (weather.windFromDeg + 180) % 360 : 0;
 
   useEffect(() => {
@@ -59,6 +65,20 @@ export function WeatherHud() {
       {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
         <div className={styles.hudPrecip}>
           🌧️ Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
+        </div>
+      ) : null}
+      {upcomingShift && (
+        <div
+          className={styles.upcomingShift}
+          title={`Prevista rotação de ${upcomingShift.dirChangeDeg}° e variação de ${upcomingShift.speedDeltaKmh > 0 ? '+' : ''}${upcomingShift.speedDeltaKmh} km/h ao minuto ${upcomingShift.atMinute}`}
+        >
+          <span className={styles.shiftIcon}>⏱️</span>
+          <span>{upcomingShift.label}</span>
+        </div>
+      )}
+      {visibilityM != null && visibilityM < 4000 ? (
+        <div className={styles.hudVisibility} title="Visibilidade reduzida ao nível do solo devido à propagação de fumo">
+          🌫️ Visibilidade: <b>{(visibilityM / 1000).toFixed(1)} km</b> (fumo)
         </div>
       ) : null}
       {fireRiskLevel(weather) === 'extreme' ? (

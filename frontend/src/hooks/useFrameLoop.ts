@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { sampleWeatherAt } from '@/domain/weather';
+import { groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
 import { useEngine, useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
@@ -47,9 +47,13 @@ export function useFrameLoop(): void {
         world.smoke.update(tf, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio());
 
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
-        engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0, world.geo.centerLat, world.geo.centerLon);
-
+        const smokeVisM = groundVisibilityFromSmoke(s.smokeInfo);
         const precipMmH = w?.precipitationMmH ?? 0;
+        const rainVisM = precipMmH > 4 ? Math.max(1200, 5200 - precipMmH * 320) : null;
+        const effectiveVisM = smokeVisM != null && rainVisM != null ? Math.min(smokeVisM, rainVisM) : smokeVisM ?? rainVisM ?? null;
+
+        engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0, world.geo.centerLat, world.geo.centerLon, effectiveVisM);
+
         world.terrain.setWetness(precipMmH > 0 ? Math.min(1, precipMmH / 8) : 0);
 
         const rainDt = lastRainTs ? Math.min((ts - lastRainTs) / 1000, 0.1) : 0.016;

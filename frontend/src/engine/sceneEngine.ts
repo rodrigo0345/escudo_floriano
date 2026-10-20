@@ -89,10 +89,16 @@ export class SceneEngine {
 
   /**
    * Updates sun angle, directional light, ambient sky/ground light, sky color, and fog
-   * according to real solar elevation at the current terrain coordinates (defaulting to Guimarães: 41.44°N, 8.29°W)
-   * and cloud cover.
+   * according to real solar elevation at the current terrain coordinates (defaulting to Guimarães: 41.44°N, 8.29°W),
+   * cloud cover, and smoke/weather ground visibility.
    */
-  updateAtmosphere(timestampMs: number, cloudCoverPct = 0, latDeg = 41.442, lonDeg = -8.295): void {
+  updateAtmosphere(
+    timestampMs: number,
+    cloudCoverPct = 0,
+    latDeg = 41.442,
+    lonDeg = -8.295,
+    visibilityM?: number | null,
+  ): void {
     const LAT_RAD = (latDeg * Math.PI) / 180;
     const LON_DEG = lonDeg;
     const date = new Date(timestampMs);
@@ -136,7 +142,8 @@ export class SceneEngine {
     const cloudFactor = Math.min(1, Math.max(0, cloudCoverPct / 100));
 
     // Cache to prevent redundant color operations and DOM updates
-    const cacheKey = `${Math.floor(timestampMs / 10000)}_${Math.round(cloudCoverPct)}_${Math.round(latDeg * 100)}_${Math.round(lonDeg * 100)}`;
+    const visKey = visibilityM != null ? Math.round(visibilityM / 200) : 'none';
+    const cacheKey = `${Math.floor(timestampMs / 10000)}_${Math.round(cloudCoverPct)}_${Math.round(latDeg * 100)}_${Math.round(lonDeg * 100)}_${visKey}`;
     if (cacheKey === this.lastAtmosphereKey) return;
     this.lastAtmosphereKey = cacheKey;
 
@@ -214,6 +221,22 @@ export class SceneEngine {
         this.scene.fog.color.copy(this.skyColorScratch);
         this.scene.fog.near = 700;
         this.scene.fog.far = 3800;
+      }
+    }
+
+    // Visibility reduction from smoke and rain (1 world unit = 10m)
+    if (this.scene.fog instanceof THREE.Fog && visibilityM != null && visibilityM > 0) {
+      const visUnits = visibilityM / 10;
+      const maxFar = Math.max(300, visUnits * 1.35);
+      const maxNear = Math.max(60, maxFar * 0.22);
+      this.scene.fog.far = Math.min(this.scene.fog.far, maxFar);
+      this.scene.fog.near = Math.min(this.scene.fog.near, maxNear);
+
+      // Under dense smoke (<3000m), tint fog with smoky ash tone
+      if (visibilityM < 3000) {
+        const smokeFactor = Math.min(0.55, (3000 - visibilityM) / 3000);
+        this.skyColorScratch.lerp(this.tmpColorB.setHex(0x5a5048), smokeFactor);
+        this.scene.fog.color.copy(this.skyColorScratch);
       }
     }
   }

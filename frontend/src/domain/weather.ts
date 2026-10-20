@@ -1,6 +1,7 @@
-import type { WeatherSample } from '@/api';
+import type { Smoke, WeatherSample } from '@/api';
 
 import { lerp, lerpDeg } from './colors';
+import { compass } from './georef';
 
 const MS_PER_MIN = 60_000;
 
@@ -36,6 +37,80 @@ export function fireRiskLevel(w: InterpolatedWeather | null | undefined): FireRi
 /** Portuguese operational fire-weather indicator: "Regra dos 30-30-30" (T >= 30 °C, HR <= 30 %, Wind >= 30 km/h). */
 export function isExtremeFireWeather(w: InterpolatedWeather | null | undefined): boolean {
   return fireRiskLevel(w) === 'extreme';
+}
+
+export interface UpcomingWeatherShift {
+  inMinutes: number;
+  atMinute: number;
+  dirChangeDeg: number;
+  toDeg: number;
+  toSpeedKmh: number;
+  speedDeltaKmh: number;
+  label: string;
+}
+
+/**
+ * Scans `run.weather` ahead for a significant wind shift within `lookaheadMinutes` (default 60).
+ * Flags a direction change >= 30° or speed change >= 15 km/h.
+ */
+export function findUpcomingWeatherShift(
+  series: WeatherSample[] | null | undefined,
+  startMs: number,
+  currentMinute: number,
+  lookaheadMinutes = 60,
+): UpcomingWeatherShift | null {
+  if (!series || series.length < 2) return null;
+  const current = sampleWeatherAt(series, startMs, currentMinute);
+  if (!current) return null;
+
+  for (let m = 1; m <= lookaheadMinutes; m++) {
+    const futureMin = currentMinute + m;
+    const future = sampleWeatherAt(series, startMs, futureMin);
+    if (!future) break;
+
+    // Angular difference on the circle: -180..+180
+    const rawDiff = ((future.windFromDeg - current.windFromDeg + 540) % 360) - 180;
+    const absAngle = Math.abs(rawDiff);
+    const speedDelta = future.windKmh - current.windKmh;
+
+    const isDirShift = absAngle >= 30;
+    const isSpeedShift = Math.abs(speedDelta) >= 15;
+
+    if (isDirShift || isSpeedShift) {
+      let label = '';
+      if (isDirShift && speedDelta >= 10) {
+        label = `Vento roda para ${compass(future.windFromDeg)} e acelera (+${Math.round(speedDelta)} km/h) em ${m} min`;
+      } else if (isDirShift) {
+        label = `Vento roda para ${compass(future.windFromDeg)} (${Math.round(future.windFromDeg)}°) em ${m} min`;
+      } else if (speedDelta >= 15) {
+        label = `Vento acelera para ${Math.round(future.windKmh)} km/h em ${m} min`;
+      } else {
+        label = `Vento abranda para ${Math.round(future.windKmh)} km/h em ${m} min`;
+      }
+
+      return {
+        inMinutes: m,
+        atMinute: futureMin,
+        dirChangeDeg: Math.round(absAngle),
+        toDeg: Math.round(future.windFromDeg),
+        toSpeedKmh: Math.round(future.windKmh),
+        speedDeltaKmh: Math.round(speedDelta),
+        label,
+      };
+    }
+  }
+  return null;
+}
+
+/** Evaluates typical ground visibility (meters) from the active smoke field and affected roads. */
+export function groundVisibilityFromSmoke(smoke: Smoke | null | undefined): number | null {
+  if (!smoke) return null;
+  const cutCount = smoke.affectedRoadIds?.length ?? 0;
+  if (cutCount >= 10) return 800;
+  if (cutCount >= 4) return 1500;
+  if (cutCount >= 1) return 2500;
+  if (smoke.plumeHeightM?.max && smoke.plumeHeightM.max > 800) return 3500;
+  return null;
 }
 
 /** Mean conditions of a weather series, with wind direction averaged on the circle. */

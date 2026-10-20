@@ -349,6 +349,39 @@
   gap: 6px;
 }
 
+.upcomingShift {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, #f59f00 20%, transparent);
+  border: 1px solid #f59f00;
+  color: #ffe066;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 7px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: pulseAlert 2.5s infinite ease-in-out;
+}
+
+.shiftIcon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.hudVisibility {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, #868e96 18%, transparent);
+  border: 1px solid #868e96;
+  color: #dee2e6;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* right-hand stack: view mode, base layers, overlays, legends */
 .layers {
   max-height: calc(100% - 24px);
