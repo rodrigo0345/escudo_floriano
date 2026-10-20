@@ -1,0 +1,90 @@
+.strip {
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  min-height: 0;
+}
+
+.lead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 74px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 10px;
+  color: var(--mut);
+}
+
+.lead span {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.lead small {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(126px, 1fr);
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 1px;
+}
+
+.card {
+  min-width: 0;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--panel2) 48%, transparent);
+}
+
+.card b {
+  font-size: 15px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card small {
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card small:first-child {
+  font-size: 9px;
+}
+
+.empty {
+  margin: 0;
+  align-self: center;
+  font-size: 12px;
+  color: var(--mut);
+}
+
+@media (max-width: 900px) {
+  .strip {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .lead {
+    flex-direction: row;
+    gap: 8px;
+    align-items: baseline;
+  }
+}

@@ -30,7 +30,9 @@ export function useWorldLoader(): void {
     world.focusOnLatLon(center.lat, center.lon);
     useAppStore.getState().setIgnitions(initial);
     setWorld(world);
+    if (typeof window !== 'undefined') (window as any).__WORLD__ = world;
     return () => {
+      if (typeof window !== 'undefined') (window as any).__WORLD__ = null;
       setWorld(null);
       world.dispose();
     };

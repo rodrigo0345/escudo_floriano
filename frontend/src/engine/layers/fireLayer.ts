@@ -27,16 +27,44 @@ export class FireLayer {
 
   constructor(private geo: Georef) {
     this.group.add(this.ignitionMarkers);
-    const shape = new THREE.Shape();
-    shape.moveTo(0, -3.0);
-    shape.lineTo(1.3, -0.6);
-    shape.lineTo(0.42, -0.5);
-    shape.lineTo(0.42, 2.2);
-    shape.lineTo(-0.42, 2.2);
-    shape.lineTo(-0.42, -0.5);
-    shape.lineTo(-1.3, -0.6);
-    shape.closePath();
-    this.arrowGeometry = new THREE.ShapeGeometry(shape);
+    // Segmented / striped chevron vector: visually unmistakable from solid wind arrows
+    const head = new THREE.Shape();
+    head.moveTo(0, -3.0);
+    head.lineTo(1.35, -1.3);
+    head.lineTo(0.5, -1.1);
+    head.lineTo(0, -1.65);
+    head.lineTo(-0.5, -1.1);
+    head.lineTo(-1.35, -1.3);
+    head.closePath();
+
+    const c1 = new THREE.Shape();
+    c1.moveTo(0, -1.25);
+    c1.lineTo(1.15, -0.35);
+    c1.lineTo(0.5, -0.15);
+    c1.lineTo(0, -0.7);
+    c1.lineTo(-0.5, -0.15);
+    c1.lineTo(-1.15, -0.35);
+    c1.closePath();
+
+    const c2 = new THREE.Shape();
+    c2.moveTo(0, -0.3);
+    c2.lineTo(1.0, 0.6);
+    c2.lineTo(0.48, 0.8);
+    c2.lineTo(0, 0.25);
+    c2.lineTo(-0.48, 0.8);
+    c2.lineTo(-1.0, 0.6);
+    c2.closePath();
+
+    const c3 = new THREE.Shape();
+    c3.moveTo(0, 0.65);
+    c3.lineTo(0.85, 1.55);
+    c3.lineTo(0.45, 1.75);
+    c3.lineTo(0, 1.2);
+    c3.lineTo(-0.45, 1.75);
+    c3.lineTo(-0.85, 1.55);
+    c3.closePath();
+
+    this.arrowGeometry = new THREE.ShapeGeometry([head, c1, c2, c3]);
     this.arrowGeometry.rotateX(Math.PI / 2); // tip (y = -3.0) ends up at -z, i.e. pointing north
     this.arrowMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,

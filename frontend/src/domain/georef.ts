@@ -57,6 +57,16 @@ export class Georef {
     this.base = location.elevationM?.min ?? 0;
   }
 
+  /** Geographic center latitude of the terrain grid. */
+  get centerLat(): number {
+    return this.north - (this.gridHeight * this.dLat) / 2;
+  }
+
+  /** Geographic center longitude of the terrain grid. */
+  get centerLon(): number {
+    return this.west + (this.gridWidth * this.dLon) / 2;
+  }
+
   /** Normalized coordinates 0..1 (u = west→east, v = north→south). */
   uv(lat: number, lon: number): [number, number] {
     return [(lon - this.west) / (this.dLon * this.gridWidth), (this.north - lat) / (this.dLat * this.gridHeight)];
