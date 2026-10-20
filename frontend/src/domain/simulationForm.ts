@@ -36,6 +36,9 @@ export interface TimelineRangeEvent {
   centerLat?: number;
   centerLon?: number;
   radiusKm?: number;          // radius in km (default 4 km)
+  // Parâmetros de ciclo de vida atmosférico (construção prévia e dissipação posterior)
+  buildupMinutes?: number;      // Antecedência de formação das nuvens antes de startMinute (default: 20-30 min)
+  dissipationMinutes?: number;  // Tempo de dissipação das nuvens após endMinute (default: 20-25 min)
   // Specific parameters
   intensityMmH?: number;     // for rain (default 6.0 mm/h)
   cloudCoverPct?: number;    // for clouds / fog (default 80%)
@@ -98,6 +101,8 @@ export function createTimelineRangeEvent(
         startMinute: safeStart,
         endMinute: safeEnd,
         intensityMmH: 6.0,
+        buildupMinutes: 20,
+        dissipationMinutes: 20,
       };
     case 'storm':
       return {
@@ -111,6 +116,8 @@ export function createTimelineRangeEvent(
         windKmh: 42,
         windFromDeg: 240,
         tempDeltaC: -5,
+        buildupMinutes: 30,
+        dissipationMinutes: 25,
       };
     case 'clouds':
       return {
@@ -123,6 +130,8 @@ export function createTimelineRangeEvent(
         cloudCoverPct: 85,
         humidityDeltaPct: 25,
         tempDeltaC: -3,
+        buildupMinutes: 15,
+        dissipationMinutes: 20,
       };
     case 'wind_shift':
       return {
@@ -396,7 +405,7 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
         enabled: true,
         window: win,
         intensityMmH: ce.intensityMmH ?? 6.0,
-        rampMinutes: Math.min(10, Math.round(dur * 0.2)),
+        rampMinutes: ce.buildupMinutes ?? Math.min(10, Math.round(dur * 0.2)),
       });
     } else if (ce.type === 'storm') {
       events.push(
@@ -405,7 +414,7 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
           enabled: true,
           window: win,
           intensityMmH: ce.intensityMmH ?? 15.0,
-          rampMinutes: 5,
+          rampMinutes: ce.buildupMinutes ?? 10,
         },
         {
           type: 'wind_scale',
