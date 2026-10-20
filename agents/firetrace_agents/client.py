@@ -189,6 +189,16 @@ class FiretraceClient:
             json_body={"geometry": geometry},
         )
 
+    def route(self, request: dict[str, Any]) -> dict[str, Any]:
+        """``POST /routing/route``: the ``Route`` of a vehicle (``found``, ``durationMin``, ``geometry``, ``blockedBy``, ``warnings``)."""
+        if self._validate:
+            validate_against_spec("RouteRequest", request)
+        return self._request("POST", "/routing/route", json_body=request)
+
+    def get_station(self, station_id: str) -> dict[str, Any]:
+        """``GET /stations/{id}``: where a unit is based (``position``)."""
+        return self._request("GET", self._fill("/stations/{stationId}", stationId=station_id))
+
     def get_location(self, location_id: str) -> dict[str, Any]:
         """``GET /locations/{id}``: bounds and the grid (size, cell size, north-west corner) every simulation of it uses."""
         return self._request("GET", self._fill("/locations/{locationId}", locationId=location_id))

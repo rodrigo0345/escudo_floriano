@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--unlimited", action="store_true", help="no limit on the line each unit can build (what the first campaign did)")
     parser.add_argument("--concentration", default="1,3,6", help="candidates: on how many of the most dangerous sectors to spend the line (comma list; 0 = units spread over the front)")
     parser.add_argument("--building-zones", default="0", help="candidates: how many patches of houses the fire engines defend (comma list; 0 = none, e.g. 0,10)")
+    parser.add_argument("--no-travel", action="store_true", help="every unit is on site at minute 0 (what the campaigns assumed before the routing was used)")
     args = parser.parse_args(argv)
 
     client = FiretraceClient(base_url=args.base_url)
@@ -91,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         print(HEADER)
         common = dict(stage_minutes=args.stage, horizon_minutes=args.horizon, policy=args.policy, forecast_wind_shift_deg=args.forecast_wind_shift,
                       start_minute=args.start, until_minute=args.until, capacity=not args.unlimited, concentrations=tuple(int(c) for c in args.concentration.split(",")),
-                      building_zones=tuple(int(z) for z in args.building_zones.split(",")))
+                      building_zones=tuple(int(z) for z in args.building_zones.split(",")), travel=not args.no_travel)
         # the control first: the same chain of stages with no response (it carries the small error that restarting from an outline adds)
         control = Campaign(client, orchestrator, baseline, response=False, **common).run()
         campaign = Campaign(client, orchestrator, baseline, publish=args.publish, **common)

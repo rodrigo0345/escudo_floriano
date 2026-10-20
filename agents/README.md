@@ -70,8 +70,14 @@ leaves it out) and reads the contract from the mounted `api-spec/`.
 * **Continuing from an outline is not exact**: a chained run ends ~9% larger than the uninterrupted one. Compare with the chained control, not the original run.
 * **The backend never applies an evacuation** to `populationExposed` (checked in code and by experiment), so lives are the agents' own model with
   explicit assumptions (`life.py`). Only 2 of the 6 built-in scenarios put people in the fire's way.
-* **Planning sees the forecast's own fire** (perfect foresight unless `--forecast-wind-shift` is used), starts the response with the whole fleet on site, and
-  has no water, fatigue or travel time yet. Treat reductions as upper bounds.
+* **Planning sees the forecast's own fire** (perfect foresight unless `--forecast-wind-shift` is used) and has no water or fatigue yet.
+* **Travel time (`travel.py`)**: each unit's arrival comes from `POST /routing/route` (station → target, avoiding closures and the predicted fire; helicopters fly
+  straight), the effect starts then (the backend uses each effect's own `start`, not the action's `etaMinutes`), and a unit with no route is not assigned.
+  With it the Penha campaign gains **−0%** area against the chained control (without it, −15%, and −70% buildings with house zones): those gains came from units that
+  were on site at minute 0. The campaign sends every unit from its station again each stage (it does not remember who is already deployed), which undervalues it.
+  The last stretch off the network uses the backend's own limits (`Routing.WalkKmh` 3 km/h, `Routing.MaxSnapM` 500 m: constants in `travel.py`, since the contract does not expose them).
+  The backend now checks plans the same way (`target_unreachable`, `route_off_network`) and stores its own route and `etaMinutes` for every ground vehicle of an action whose
+  target it can read, so fire-attack actions carry `line` / `anchorPoint`. `--no-travel` restores the old assumption, but those plans are then rejected by the backend when a unit cannot get there.
 * `fuel_removal` (the only tool that truly blocks the fire) is disabled: the spec and the backend disagree on its shape.
 
 ## Open proposals for the spec / backend (not applied: they belong to those verticals)
