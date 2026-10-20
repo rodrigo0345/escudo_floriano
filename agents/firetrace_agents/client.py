@@ -241,6 +241,25 @@ class FiretraceClient:
             simulation = self.wait_for_simulation(simulation["id"], timeout_seconds=timeout_seconds)
         return simulation
 
+    def list_simulations(self, *, kind: str | None = None, status: str | None = None, updated_after: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        """``GET /simulations`` (all pages): filter by ``kind``, ``status`` (comma list) and ``updatedAfter`` (RFC 3339)."""
+        params: dict[str, Any] = {"limit": limit}
+        if kind:
+            params["kind"] = kind
+        if status:
+            params["status"] = status
+        if updated_after:
+            params["updatedAfter"] = updated_after
+        page = self._request("GET", "/simulations", params=params)
+        items: list[dict[str, Any]] = list(page.get("items", []))
+        cursor = page.get("nextCursor")
+        while cursor:
+            params["cursor"] = cursor
+            page = self._request("GET", "/simulations", params=params)
+            items.extend(page.get("items", []))
+            cursor = page.get("nextCursor")
+        return items
+
     def get_perimeters(self, simulation_id: str, *, t_min: int) -> dict[str, Any]:
         """``GET /simulations/{id}/perimeters?tMin=``: the fire's outline at ``t_min`` (a ``FeatureCollection``)."""
         return self._request("GET", self._fill("/simulations/{simulationId}/perimeters", simulationId=simulation_id), params={"tMin": t_min})

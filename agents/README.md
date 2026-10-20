@@ -36,6 +36,21 @@ python -m firetrace_agents --simulation-id <id> --at-minute 60               # o
 Results are printed, never written to files. Everything created in the backend is titled `[lab]`; nothing is deleted.
 Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` (tab **Planos** lists the plans of a baseline and draws them).
 
+## As a service (docker compose)
+
+The `agents` service in `docker-compose.yaml` runs `firetrace_agents/watcher.py`: every 10 s it asks `GET /simulations?kind=baseline&status=succeeded&updatedAfter=…`,
+and for each baseline with no plans (`GET /plans?simulationId=`) it publishes plans A and B and asks for both what-if runs (`POST /plans/{id}/simulate`).
+A baseline started from the UI has its plans in tab **Planos** about 45 s later (Falperra, measured), with no terminal involved.
+
+```powershell
+docker compose up -d --build agents      # needs the backend; never `down -v`
+docker compose logs -f agents
+```
+
+Settings are the `AGENTS_*` variables listed at the top of `watcher.py` (poll interval, minute the plans decide on, house zones on/off...). Baselines whose label
+starts with `[lab]` (the experiments of the scripts) are left alone, and a restart never plans twice. The image is built from `agents/` (the root `.dockerignore`
+leaves it out) and reads the contract from the mounted `api-spec/`.
+
 ## How a plan is made
 
 1. `GET /simulations/{id}/threatened`, `/summary`, `/vectors` and `GET /rules` give the situation (never a guessed position).
