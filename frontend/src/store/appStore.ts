@@ -45,6 +45,7 @@ export interface AppState {
   probMode: boolean;
   smokeEnabled: boolean;
   windEnabled: boolean;
+  cloudsEnabled: boolean;
   windDensity: number;
   pickIgnitionSlot: 0 | 1 | null;
   helpOpen: boolean;
@@ -78,6 +79,7 @@ export interface AppState {
   setProbMode: (on: boolean) => void;
   setSmokeEnabled: (on: boolean) => void;
   setWindEnabled: (on: boolean) => void;
+  setCloudsEnabled: (on: boolean) => void;
   setWindDensity: (density: number) => void;
   setPickIgnitionSlot: (slot: 0 | 1 | null) => void;
   setHelpOpen: (open: boolean) => void;
@@ -113,6 +115,7 @@ export const useAppStore = create<AppState>((set) => ({
   probMode: false,
   smokeEnabled: true,
   windEnabled: false,
+  cloudsEnabled: true,
   windDensity: 50,
   pickIgnitionSlot: null,
   helpOpen: false,
@@ -146,6 +149,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProbMode: (probMode) => set({ probMode }),
   setSmokeEnabled: (smokeEnabled) => set({ smokeEnabled }),
   setWindEnabled: (windEnabled) => set({ windEnabled }),
+  setCloudsEnabled: (cloudsEnabled) => set({ cloudsEnabled }),
   setWindDensity: (windDensity: number) => set({ windDensity }),
   setPickIgnitionSlot: (pickIgnitionSlot) => set({ pickIgnitionSlot }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),

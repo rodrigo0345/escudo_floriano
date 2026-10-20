@@ -35,6 +35,15 @@ export class SceneEngine {
   private readonly tmpColorA = new THREE.Color();
   private readonly tmpColorB = new THREE.Color();
   private lastAtmosphereKey = '';
+  private isNightTime = false;
+  private precipRateMmH = 0;
+  private baseSunIntensity = 2.1;
+  private baseHemiIntensity = 1.0;
+  private lightningTimer = 0;
+  private lightningInterval = 5.0;
+  private isLightningFlashing = false;
+  private lightningFlashProgress = 0;
+  private lastLoopTs = 0;
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -75,10 +84,60 @@ export class SceneEngine {
     return () => this.frameCallbacks.delete(callback);
   }
 
+  get isNight(): boolean {
+    return this.isNightTime;
+  }
+
   start(): void {
     const loop = (ts: number) => {
       if (this.disposed) return;
       this.rafId = requestAnimationFrame(loop);
+
+      const dt = this.lastLoopTs ? Math.min((ts - this.lastLoopTs) / 1000, 0.1) : 0.016;
+      this.lastLoopTs = ts;
+
+      // Procedural storm lightning (Epic E6)
+      if (this.precipRateMmH >= 7.5) {
+        this.lightningTimer += dt;
+        if (this.lightningTimer >= this.lightningInterval) {
+          this.lightningTimer = 0;
+          this.lightningInterval = 3.5 + Math.random() * 5.0; // Flash every 3.5-8.5s during storms
+          this.isLightningFlashing = true;
+          this.lightningFlashProgress = 0;
+        }
+      } else {
+        this.lightningTimer = 0;
+        if (this.isLightningFlashing) {
+          this.isLightningFlashing = false;
+          this.sunLight.intensity = this.baseSunIntensity;
+          this.hemiLight.intensity = this.baseHemiIntensity;
+        }
+      }
+
+      if (this.isLightningFlashing) {
+        this.lightningFlashProgress += dt / 0.16; // 160ms flash discharge
+        if (this.lightningFlashProgress >= 1.0) {
+          this.isLightningFlashing = false;
+          this.sunLight.intensity = this.baseSunIntensity;
+          this.hemiLight.intensity = this.baseHemiIntensity;
+        } else {
+          // Multi-pulse lightning envelope
+          const p = this.lightningFlashProgress;
+          let boost = 0;
+          if (p < 0.3) {
+            boost = Math.sin((p / 0.3) * Math.PI) * 3.8;
+          } else if (p < 0.5) {
+            boost = 0.9;
+          } else if (p < 0.85) {
+            boost = Math.sin(((p - 0.5) / 0.35) * Math.PI) * 4.6;
+          } else {
+            boost = (1 - (p - 0.85) / 0.15) * 1.6;
+          }
+          this.sunLight.intensity = this.baseSunIntensity + boost;
+          this.hemiLight.intensity = this.baseHemiIntensity + boost * 0.75;
+        }
+      }
+
       const azimuth = this.controls.getAzimuthalAngle();
       this.frameCallbacks.forEach((cb) => cb(ts, azimuth));
       this.controls.update();
@@ -98,7 +157,9 @@ export class SceneEngine {
     latDeg = 41.442,
     lonDeg = -8.295,
     visibilityM?: number | null,
+    precipMmH = 0,
   ): void {
+    this.precipRateMmH = precipMmH;
     const LAT_RAD = (latDeg * Math.PI) / 180;
     const LON_DEG = lonDeg;
     const date = new Date(timestampMs);
@@ -115,6 +176,7 @@ export class SceneEngine {
     const sinAlpha = Math.sin(LAT_RAD) * Math.sin(declinationRad) + Math.cos(LAT_RAD) * Math.cos(declinationRad) * Math.cos(hourAngleRad);
     const elevationRad = Math.asin(Math.max(-1, Math.min(1, sinAlpha)));
     const elevationDeg = (elevationRad * 180) / Math.PI;
+    this.isNightTime = elevationDeg <= 0;
 
     const cosTheta = (Math.sin(declinationRad) - Math.sin(LAT_RAD) * sinAlpha) / (Math.cos(LAT_RAD) * Math.cos(elevationRad) || 0.0001);
     const thetaRad = Math.acos(Math.max(-1, Math.min(1, cosTheta)));
@@ -159,6 +221,8 @@ export class SceneEngine {
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
       this.hemiLight.intensity = 0.95 + cloudFactor * 0.3;
+      this.baseSunIntensity = this.sunLight.intensity;
+      this.baseHemiIntensity = this.hemiLight.intensity;
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {
@@ -178,6 +242,8 @@ export class SceneEngine {
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
       this.hemiLight.intensity = 0.75;
+      this.baseSunIntensity = this.sunLight.intensity;
+      this.baseHemiIntensity = this.hemiLight.intensity;
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {
@@ -197,6 +263,8 @@ export class SceneEngine {
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
       this.hemiLight.intensity = 0.72 + 0.03 * t; // 0.75 at sunset, 0.72 at night
+      this.baseSunIntensity = this.sunLight.intensity;
+      this.baseHemiIntensity = this.hemiLight.intensity;
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {
@@ -216,6 +284,8 @@ export class SceneEngine {
       this.hemiLight.color.copy(this.hemiSkyScratch);
       this.hemiLight.groundColor.copy(this.hemiGroundScratch);
       this.hemiLight.intensity = 0.72;
+      this.baseSunIntensity = this.sunLight.intensity;
+      this.baseHemiIntensity = this.hemiLight.intensity;
 
       (this.scene.background as THREE.Color).copy(this.skyColorScratch);
       if (this.scene.fog instanceof THREE.Fog) {

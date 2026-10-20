@@ -9,6 +9,7 @@ import { RoadLayer } from './layers/roadLayer';
 import { WaterLayer } from './layers/waterLayer';
 import { WindLayer } from './layers/windLayer';
 import { RainLayer } from './layers/rainLayer';
+import { CloudLayer } from './layers/cloudLayer';
 import type { Pickable } from './picking';
 import type { SceneEngine } from './sceneEngine';
 import { SmokeSystem } from './smokeSystem';
@@ -42,6 +43,7 @@ export class World {
   readonly units: UnitLayer;
   readonly smoke: SmokeSystem;
   readonly rain: RainLayer;
+  readonly clouds: CloudLayer;
 
   constructor(
     private readonly engine: SceneEngine,
@@ -60,6 +62,7 @@ export class World {
     this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
     this.rain = new RainLayer();
+    this.clouds = new CloudLayer();
 
     const scene = engine.scene;
     scene.add(
@@ -73,6 +76,7 @@ export class World {
       this.units.group,
       this.smoke.points,
       this.rain.group,
+      this.clouds.group,
     );
   }
 
@@ -102,9 +106,12 @@ export class World {
       this.fire.group,
       this.units.group,
       this.smoke.points,
+      this.rain.group,
+      this.clouds.group,
     );
     this.plan.dispose();
     this.wind.dispose();
+    this.clouds.dispose();
     this.units.clear();
     this.terrain.geometry.dispose();
     this.roads.mesh.geometry.dispose();

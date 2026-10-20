@@ -71,6 +71,8 @@ function OverlayBox() {
   const setSmokeEnabled = useAppStore((s) => s.setSmokeEnabled);
   const windEnabled = useAppStore((s) => s.windEnabled);
   const setWindEnabled = useAppStore((s) => s.setWindEnabled);
+  const cloudsEnabled = useAppStore((s) => s.cloudsEnabled);
+  const setCloudsEnabled = useAppStore((s) => s.setCloudsEnabled);
   const windDensity = useAppStore((s) => s.windDensity);
   const setWindDensity = useAppStore((s) => s.setWindDensity);
   return (
@@ -120,6 +122,12 @@ function OverlayBox() {
             <span className={styles.legendNote}>campo com concentração e deflexão junto ao fogo</span>
           </div>
         ) : null}
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow} title="Camada de nuvens 3D e cobertura nublada proporcional à meteorologia">
+          <input type="checkbox" checked={cloudsEnabled} onChange={(e) => setCloudsEnabled(e.target.checked)} />
+          <span>Nuvens 3D</span>
+        </label>
       </div>
     </section>
   );

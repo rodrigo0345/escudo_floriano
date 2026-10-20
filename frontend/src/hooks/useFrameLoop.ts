@@ -52,7 +52,14 @@ export function useFrameLoop(): void {
         const rainVisM = precipMmH > 4 ? Math.max(1200, 5200 - precipMmH * 320) : null;
         const effectiveVisM = smokeVisM != null && rainVisM != null ? Math.min(smokeVisM, rainVisM) : smokeVisM ?? rainVisM ?? null;
 
-        engine.updateAtmosphere(run.startMs + tf * 60000, w?.cloudCoverPct ?? 0, world.geo.centerLat, world.geo.centerLon, effectiveVisM);
+        engine.updateAtmosphere(
+          run.startMs + tf * 60000,
+          w?.cloudCoverPct ?? 0,
+          world.geo.centerLat,
+          world.geo.centerLon,
+          effectiveVisM,
+          precipMmH,
+        );
 
         world.terrain.setWetness(precipMmH > 0 ? Math.min(1, precipMmH / 8) : 0);
 
@@ -65,6 +72,19 @@ export function useFrameLoop(): void {
           w?.windFromDeg ?? 0,
           engine.controls.target,
         );
+
+        world.clouds.setVisible(s.cloudsEnabled);
+        if (s.cloudsEnabled) {
+          world.clouds.update(
+            rainDt,
+            w?.cloudCoverPct ?? 0,
+            w?.windKmh ?? 0,
+            w?.windFromDeg ?? 0,
+            precipMmH,
+            engine.isNight,
+            engine.controls.target,
+          );
+        }
       }
       world.units.update(tf);
     });

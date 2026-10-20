@@ -68,7 +68,7 @@
 
 .chart {
   width: 100%;
-  height: 150px;
+  height: 155px;
   background: var(--panel2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -202,4 +202,170 @@
   padding: 3px 4px;
   font-size: 11px;
   text-align: center;
+}
+
+/* Weather / Meteo Tab Upgrades (Epic E7) */
+.weatherCard {
+  background: color-mix(in srgb, var(--panel2) 75%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.weatherCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weatherCardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dangerBadge {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conditionsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metricTile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  display: grid;
+  gap: 2px;
+}
+
+.metricTile span {
+  font-size: 11px;
+  color: var(--mut);
+}
+
+.metricTile b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.metricTile small {
+  font-size: 10.5px;
+  color: var(--mut);
+  line-height: 1.25;
+}
+
+.rule30Active {
+  background: color-mix(in srgb, #ef4444 14%, var(--panel2));
+  border: 1px solid #ef4444;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.rule30Normal {
+  background: color-mix(in srgb, var(--panel2) 50%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.rule30Header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rule30Desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg);
+}
+
+.rule30Criteria {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.criteriaChip {
+  font-size: 10.5px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  display: grid;
+  gap: 1px;
+  text-align: center;
+}
+
+.criteriaMet {
+  border-color: #ef4444;
+  color: #f87171;
+  background: color-mix(in srgb, #ef4444 12%, var(--panel));
+  font-weight: 600;
+}
+
+.criteriaUnmet {
+  color: var(--mut);
+}
+
+.eventList {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.eventRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+
+.eventTag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.seriesActiveRow {
+  background: color-mix(in srgb, var(--acc) 18%, var(--panel2)) !important;
+  border-left: 2px solid var(--acc);
 }

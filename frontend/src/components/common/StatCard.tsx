@@ -16,8 +16,8 @@ export function CardGrid({ children }: { children: ReactNode }) {
   return <div className={styles.cards}>{children}</div>;
 }
 
-export function Row({ children }: { children: ReactNode }) {
-  return <div className={styles.row}>{children}</div>;
+export function Row({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={`${styles.row} ${className ?? ''}`}>{children}</div>;
 }
 
 export function Tag({ kind, children }: { kind: 'bad' | 'ok' | 'warn'; children: ReactNode }) {
