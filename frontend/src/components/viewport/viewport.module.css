@@ -546,24 +546,6 @@
   vertical-align: middle;
 }
 
-.legendDisclaimer {
-  display: block;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--panel) 82%, #000);
-  border-left: 2px solid #eab308;
-  font-size: 10px;
-  line-height: 1.35;
-  color: var(--mut);
-}
-
-.legendDisclaimer em {
-  font-style: normal;
-  color: #eab308;
-  font-weight: 600;
-}
-
 .ramp {
   height: 9px;
   border-radius: 2px;
