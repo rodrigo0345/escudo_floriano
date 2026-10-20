@@ -365,6 +365,66 @@ export function weatherBaseAtStart(samples: WeatherSample[]): WeatherBaseStats |
 }
 
 /**
+ * Physics-based pre-rain cloud buildup and post-rain dissipation (Requirement 1.2):
+ * In nature, rain doesn't fall from clear blue skies. Clouds progressively form, gather
+ * and thicken overhead in the ~40 minutes leading up to rain onset, and dissipate gradually
+ * over ~25 minutes once rain stops.
+ */
+export function computePreAndPostRainCloudCover(
+  series: WeatherSample[],
+  times: number[],
+  t: number,
+  baseCloud: number,
+  currentPrecip: number,
+): number {
+  if (currentPrecip > 0.1) {
+    // Rain actively falling: dense cloud deck (80-98%)
+    return Math.max(baseCloud, Math.min(100, Math.max(80, Math.round(72 + currentPrecip * 3.5))));
+  }
+
+  let effectiveCloud = baseCloud;
+
+  // 1. Scan ahead for upcoming rain within 45 minutes (Pre-Rain Cloud Buildup)
+  for (let j = 0; j < series.length; j++) {
+    const dtMs = times[j] - t;
+    if (dtMs <= 0) continue;
+    if (dtMs > 45 * MS_PER_MIN) break;
+    const precip = series[j].precipitationMmH ?? 0;
+    if (precip > 0.2) {
+      const dtMin = dtMs / MS_PER_MIN;
+      if (dtMin <= 40) {
+        // Natural condensation easing curve: clouds thicken as rain approaches
+        const progress = Math.max(0, Math.min(1, 1 - (dtMin / 40)));
+        const ease = progress * progress * (3 - 2 * progress);
+        const targetCloud = Math.min(100, Math.max(78, 62 + precip * 3.5));
+        const formingCloud = Math.round(targetCloud * ease);
+        effectiveCloud = Math.max(effectiveCloud, formingCloud);
+      }
+      break;
+    }
+  }
+
+  // 2. Scan behind for recent rain within past 25 minutes (Post-Rain Dissipation)
+  for (let j = series.length - 1; j >= 0; j--) {
+    const dtMs = t - times[j];
+    if (dtMs <= 0) continue;
+    if (dtMs > 30 * MS_PER_MIN) continue;
+    const precip = series[j].precipitationMmH ?? 0;
+    if (precip > 0.2) {
+      const dtMin = dtMs / MS_PER_MIN;
+      if (dtMin <= 25) {
+        const progress = Math.max(0, Math.min(1, 1 - (dtMin / 25)));
+        const dissipatingCloud = Math.round(75 * progress * progress);
+        effectiveCloud = Math.max(effectiveCloud, dissipatingCloud);
+      }
+      break;
+    }
+  }
+
+  return effectiveCloud;
+}
+
+/**
  * Interpolates `series` (sorted by time) to `startMs + minute * 60000`. Used by the HUD and
  * panels, which both need "the weather at a specific instant" rather than
  * the whole series.
@@ -376,13 +436,23 @@ export function sampleWeatherAt(series: WeatherSample[], startMs: number, minute
   const hi = times.findIndex((x) => x >= t);
   if (hi <= 0) {
     const sample = series[Math.max(hi, 0)] ?? series[series.length - 1];
-    return toInterpolated(sample, sample);
+    return toInterpolated(sample, series, times, t);
   }
   const a = series[hi - 1];
   const b = series[hi];
   const f = (t - times[hi - 1]) / (times[hi] - times[hi - 1]);
   const temp = lerp(a.tempC ?? 0, b.tempC ?? 0, f);
   const humidity = lerp(a.humidityPct ?? 0, b.humidityPct ?? 0, f);
+  const precip =
+    a.precipitationMmH != null && b.precipitationMmH != null
+      ? lerp(a.precipitationMmH, b.precipitationMmH, f)
+      : a.precipitationMmH ?? b.precipitationMmH ?? null;
+  const rawCloud =
+    a.cloudCoverPct != null && b.cloudCoverPct != null
+      ? lerp(a.cloudCoverPct, b.cloudCoverPct, f)
+      : a.cloudCoverPct ?? b.cloudCoverPct ?? 0;
+  const dynamicCloud = computePreAndPostRainCloudCover(series, times, t, rawCloud, precip ?? 0);
+
   return {
     windKmh: lerp(a.windKmh ?? 0, b.windKmh ?? 0, f),
     windFromDeg: lerpDeg(a.windFromDeg ?? 0, b.windFromDeg ?? 0, f),
@@ -393,15 +463,19 @@ export function sampleWeatherAt(series: WeatherSample[], startMs: number, minute
       a.fuelMoisture?.dead1hPct != null && b.fuelMoisture?.dead1hPct != null
         ? lerp(a.fuelMoisture.dead1hPct, b.fuelMoisture.dead1hPct, f)
         : a.fuelMoisture?.dead1hPct ?? estimateDeadFuelMoisture(temp, humidity),
-    precipitationMmH: a.precipitationMmH != null && b.precipitationMmH != null ? lerp(a.precipitationMmH, b.precipitationMmH, f) : a.precipitationMmH ?? b.precipitationMmH ?? null,
-    cloudCoverPct: a.cloudCoverPct != null && b.cloudCoverPct != null ? lerp(a.cloudCoverPct, b.cloudCoverPct, f) : a.cloudCoverPct ?? b.cloudCoverPct ?? null,
+    precipitationMmH: precip,
+    cloudCoverPct: dynamicCloud > 0 ? dynamicCloud : null,
     solarRadiationWm2: a.solarRadiationWm2 != null && b.solarRadiationWm2 != null ? lerp(a.solarRadiationWm2, b.solarRadiationWm2, f) : a.solarRadiationWm2 ?? b.solarRadiationWm2 ?? null,
   };
 }
 
-function toInterpolated(a: WeatherSample, _b: WeatherSample): InterpolatedWeather {
+function toInterpolated(a: WeatherSample, series?: WeatherSample[], times?: number[], t?: number): InterpolatedWeather {
   const temp = a.tempC ?? 0;
   const humidity = a.humidityPct ?? 0;
+  const precip = a.precipitationMmH ?? 0;
+  const baseCloud = a.cloudCoverPct ?? 0;
+  const dynamicCloud = series && times && t != null ? computePreAndPostRainCloudCover(series, times, t, baseCloud, precip) : baseCloud;
+
   return {
     windKmh: a.windKmh ?? 0,
     windFromDeg: a.windFromDeg ?? 0,
@@ -410,7 +484,7 @@ function toInterpolated(a: WeatherSample, _b: WeatherSample): InterpolatedWeathe
     humidityPct: humidity,
     fineFuelMoisturePct: a.fuelMoisture?.dead1hPct ?? estimateDeadFuelMoisture(temp, humidity),
     precipitationMmH: a.precipitationMmH ?? null,
-    cloudCoverPct: a.cloudCoverPct ?? null,
+    cloudCoverPct: dynamicCloud > 0 ? dynamicCloud : null,
     solarRadiationWm2: a.solarRadiationWm2 ?? null,
   };
 }

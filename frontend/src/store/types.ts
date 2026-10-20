@@ -13,6 +13,9 @@ import type {
 } from '@/api';
 import type { Georef } from '@/domain/georef';
 import type { Impact } from '@/domain/impact';
+import type { TimelineRangeEvent } from '@/domain/simulationForm';
+
+export type { TimelineRangeEvent };
 
 /** Everything loaded once per location (static map data). */
 export interface LocationData {
