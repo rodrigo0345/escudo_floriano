@@ -21,7 +21,7 @@ namespace FireTrace.Core.Services.Operations;
 /// Traduz planos e despachos ativos em intervenções que o motor de fogo sabe aplicar. Se uma ação traz `simulationEffects`, usam-se esses;
 /// senão deduz-se do tipo de ação e dos meios atribuídos (pessoas, viaturas e água).
 /// </summary>
-public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore<Dispatch> dispatches, IDocumentStore<Vehicle> vehicles, TargetResolver targets, IMapReader map, Rules rules, LimitsSettings limits, InterventionSettings interventions) : IInterventionProvider
+public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore<Dispatch> dispatches, IDocumentStore<Vehicle> vehicles, TargetResolver targets, IMapReader map, Rules rules, LimitsSettings limits, InterventionSettings interventions, ArrivalEstimator arrival) : IInterventionProvider
 {
     public async Task<IReadOnlyList<Intervention>> ForPlanAsync(string planId, CancellationToken ct = default)
     {
@@ -75,9 +75,13 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         int people = 0; double eta = 0;
         foreach (var r in a.Resources ?? new())
         {
-            eta = Math.Max(eta, r.EtaMinutes ?? 0);
-            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v) people += r.Personnel ?? v.CrewCapacity;
-            else if (r.ResourceType == ResourceType.PersonnelPool) people += r.Personnel ?? 0;
+            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v)
+            {
+                if (await ArrivalOf(plan, a, v, r, f.Line!, ct) is not { } minutes) continue; // sem estrada até à linha a equipa não chega: não a abre
+                eta = Math.Max(eta, minutes);
+                people += r.Personnel ?? v.CrewCapacity;
+            }
+            else if (r.ResourceType == ResourceType.PersonnelPool) { eta = Math.Max(eta, r.EtaMinutes ?? 0); people += r.Personnel ?? 0; }
         }
         var c = f.Line!.Coordinates;
         double lengthM = Enumerable.Range(1, c.Length - 1).Sum(i => RoadGeometry.DistanceM(c[i - 1].Y, c[i - 1].X, c[i].Y, c[i].X));
@@ -99,9 +103,13 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         foreach (var r in resources)
         {
             responsibility = r.Responsibility ?? responsibility;
-            eta = Math.Max(eta, r.EtaMinutes ?? 0);
-            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v) { vehicleCount++; people += r.Personnel ?? v.CrewCapacity; water += v.WaterCapacityL ?? 0; pump += v.PumpFlowLpm ?? 0; }
-            else if (r.ResourceType == ResourceType.PersonnelPool) people += r.Personnel ?? 0;
+            if (r.ResourceType == ResourceType.Vehicle && await vehicles.GetAsync(r.ResourceId, ct) is { } v)
+            {
+                if (await ArrivalOf(plan, a, v, r, where, ct) is not { } minutes) continue; // sem estrada até lá a equipa não chega: não trava o fogo
+                eta = Math.Max(eta, minutes);
+                vehicleCount++; people += r.Personnel ?? v.CrewCapacity; water += v.WaterCapacityL ?? 0; pump += v.PumpFlowLpm ?? 0;
+            }
+            else if (r.ResourceType == ResourceType.PersonnelPool) { eta = Math.Max(eta, r.EtaMinutes ?? 0); people += r.Personnel ?? 0; }
         }
         if (people == 0) return Array.Empty<Intervention>();
 
@@ -114,7 +122,17 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
     }
 
     /// <summary>Minuto (desde o início do cenário) em que o gatilho da ação a manda começar; sem gatilho de hora, ao ativar (0).</summary>
-    static double StartMinutes(Plan plan, PlanAction a) => a.Trigger is AtTimeTrigger t ? t.At.Time is { } abs ? (abs - (plan.Horizon?.Start ?? abs)).TotalMinutes : t.At.OffsetMinutes ?? 0 : 0;
+    static double StartMinutes(Plan plan, PlanAction a) => PlanTiming.StartMinutes(plan, a);
+
+    /// <summary>
+    /// Quanto demora a viatura a chegar onde a ação atua, calculado pelo servidor (estrada, cortes, tipo de viatura, a pé no fim): o `etaMinutes` que o plano traga não conta.
+    /// Nada se não houver estrada até lá. Só sem posição de partida se usa o do plano.
+    /// </summary>
+    async Task<double?> ArrivalOf(Plan plan, PlanAction a, Vehicle v, ResourceAssignment r, Geometry where, CancellationToken ct)
+    {
+        if (await arrival.OriginAsync(v, r.FromStationId, ct) is not { } from) return r.EtaMinutes;
+        return (await arrival.EstimateAsync(v, from, new LatLon(where.Centroid.Y, where.Centroid.X), plan.LocationId, PlanTiming.StartAt(plan, a), ct)).Minutes;
+    }
 
     /// <summary>Os meios que já estão a trabalhar no terreno (em combate ou a proteger edifícios) travam o fogo onde atuam.</summary>
     public async Task<IReadOnlyList<Intervention>> ForActiveDispatchesAsync(string locationId, CancellationToken ct = default)
