@@ -29,6 +29,11 @@ export interface TimelineRangeEvent {
   enabled: boolean;
   startMinute: number;
   endMinute: number;
+  // Spatial scope & dimension (Point 2)
+  scope?: 'global' | 'local'; // 'global' = whole concelho map (default), 'local' = focused spot
+  centerLat?: number;
+  centerLon?: number;
+  radiusKm?: number;          // radius in km (default 4 km)
   // Specific parameters
   intensityMmH?: number;     // for rain (default 6.0 mm/h)
   cloudCoverPct?: number;    // for clouds / fog (default 80%)

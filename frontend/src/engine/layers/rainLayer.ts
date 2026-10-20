@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 
-const DROP_COUNT = 1600;
+import type { CloudSpatialSpot } from './cloudLayer';
+
+const DROP_COUNT = 1800;
 // In FireTrace coordinates, 1 world unit = 10 meters.
-// BOUNDS_XZ = 180 units => 1800 m across the camera focal area.
-// CLOUD_BASE_Y = 72 units => 720m altitude, exactly matching the underside of the cloud deck.
+// BOUNDS_XZ = 240 units => 2400 m across camera viewport.
+// CLOUD_BASE_Y = 140 units => 1400m altitude, exactly matching the underside of the high cloud deck.
 // Rain strictly originates at or below CLOUD_BASE_Y and falls towards ground level (Y ~ 0).
-const BOUNDS_XZ = 180;
-const CLOUD_BASE_Y = 72;
+const BOUNDS_XZ = 240;
+const CLOUD_BASE_Y = 140;
 const GROUND_Y = -6;
 const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
 
@@ -15,7 +17,7 @@ const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
  * - Streaks fall and slant realistically along wind direction (north = -z, east = +x).
  * - 1 world unit = 10 meters.
  * - Dynamically visible and modulated in opacity when precipitationMmH > 0.
- * - Follows the camera focus area so rain particles remain centered in the viewport.
+ * - Originates strictly at the high cloud base (Y = 140), falling towards terrain.
  */
 export class RainLayer {
   readonly group = new THREE.Group();
@@ -36,7 +38,7 @@ export class RainLayer {
       const x = (Math.random() - 0.5) * BOUNDS_XZ;
       const y = GROUND_Y + Math.random() * RAIN_FALL_RANGE;
       const z = (Math.random() - 0.5) * BOUNDS_XZ;
-      const streakLen = 1.6 + Math.random() * 1.8; // 16m to 34m world streak length
+      const streakLen = 2.4 + Math.random() * 2.6; // 24m to 50m world streak length
       this.lengths[i] = streakLen;
 
       // Top of streak (initial vertical)
@@ -49,8 +51,8 @@ export class RainLayer {
       this.positions[i * 6 + 4] = y;
       this.positions[i * 6 + 5] = z;
 
-      // Fall speed: ~18 to 26 units/s (180 to 260 m/s visual fall rate for crisp streaks)
-      this.velocities[i] = 18 + Math.random() * 8;
+      // Fall speed: ~22 to 32 units/s (220 to 320 m/s visual fall rate for crisp streaks)
+      this.velocities[i] = 22 + Math.random() * 10;
     }
 
     this.geometry = new THREE.BufferGeometry();
@@ -69,7 +71,14 @@ export class RainLayer {
     this.group.visible = false;
   }
 
-  update(dt: number, precipRateMmH: number, windKmh: number, windFromDeg: number, cameraTarget?: THREE.Vector3): void {
+  update(
+    dt: number,
+    precipRateMmH: number,
+    windKmh: number,
+    windFromDeg: number,
+    cameraTarget?: THREE.Vector3,
+    spot?: CloudSpatialSpot | null,
+  ): void {
     if (precipRateMmH <= 0.05) {
       if (this.active) {
         this.group.visible = false;
@@ -83,27 +92,29 @@ export class RainLayer {
       this.active = true;
     }
 
-    // Rain intensity modulates opacity (0.28 to 0.75)
-    this.material.opacity = Math.min(0.75, 0.28 + (precipRateMmH / 10) * 0.42);
+    // Rain intensity modulates opacity (0.28 to 0.72)
+    this.material.opacity = Math.min(0.72, 0.28 + (precipRateMmH / 10) * 0.40);
 
     // Wind direction: wind blows FROM windFromDeg towards (windFromDeg + 180).
-    // In FireTrace: North = -z, East = +x.
-    // Direction vector of air movement:
     const fromRad = (windFromDeg * Math.PI) / 180;
-    const dirX = -Math.sin(fromRad); // blowing toward East if from West (270°)
-    const dirZ = Math.cos(fromRad);  // blowing toward South (+z) if from North (0°)
+    const dirX = -Math.sin(fromRad);
+    const dirZ = Math.cos(fromRad);
 
-    // Drift ratio: under 40 km/h wind, drift is ~0.55 of fall velocity
     const driftRatio = Math.min(0.85, (Math.max(0, windKmh) / 45) * 0.6);
 
-    if (cameraTarget) {
-      // Anchored at ground level Y=0 so raindrop altitudes strictly map to world elevation.
-      // Follows cameraTarget X and Z horizontally so precipitation stays in focus.
+    // If localized spot is active, anchor rain strictly over that spot on the terrain.
+    // If global, center rain horizontally around camera focus area so the user sees rain wherever they look.
+    const effectiveRadius = spot ? Math.max(120, spot.radiusUnits) : BOUNDS_XZ / 2;
+    const spanXZ = effectiveRadius * 2;
+
+    if (spot) {
+      this.group.position.set(spot.x, 0, spot.z);
+    } else if (cameraTarget) {
       this.group.position.set(cameraTarget.x, 0, cameraTarget.z);
     }
 
     const pos = this.positions;
-    const halfX = BOUNDS_XZ / 2;
+    const halfX = effectiveRadius;
 
     for (let i = 0; i < DROP_COUNT; i++) {
       const vy = this.velocities[i];
@@ -127,27 +138,27 @@ export class RainLayer {
       pos[idx + 1] = Math.min(CLOUD_BASE_Y, pos[idx + 4] + len);
       pos[idx + 2] = pos[idx + 5] - slantZ;
 
-      // Wrap boundaries horizontally around focus area
+      // Wrap boundaries horizontally
       if (pos[idx + 3] > halfX) {
-        pos[idx + 3] -= BOUNDS_XZ;
-        pos[idx] -= BOUNDS_XZ;
+        pos[idx + 3] -= spanXZ;
+        pos[idx] -= spanXZ;
       } else if (pos[idx + 3] < -halfX) {
-        pos[idx + 3] += BOUNDS_XZ;
-        pos[idx] += BOUNDS_XZ;
+        pos[idx + 3] += spanXZ;
+        pos[idx] += spanXZ;
       }
       if (pos[idx + 5] > halfX) {
-        pos[idx + 5] -= BOUNDS_XZ;
-        pos[idx + 2] -= BOUNDS_XZ;
+        pos[idx + 5] -= spanXZ;
+        pos[idx + 2] -= spanXZ;
       } else if (pos[idx + 5] < -halfX) {
-        pos[idx + 5] += BOUNDS_XZ;
-        pos[idx + 2] += BOUNDS_XZ;
+        pos[idx + 5] += spanXZ;
+        pos[idx + 2] += spanXZ;
       }
 
       // Reset when below ground level - respawn strictly inside the underside of the clouds
       if (pos[idx + 4] < GROUND_Y) {
-        const x = (Math.random() - 0.5) * BOUNDS_XZ;
-        const y = CLOUD_BASE_Y - Math.random() * 5;
-        const z = (Math.random() - 0.5) * BOUNDS_XZ;
+        const x = (Math.random() - 0.5) * spanXZ;
+        const y = CLOUD_BASE_Y - Math.random() * 8;
+        const z = (Math.random() - 0.5) * spanXZ;
 
         pos[idx + 3] = x;
         pos[idx + 4] = y;

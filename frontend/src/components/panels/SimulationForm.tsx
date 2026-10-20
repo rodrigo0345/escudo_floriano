@@ -436,21 +436,25 @@ export function SimulationForm() {
                 return (
                   <div key={ev.id} className={`${styles.eventCardCompact} ${!ev.enabled ? styles.eventDisabled : ''}`}>
                     <div className={styles.eventRowHead}>
-                      <label className={styles.eventRowLabel}>
-                        <input
-                          type="checkbox"
-                          checked={ev.enabled}
-                          onChange={(e) => updateCustomRangeEvent(ev.id, { enabled: e.target.checked })}
-                        />
-                        <span className={styles.eventTypeName}>
-                          {ev.type === 'rain' && '🌧️ Chuva'}
-                          {ev.type === 'storm' && '⛈️ Trovoada'}
-                          {ev.type === 'clouds' && '🌫️ Neblina'}
-                          {ev.type === 'wind_shift' && '💨 Vento'}
-                          {ev.type === 'wind_scale' && '🌪️ Rajadas'}
-                          {ev.type === 'heat_dry' && '☀️ Calor'}
-                        </span>
-                      </label>
+                      <input
+                        type="checkbox"
+                        className={styles.eventCheckbox}
+                        checked={ev.enabled}
+                        onChange={(e) => updateCustomRangeEvent(ev.id, { enabled: e.target.checked })}
+                        title={ev.enabled ? 'Desativar evento' : 'Ativar evento'}
+                      />
+                      <span
+                        className={styles.eventTypeName}
+                        onClick={() => setExpandedEventId(isExpanded ? null : ev.id)}
+                        title="Clique para expandir/recolher"
+                      >
+                        {ev.type === 'rain' && '🌧️ Chuva'}
+                        {ev.type === 'storm' && '⛈️ Trovoada'}
+                        {ev.type === 'clouds' && '🌫️ Neblina'}
+                        {ev.type === 'wind_shift' && '💨 Vento'}
+                        {ev.type === 'wind_scale' && '🌪️ Rajadas'}
+                        {ev.type === 'heat_dry' && '☀️ Calor'}
+                      </span>
                       <span className={styles.eventTimePill}>
                         T+{ev.startMinute}–{ev.endMinute}m
                       </span>
@@ -507,6 +511,76 @@ export function SimulationForm() {
                           />
                           <span>min</span>
                         </div>
+
+                        {/* Spatial Scope & Dimension Controls (Point 2) */}
+                        <div className={styles.eventScopeRow}>
+                          <span className={styles.scopeLabel}>Âmbito:</span>
+                          <div className={styles.scopeButtons}>
+                            <button
+                              type="button"
+                              className={`${styles.scopeBtn} ${(!ev.scope || ev.scope === 'global') ? styles.scopeBtnActive : ''}`}
+                              onClick={() => updateCustomRangeEvent(ev.id, { scope: 'global' })}
+                              title="Aplica-se em todo o território do concelho"
+                            >
+                              🌍 Concelho Todo
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.scopeBtn} ${ev.scope === 'local' ? styles.scopeBtnActive : ''}`}
+                              onClick={() => {
+                                const primaryIg = ignitions[0];
+                                updateCustomRangeEvent(ev.id, {
+                                  scope: 'local',
+                                  centerLat: ev.centerLat ?? primaryIg?.position?.lat ?? world?.geo.centerLat,
+                                  centerLon: ev.centerLon ?? primaryIg?.position?.lon ?? world?.geo.centerLon,
+                                  radiusKm: ev.radiusKm ?? 4,
+                                });
+                              }}
+                              title="Concentrado num foco ou zona com dimensão ajustável"
+                            >
+                              📍 Localizado
+                            </button>
+                          </div>
+                        </div>
+
+                        {ev.scope === 'local' && (
+                          <div className={styles.localSpotControls}>
+                            <div className={styles.spotPickerRow}>
+                              <button
+                                type="button"
+                                className={styles.spotPickerBtn}
+                                onClick={() => {
+                                  const primaryIg = ignitions[0];
+                                  if (primaryIg) {
+                                    updateCustomRangeEvent(ev.id, {
+                                      centerLat: primaryIg.position.lat,
+                                      centerLon: primaryIg.position.lon,
+                                    });
+                                  }
+                                }}
+                                title="Centrar no foco de incêndio ativo"
+                              >
+                                🎯 No Foco de Incêndio
+                              </button>
+                              <span className={styles.spotCoord}>
+                                {ev.centerLat != null ? `${ev.centerLat.toFixed(3)}, ${ev.centerLon?.toFixed(3)}` : 'Centro concelho'}
+                              </span>
+                            </div>
+                            <label className={styles.radiusLabel}>
+                              <span>
+                                Dimensão (Raio): <b>{ev.radiusKm ?? 4} km</b>
+                              </span>
+                              <input
+                                type="range"
+                                min={1}
+                                max={10}
+                                step={0.5}
+                                value={ev.radiusKm ?? 4}
+                                onChange={(e) => updateCustomRangeEvent(ev.id, { radiusKm: +e.target.value })}
+                              />
+                            </label>
+                          </div>
+                        )}
 
                         <div className={styles.eventCardControls}>
                           {ev.type === 'rain' && (

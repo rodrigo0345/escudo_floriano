@@ -1,12 +1,21 @@
 import * as THREE from 'three';
 
-const MAX_CLOUDS = 200;
-// Area covered by clouds in FireTrace coordinates (1 unit = 10m; 420 units = 4.2 km across)
-const BOUNDS_XZ = 420;
-// Clouds float in the altitude band ~740m to 1080m.
-// Cloud base starts at Y ~ 74, matching rainLayer's CLOUD_BASE_Y = 72.
-const ALTITUDE_MIN = 74;  // 740m (cloud base)
-const ALTITUDE_MAX = 108; // 1080m (cumulus tower summits)
+const MAX_CLOUDS = 240;
+// Full territory coverage (1 unit = 10m; 2400 units = 24 km spanning the entire Guimarães concelho)
+const TERRITORY_BOUNDS = 2400;
+
+// High atmospheric altitude (~1450m to 2100m above baseline elevation),
+// comfortably hovering high above all mountain peaks (which top out at ~550m).
+// Rain strictly originates at the cloud base CLOUD_BASE_Y = 140 (1400m).
+const ALTITUDE_MIN = 145; // 1450m
+const ALTITUDE_MAX = 210; // 2100m
+export const CLOUD_BASE_Y = 140;
+
+export interface CloudSpatialSpot {
+  x: number;
+  z: number;
+  radiusUnits: number; // in world units (e.g. 400 = 4 km)
+}
 
 function createCloudTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -113,21 +122,21 @@ export class CloudLayer {
     this.driftMult = new Float32Array(MAX_CLOUDS);
     this.rotZ = new Float32Array(MAX_CLOUDS);
 
-    // Initial 3D volumetric distribution
+    // Initial 3D volumetric distribution spanning the entire territory
     for (let i = 0; i < MAX_CLOUDS; i++) {
-      this.cloudX[i] = (Math.random() - 0.5) * BOUNDS_XZ;
-      // Staggered altitude giving clouds vertical depth and towering profile
-      const altProgress = Math.pow(Math.random(), 1.4); // slightly denser at base
+      this.cloudX[i] = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      // Staggered altitude in high sky troposphere band (1450m to 2100m)
+      const altProgress = Math.pow(Math.random(), 1.3);
       this.cloudY[i] = ALTITUDE_MIN + altProgress * (ALTITUDE_MAX - ALTITUDE_MIN);
-      this.cloudZ[i] = (Math.random() - 0.5) * BOUNDS_XZ;
+      this.cloudZ[i] = (Math.random() - 0.5) * TERRITORY_BOUNDS;
 
-      // Puffy volumetric dimensions: wide and tall (450m-900m wide, 350m-700m tall)
-      const baseWidth = 48 + Math.random() * 45;
-      const baseHeight = baseWidth * (0.75 + Math.random() * 0.25);
+      // Volumetric cumulus dimensions: wide and tall (1100m-2050m wide, 700m-1400m tall)
+      const baseWidth = 100 + Math.random() * 90;
+      const baseHeight = baseWidth * (0.65 + Math.random() * 0.25);
       this.scaleX[i] = baseWidth;
       this.scaleY[i] = baseHeight;
       this.driftMult[i] = 0.85 + Math.random() * 0.3; // Parallax differential
-      this.rotZ[i] = (Math.random() - 0.5) * 0.3; // Organic variance
+      this.rotZ[i] = (Math.random() - 0.5) * 0.3;     // Organic variance
     }
 
     this.group.add(this.mesh);
@@ -149,7 +158,7 @@ export class CloudLayer {
     windFromDeg: number,
     precipMmH = 0,
     isNight = false,
-    cameraTarget?: THREE.Vector3,
+    spot?: CloudSpatialSpot | null,
     camera?: THREE.Camera,
   ): void {
     if (!this.enabled || cloudCoverPct <= 1) {
@@ -169,19 +178,19 @@ export class CloudLayer {
     const activeCount = Math.max(1, Math.min(MAX_CLOUDS, Math.round((cloudCoverPct / 100) * MAX_CLOUDS)));
     this.mesh.count = activeCount;
 
-    // Modulate opacity according to cloud cover
-    const baseOpacity = 0.42 + (cloudCoverPct / 100) * 0.38;
-    this.material.opacity = Math.min(0.82, baseOpacity);
+    // Atmospheric soft opacity (0.38 to 0.65) - never solid black wall
+    const baseOpacity = 0.38 + (cloudCoverPct / 100) * 0.26;
+    this.material.opacity = Math.min(0.65, baseOpacity);
 
     // Weather-dependent cloud tinting:
-    if (precipMmH >= 4.0) {
-      // Dark stormy cumulonimbus coloring during rain
-      const stormDarkness = Math.min(1, (precipMmH - 4) / 8);
-      this.material.color.setHex(0x404b5c).lerp(new THREE.Color(0x202630), stormDarkness);
+    if (precipMmH >= 3.0) {
+      // Atmospheric stormy slate-gray with soft light transmission
+      const stormDarkness = Math.min(1, (precipMmH - 3) / 12);
+      this.material.color.setHex(0x526072).lerp(new THREE.Color(0x384452), stormDarkness);
     } else if (isNight) {
       this.material.color.setHex(0x283240);
     } else {
-      this.material.color.setHex(0xf4f7fa);
+      this.material.color.setHex(0xf5f8fb);
     }
 
     // Wind drift direction
@@ -192,51 +201,59 @@ export class CloudLayer {
     // Wind speed: 1 unit/s = 36 km/h
     const baseSpeed = (Math.max(2, windKmh) / 36) * 1.2;
 
-    const cx = cameraTarget ? cameraTarget.x : 0;
-    const cz = cameraTarget ? cameraTarget.z : 0;
-    const halfBound = BOUNDS_XZ / 2;
-
-    // If camera is available, billboard puffs face the camera to ensure true 3D volumetric puffiness from all angles
-    const camQuat = camera ? camera.quaternion : null;
-
+    // World anchoring:
+    // If a localized spot is provided, clouds cluster around that spot with radius.
+    // Otherwise, clouds span across the entire territory (cx=0, cz=0).
+    // NEVER follow cameraTarget so clouds remain stationary in world sky when camera moves!
     for (let i = 0; i < activeCount; i++) {
-      const speed = baseSpeed * this.driftMult[i];
-      this.cloudX[i] += dirX * speed * dt;
-      this.cloudZ[i] += dirZ * speed * dt;
+      if (spot) {
+        // Distribute within localized radius around (spot.x, spot.z)
+        const angle = (i / activeCount) * Math.PI * 2 + this.rotZ[i] * 2;
+        const normDist = ((i * 1.618033) % 1); // golden ratio distribution
+        const dist = Math.sqrt(normDist) * spot.radiusUnits;
+        const puffX = spot.x + Math.cos(angle) * dist;
+        const puffZ = spot.z + Math.sin(angle) * dist;
+        this.dummy.position.set(puffX, this.cloudY[i], puffZ);
+      } else {
+        const speed = baseSpeed * this.driftMult[i];
+        this.cloudX[i] += dirX * speed * dt;
+        this.cloudZ[i] += dirZ * speed * dt;
 
-      // Wrap around camera target bounding box
-      if (this.cloudX[i] - cx > halfBound) {
-        this.cloudX[i] -= BOUNDS_XZ;
-      } else if (this.cloudX[i] - cx < -halfBound) {
-        this.cloudX[i] += BOUNDS_XZ;
+        if (this.cloudX[i] > TERRITORY_BOUNDS / 2) this.cloudX[i] -= TERRITORY_BOUNDS;
+        else if (this.cloudX[i] < -TERRITORY_BOUNDS / 2) this.cloudX[i] += TERRITORY_BOUNDS;
+
+        if (this.cloudZ[i] > TERRITORY_BOUNDS / 2) this.cloudZ[i] -= TERRITORY_BOUNDS;
+        else if (this.cloudZ[i] < -TERRITORY_BOUNDS / 2) this.cloudZ[i] += TERRITORY_BOUNDS;
+
+        this.dummy.position.set(this.cloudX[i], this.cloudY[i], this.cloudZ[i]);
       }
 
-      if (this.cloudZ[i] - cz > halfBound) {
-        this.cloudZ[i] -= BOUNDS_XZ;
-      } else if (this.cloudZ[i] - cz < -halfBound) {
-        this.cloudZ[i] += BOUNDS_XZ;
-      }
-
-      this.dummy.position.set(this.cloudX[i], this.cloudY[i], this.cloudZ[i]);
-
-      if (camQuat) {
-        // Volumetric billboard: faces the viewer so it stays round, tall, and puffy from any vantage point
-        this.dummy.quaternion.copy(camQuat);
+      if (camera) {
+        this.dummy.lookAt(camera.position);
         if (this.rotZ[i] !== 0) {
           this.dummy.rotateZ(this.rotZ[i]);
         }
       } else {
-        // Natural oblique angle if no camera reference
         this.dummy.rotation.set(-Math.PI / 3, 0, this.rotZ[i]);
       }
 
-      this.dummy.scale.set(this.scaleX[i], this.scaleY[i], 1);
+      // If localized spot, scale puff size appropriately
+      const sizeMult = spot ? Math.min(1.0, Math.max(0.4, spot.radiusUnits / 320)) : 1.0;
+      this.dummy.scale.set(this.scaleX[i] * sizeMult, this.scaleY[i] * sizeMult, 1);
       this.dummy.updateMatrix();
 
       this.mesh.setMatrixAt(i, this.dummy.matrix);
     }
 
     this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  get isMeshActive(): boolean {
+    return this.active;
+  }
+
+  get instanceCount(): number {
+    return this.mesh.count;
   }
 
   dispose(): void {
