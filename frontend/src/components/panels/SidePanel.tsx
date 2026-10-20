@@ -2,6 +2,7 @@ import { useAppStore } from '@/store/appStore';
 
 import { AssetsPanel } from './AssetsPanel';
 import { IncidentPanel } from './IncidentPanel';
+import { PlansPanel } from './PlansPanel';
 import { RoadsPanel } from './RoadsPanel';
 import { WeatherPanel } from './WeatherPanel';
 import styles from './panels.module.css';
@@ -12,6 +13,7 @@ export function SidePanel() {
   return (
     <aside className={styles.panel}>
       {tab === 'incident' ? <IncidentPanel /> : null}
+      {tab === 'plans' ? <PlansPanel /> : null}
       {tab === 'roads' ? <RoadsPanel /> : null}
       {tab === 'assets' ? <AssetsPanel /> : null}
       {tab === 'weather' ? <WeatherPanel /> : null}

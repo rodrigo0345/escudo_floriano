@@ -17,17 +17,19 @@ import { useAppStore } from '@/store/appStore';
 function Controllers() {
   const world = useWorld();
   const scenarios = useAppStore((s) => s.data?.scenarios);
-  const { selectScenario } = useSimulationActions();
+  const { selectScenario, showSimulationById } = useSimulationActions();
 
   useBootstrap();
   useWorldLoader();
   useFrameLoop();
   useWorldSync();
 
-  // once the map is up, show the first built-in scenario (a cached result if one exists)
+  // once the map is up, show the simulation named by `?sim=<id>` (a baseline or a plan's what-if), else the first built-in scenario
   useEffect(() => {
     if (!world || !scenarios?.length) return;
-    void selectScenario(scenarios[0].id as string);
+    const wanted = new URLSearchParams(window.location.search).get('sim');
+    if (wanted) void showSimulationById(wanted);
+    else void selectScenario(scenarios[0].id as string);
   }, [world, scenarios]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;

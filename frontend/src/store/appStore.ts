@@ -23,6 +23,8 @@ export interface AppState {
   scenarioId: string | null;
   ignition: Ignition | null;
   run: RunData | null;
+  /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
+  baseSimulationId: string | null;
   job: Job | null;
   progress: Progress | null;
   /** The smoke resource at the current minute (plume height, roads without visibility). */
@@ -53,6 +55,7 @@ export interface AppState {
   setScenario: (scenarioId: string | null) => void;
   setIgnition: (ignition: Ignition | null) => void;
   setRun: (run: RunData | null) => void;
+  setBaseSimulationId: (simulationId: string | null) => void;
   setImpact: (impact: RunData['impact']) => void;
   setJob: (job: Job | null) => void;
   setProgress: (progress: Progress | null) => void;
@@ -82,6 +85,7 @@ export const useAppStore = create<AppState>((set) => ({
   scenarioId: null,
   ignition: null,
   run: null,
+  baseSimulationId: null,
   job: null,
   progress: null,
   smokeInfo: null,
@@ -107,6 +111,7 @@ export const useAppStore = create<AppState>((set) => ({
   setScenario: (scenarioId) => set({ scenarioId }),
   setIgnition: (ignition) => set({ ignition }),
   setRun: (run) => set({ run }),
+  setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
   setJob: (job) => set({ job }),
   setProgress: (progress) => set({ progress }),

@@ -69,6 +69,10 @@ export function useSimulationActions() {
       });
       const first = simulation.scenarioSnapshot.ignitions[0].position;
       state.setRun(run);
+      if (simulation.kind !== 'what_if') {
+        state.setBaseSimulationId(run.id); // the plans panel lists plans made for this baseline
+        state.setScenario(simulation.scenarioId ?? 'custom'); // opened by id: the scenario picker must name *this* fire, not the first one
+      } // a plan's what-if is the same fire as its baseline: the picker keeps pointing at it
       state.setIgnition({ lat: first.lat, lon: first.lon });
       world.fire.setIgnition(first.lat, first.lon, `Ignição ${formatDateTime(run.startMs)}`);
       if (!framedFirstRun) {
@@ -85,8 +89,11 @@ export function useSimulationActions() {
         .filter((m): m is Milestone => m !== null);
       world.fire.setMilestones(marks, [first.lat, first.lon]);
       await loadImpact(run.id);
-      state.setTime(Math.min(30, run.durationMinutes));
-      state.setTab('incident');
+      // Flipping between the base and a plan from the plans panel keeps the minute on screen, so the two fires can be compared at the
+      // same moment; any other load starts at T+30 (back at T+30 a fire that had grown would seem to have vanished).
+      const comparing = useAppStore.getState().tab === 'plans' && state.run !== null;
+      state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
+      if (!comparing && useAppStore.getState().tab !== 'plans') state.setTab('incident');
     },
     [world, loadImpact],
   );
@@ -173,10 +180,24 @@ export function useSimulationActions() {
     [world, showSimulation, runSimulation],
   );
 
+  /** Shows any finished simulation by id: a baseline or a plan's what-if (`?sim=<id>`, or the plans panel). */
+  const showSimulationById = useCallback(
+    (simulationId: string) =>
+      showSimulation(async () => {
+        const simulation = await simulationsApi.get(simulationId);
+        if (simulation.status !== 'succeeded') {
+          // failed / cancelled / still running: say why instead of drawing nothing
+          throw new Error(simulation.error?.detail ?? simulation.error?.title ?? `A simulação ${simulationId} está ${simulation.status}.`);
+        }
+        return simulation;
+      }),
+    [showSimulation],
+  );
+
   const reloadImpact = useCallback(async () => {
     const run = useAppStore.getState().run;
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, runSimulation, cancelJob, reloadImpact };
+  return { selectScenario, showSimulationById, runSimulation, cancelJob, reloadImpact };
 }
