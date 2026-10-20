@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 
 import { simulationsApi, type Simulation, type SimulationRequest } from '@/api';
 import { Impact } from '@/domain/impact';
-import { formatDateTime, formatTime } from '@/domain/weather';
+import { formatTime } from '@/domain/weather';
 import { useWorld } from '@/engine/EngineContext';
 import type { Milestone } from '@/engine/layers/fireLayer';
 import { useAppStore } from '@/store/appStore';
@@ -67,10 +67,19 @@ export function useSimulationActions() {
         startMs: run.startMs,
         durationMinutes: run.durationMinutes,
       });
-      const first = simulation.scenarioSnapshot.ignitions[0].position;
+      const points = simulation.scenarioSnapshot.ignitions.map((ig, i) => ({
+        ...ig,
+        label: ig.label ?? `Foco ${i + 1}`,
+      }));
+      const first = points[0]?.position;
       state.setRun(run);
-      state.setIgnition({ lat: first.lat, lon: first.lon });
-      world.fire.setIgnition(first.lat, first.lon, `Ignição ${formatDateTime(run.startMs)}`);
+      state.setIgnitions(points);
+      world.fire.setIgnitions(points);
+      if (simulation.kind !== 'what_if') {
+        state.setBaseSimulationId(run.id); // the plans panel lists plans made for this baseline
+        state.setScenario(simulation.scenarioId ?? 'custom'); // opened by id: the scenario picker must name *this* fire, not the first one
+      } // a plan's what-if is the same fire as its baseline: the picker keeps pointing at it
+      if (!first) return;
       if (!framedFirstRun) {
         world.focusOnLatLon(first.lat, first.lon);
         framedFirstRun = true;
@@ -85,8 +94,12 @@ export function useSimulationActions() {
         .filter((m): m is Milestone => m !== null);
       world.fire.setMilestones(marks, [first.lat, first.lon]);
       await loadImpact(run.id);
-      state.setTime(Math.min(30, run.durationMinutes));
-      if (state.tab !== 'demo' && state.tab !== 'resources') state.setTab('incident');
+      // Flipping between the base and a plan from the plans panel keeps the minute on screen, so the two fires can be compared at the
+      // same moment; any other load starts at T+30 (back at T+30 a fire that had grown would seem to have vanished).
+      const currentTab = useAppStore.getState().tab;
+      const comparing = currentTab === 'plans' && state.run !== null;
+      state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
+      if (!comparing && currentTab !== 'plans' && currentTab !== 'demo' && currentTab !== 'resources') state.setTab('incident');
     },
     [world, loadImpact],
   );
@@ -162,9 +175,9 @@ export function useSimulationActions() {
       }
       const scenario = store.data.scenarios.find((s) => s.id === scenarioId);
       if (!scenario) return;
-      const at = scenario.ignitions[0].position;
-      store.setIgnition({ lat: at.lat, lon: at.lon });
-      world.fire.setIgnition(at.lat, at.lon, `Ignição ${formatDateTime(scenario.start)}`);
+      const points = scenario.ignitions.map((ig, i) => ({ ...ig, label: ig.label ?? `Foco ${i + 1}` }));
+      store.setIgnitions(points);
+      world.fire.setIgnitions(points);
       // a built-in scenario never changes, so reuse an already computed result instead of re-running it
       const previous = await simulationsApi.latestSucceeded(scenarioId);
       if (previous) await showSimulation(async () => previous);
@@ -173,10 +186,24 @@ export function useSimulationActions() {
     [world, showSimulation, runSimulation],
   );
 
+  /** Shows any finished simulation by id: a baseline or a plan's what-if (`?sim=<id>`, or the plans panel). */
+  const showSimulationById = useCallback(
+    (simulationId: string) =>
+      showSimulation(async () => {
+        const simulation = await simulationsApi.get(simulationId);
+        if (simulation.status !== 'succeeded') {
+          // failed / cancelled / still running: say why instead of drawing nothing
+          throw new Error(simulation.error?.detail ?? simulation.error?.title ?? `A simulação ${simulationId} está ${simulation.status}.`);
+        }
+        return simulation;
+      }),
+    [showSimulation],
+  );
+
   const reloadImpact = useCallback(async () => {
     const run = useAppStore.getState().run;
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, runSimulation, showSimulation, cancelJob, reloadImpact };
+  return { selectScenario, showSimulation, showSimulationById, runSimulation, cancelJob, reloadImpact };
 }

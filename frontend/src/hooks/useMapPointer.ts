@@ -46,13 +46,16 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
 
     const onUp = (e: PointerEvent) => {
       const s = useAppStore.getState();
-      if (!s.pickIgnition || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > CLICK_SLOP_PX) return;
+      if (s.pickIgnitionSlot == null || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > CLICK_SLOP_PX) return;
       const hit = engine.picker.pick(e.clientX, e.clientY, canvas.getBoundingClientRect(), [world.terrain.mesh]);
       if (!hit) return;
       const [lat, lon] = world.geo.toLatLon(hit.point.x, hit.point.z);
-      s.setIgnition({ lat, lon });
-      world.fire.setIgnition(lat, lon, 'Ignição');
-      s.setPickIgnition(false);
+      const slot = s.pickIgnitionSlot;
+      const next = s.ignitions.map((ig, i) => (i === slot ? { ...ig, position: { lat, lon } } : ig));
+      while (next.length <= slot) next.push({ position: { lat, lon }, label: `Foco ${next.length + 1}` });
+      s.setIgnitions(next);
+      world.fire.setIgnitions(next);
+      s.setPickIgnitionSlot(null);
       s.setHint('');
     };
 

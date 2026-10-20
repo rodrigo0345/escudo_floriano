@@ -1,6 +1,6 @@
 import type {
   Facility,
-  LatLon,
+  Ignition,
   Location,
   Place,
   RoadCollection,
@@ -45,7 +45,7 @@ export interface RunData {
   impact: Impact | null;
 }
 
-export type PanelTab = 'incident' | 'roads' | 'assets' | 'weather' | 'resources' | 'demo';
+export type PanelTab = 'incident' | 'plans' | 'roads' | 'assets' | 'weather' | 'resources' | 'demo';
 export type BaseLayer = 'satellite' | 'topo' | 'species';
 export type RescueOrigin = 'fire_brigade' | 'gnr' | 'inem' | 'any';
 export type BannerKind = 'error' | 'warn';
@@ -67,4 +67,4 @@ export interface Banner {
   kind: BannerKind;
 }
 
-export type Ignition = LatLon;
+export type IgnitionPoint = Ignition;

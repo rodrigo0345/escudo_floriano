@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 import type { Capabilities, Location, Smoke } from '@/api';
 
-import type { BaseLayer, Banner, BannerKind, Ignition, Job, LocationData, PanelTab, Progress, RescueOrigin, RunData } from './types';
+import type { BaseLayer, Banner, BannerKind, IgnitionPoint, Job, LocationData, PanelTab, Progress, RescueOrigin, RunData } from './types';
 
 /**
  * The one client-side state container. State here is plain data; side effects (API calls,
@@ -21,8 +21,10 @@ export interface AppState {
 
   // ---- scenario / simulation
   scenarioId: string | null;
-  ignition: Ignition | null;
+  ignitions: IgnitionPoint[];
   run: RunData | null;
+  /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
+  baseSimulationId: string | null;
   job: Job | null;
   progress: Progress | null;
   /** The smoke resource at the current minute (plume height, roads without visibility). */
@@ -40,7 +42,10 @@ export interface AppState {
   baseLayer: BaseLayer;
   probMode: boolean;
   smokeEnabled: boolean;
-  pickIgnition: boolean;
+  windEnabled: boolean;
+  windDensity: number;
+  pickIgnitionSlot: 0 | 1 | null;
+  helpOpen: boolean;
   origin: RescueOrigin;
   hint: string;
   banner: Banner | null;
@@ -51,8 +56,12 @@ export interface AppState {
   setBootError: (message: string | null) => void;
   setCapabilities: (capabilities: Capabilities | null) => void;
   setScenario: (scenarioId: string | null) => void;
-  setIgnition: (ignition: Ignition | null) => void;
+  setIgnitions: (ignitions: IgnitionPoint[]) => void;
+  updateIgnition: (index: number, patch: Partial<IgnitionPoint>) => void;
+  addIgnition: (ignition: IgnitionPoint) => void;
+  removeIgnition: (index: number) => void;
   setRun: (run: RunData | null) => void;
+  setBaseSimulationId: (simulationId: string | null) => void;
   setImpact: (impact: RunData['impact']) => void;
   setJob: (job: Job | null) => void;
   setProgress: (progress: Progress | null) => void;
@@ -65,7 +74,10 @@ export interface AppState {
   setBaseLayer: (layer: BaseLayer) => void;
   setProbMode: (on: boolean) => void;
   setSmokeEnabled: (on: boolean) => void;
-  setPickIgnition: (on: boolean) => void;
+  setWindEnabled: (on: boolean) => void;
+  setWindDensity: (density: number) => void;
+  setPickIgnitionSlot: (slot: 0 | 1 | null) => void;
+  setHelpOpen: (open: boolean) => void;
   setOrigin: (origin: RescueOrigin) => void;
   setHint: (hint: string) => void;
   showBanner: (text: string, kind?: BannerKind) => void;
@@ -80,8 +92,9 @@ export const useAppStore = create<AppState>((set) => ({
   capabilities: null,
 
   scenarioId: null,
-  ignition: null,
+  ignitions: [],
   run: null,
+  baseSimulationId: null,
   job: null,
   progress: null,
   smokeInfo: null,
@@ -95,7 +108,10 @@ export const useAppStore = create<AppState>((set) => ({
   baseLayer: 'satellite',
   probMode: false,
   smokeEnabled: true,
-  pickIgnition: false,
+  windEnabled: false,
+  windDensity: 50,
+  pickIgnitionSlot: null,
+  helpOpen: false,
   origin: 'fire_brigade',
   hint: '',
   banner: null,
@@ -105,8 +121,13 @@ export const useAppStore = create<AppState>((set) => ({
   setBootError: (bootError) => set({ bootError }),
   setCapabilities: (capabilities) => set({ capabilities }),
   setScenario: (scenarioId) => set({ scenarioId }),
-  setIgnition: (ignition) => set({ ignition }),
+  setIgnitions: (ignitions) => set({ ignitions }),
+  updateIgnition: (index, patch) =>
+    set((s) => ({ ignitions: s.ignitions.map((ig, i) => (i === index ? { ...ig, ...patch } : ig)) })),
+  addIgnition: (ignition) => set((s) => (s.ignitions.length >= 2 ? {} : { ignitions: [...s.ignitions, ignition] })),
+  removeIgnition: (index) => set((s) => ({ ignitions: s.ignitions.filter((_, i) => i !== index), pickIgnitionSlot: null })),
   setRun: (run) => set({ run }),
+  setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
   setJob: (job) => set({ job }),
   setProgress: (progress) => set({ progress }),
@@ -119,7 +140,10 @@ export const useAppStore = create<AppState>((set) => ({
   setBaseLayer: (baseLayer) => set({ baseLayer }),
   setProbMode: (probMode) => set({ probMode }),
   setSmokeEnabled: (smokeEnabled) => set({ smokeEnabled }),
-  setPickIgnition: (pickIgnition) => set({ pickIgnition }),
+  setWindEnabled: (windEnabled) => set({ windEnabled }),
+  setWindDensity: (windDensity: number) => set({ windDensity }),
+  setPickIgnitionSlot: (pickIgnitionSlot) => set({ pickIgnitionSlot }),
+  setHelpOpen: (helpOpen) => set({ helpOpen }),
   setOrigin: (origin) => set({ origin }),
   setHint: (hint) => set({ hint }),
   showBanner: (text, kind = 'error') => set({ banner: { text, kind } }),
