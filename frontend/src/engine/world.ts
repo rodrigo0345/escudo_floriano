@@ -6,6 +6,7 @@ import { FireLayer } from './layers/fireLayer';
 import { UnitLayer } from './layers/unitLayer';
 import { RoadLayer } from './layers/roadLayer';
 import { WaterLayer } from './layers/waterLayer';
+import { WindLayer } from './layers/windLayer';
 import type { Pickable } from './picking';
 import type { SceneEngine } from './sceneEngine';
 import { SmokeSystem } from './smokeSystem';
@@ -32,6 +33,7 @@ export class World {
   readonly roads: RoadLayer;
   readonly assets: AssetLayer;
   readonly water: WaterLayer;
+  readonly wind: WindLayer;
   readonly fire: FireLayer;
   readonly units: UnitLayer;
   readonly smoke: SmokeSystem;
@@ -47,12 +49,13 @@ export class World {
     this.assets.setFacilities(facilities);
     this.assets.setPlaces(places);
     this.water = new WaterLayer(geo, waterPoints);
+    this.wind = new WindLayer(geo);
     this.fire = new FireLayer(geo);
     this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
 
     const scene = engine.scene;
-    scene.add(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.units.group, this.smoke.points);
+    scene.add(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.wind.group, this.fire.group, this.units.group, this.smoke.points);
   }
 
   get geo(): Georef {
@@ -71,7 +74,8 @@ export class World {
 
   dispose(): void {
     const scene = this.engine.scene;
-    scene.remove(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.fire.group, this.units.group, this.smoke.points);
+    scene.remove(this.terrain.mesh, this.roads.mesh, this.assets.group, this.water.group, this.wind.group, this.fire.group, this.units.group, this.smoke.points);
+    this.wind.dispose();
     this.units.clear();
     this.terrain.geometry.dispose();
     this.roads.mesh.geometry.dispose();

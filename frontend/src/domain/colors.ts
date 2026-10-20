@@ -21,13 +21,14 @@ function rampAt(stops: ReadonlyArray<readonly [number, Rgb]>, x: number): Rgb {
 }
 
 const WIND_STOPS: ReadonlyArray<readonly [number, Rgb]> = [
-  [0, [76, 141, 255]],
-  [15, [56, 193, 114]],
-  [30, [245, 179, 1]],
-  [50, [255, 59, 59]],
+  [0, [56, 189, 248]],   // #38bdf8 - Calm Electric Cyan
+  [15, [14, 165, 233]],  // #0ea5e9 - Light Breeze Sky Blue
+  [30, [2, 132, 199]],   // #0284c7 - Moderate Deep Azure
+  [45, [245, 158, 11]],  // #f59e0b - Strong / Accelerated Amber Gold
+  [60, [234, 88, 12]],   // #ea580c - Severe / Intense Indraft Flame Orange
 ];
 
-/** Wind speed → color: blue (calm) → green → amber → red (dangerous for fire spread). */
+/** Wind speed → color: pale steel (calm) → blue → deep blue → amber (dangerous for fire spread). */
 export const windColor = (kmh: number): Rgb => rampAt(WIND_STOPS, kmh).map(Math.round) as Rgb;
 
 export const windColorCss = (kmh: number): string => `rgb(${windColor(kmh).join(',')})`;
