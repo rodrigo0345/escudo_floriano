@@ -25,18 +25,20 @@ public static class WeatherTimeline
         if (spec.Base == WeatherBase.Provider)
         {
             if (hourly.Count == 0) throw new InvalidOperationException("Sem dados meteorológicos para o intervalo pedido.");
-            var real = new WeatherTrack(hourly.Select(s => new WeatherPoint((s.Time - start).TotalMinutes, s.WindKmh ?? 0, s.WindFromDeg ?? 0, s.HumidityPct ?? t.ProviderFallback.HumidityPct, s.TempC ?? t.ProviderFallback.TempC)));
+            var real = new WeatherTrack(hourly.Select(s => new WeatherPoint((s.Time - start).TotalMinutes, s.WindKmh ?? 0, s.WindFromDeg ?? 0, s.HumidityPct ?? t.ProviderFallback.HumidityPct, s.TempC ?? t.ProviderFallback.TempC,
+                s.GustKmh ?? 0, s.PrecipitationMmH ?? 0)));
             foreach (var c in cells)
             {
                 var p = real.At(c.Minute);
-                (c.Wind, c.Dir, c.Humidity, c.Temp) = (p.WindKmh, p.WindFromDeg, p.HumidityPct, p.TempC);
+                (c.Wind, c.Dir, c.Humidity, c.Temp, c.Gust, c.Precip) = (p.WindKmh, p.WindFromDeg, p.HumidityPct, p.TempC, p.GustKmh, p.PrecipitationMmH);
             }
         }
         else foreach (var c in cells) (c.Wind, c.Dir, c.Humidity, c.Temp) = (t.NoneBase.WindKmh, t.NoneBase.WindFromDeg, t.NoneBase.HumidityPct, t.NoneBase.TempC);
 
         var interpolation = spec.Interpolation ?? new Interpolation();
-        ApplyKeyframes(cells, spec.Keyframes ?? new(), start, interpolation, spec.Base == WeatherBase.None);
-        foreach (var e in spec.Events ?? new()) if (e.Enabled) ApplyEvent(cells, e, start, interpolation, t);
+        bool baseIsNone = spec.Base == WeatherBase.None;
+        ApplyKeyframes(cells, spec.Keyframes ?? new(), start, interpolation, baseIsNone);
+        foreach (var e in spec.Events ?? new()) if (e.Enabled) ApplyEvent(cells, e, start, interpolation, t, baseIsNone);
 
         return new WeatherTrack(cells.Select(c => new WeatherPoint(c.Minute, Math.Max(0, c.Wind), Angles.Normalize(c.Dir), Math.Clamp(c.Humidity, t.MinHumidityPct, t.MaxHumidityPct), c.Temp,
             Math.Max(c.Gust, 0), Math.Max(c.Precip, 0))));
@@ -78,7 +80,7 @@ public static class WeatherTimeline
     };
 
     // ------------------------------------------------------------------------------------------------ eventos
-    static void ApplyEvent(Cell[] cells, WeatherEvent e, DateTimeOffset start, Interpolation interp, WeatherTimelineSettings t)
+    static void ApplyEvent(Cell[] cells, WeatherEvent e, DateTimeOffset start, Interpolation interp, WeatherTimelineSettings t, bool baseIsNone)
     {
         switch (e)
         {
@@ -159,7 +161,7 @@ public static class WeatherTimeline
                 {
                     At = new TimeSpec(Time: x.Time), WindKmh = x.WindKmh, WindFromDeg = x.WindFromDeg, TempC = x.TempC, HumidityPct = x.HumidityPct,
                     GustKmh = x.GustKmh, PrecipitationMmH = x.PrecipitationMmH,
-                }).ToList(), start, interp, baseIsNone: false);
+                }).ToList(), start, interp, baseIsNone);
                 break;
         }
     }

@@ -66,6 +66,9 @@ public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, Scenari
             }
         }
 
+        // Meteorologia manual por omissão e ortofoto DGT instável: não bloqueiam o ingest dos restantes dados.
+        var skipOptional = new HashSet<string> { "weather", "ortho" };
+
         // Se nenhum local tem relevo, carrega o primeiro antes de libertar a API
         if (!anyReady && uningested.Count > 0)
         {
@@ -74,7 +77,7 @@ public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, Scenari
             log.LogInformation("Nenhum local carregado na base de dados: a efetuar ingest inicial para '{Location}'…", first.Id);
             try
             {
-                await ingest.RunAsync(first, new HashSet<string>(), new HashSet<string>());
+                await ingest.RunAsync(first, new HashSet<string>(), skipOptional);
                 log.LogInformation("Ingest inicial concluído para '{Location}'.", first.Id);
             }
             catch (Exception ex)
@@ -94,7 +97,7 @@ public sealed class Bootstrap(SqlMigrator migrator, Readiness readiness, Scenari
                     log.LogInformation("A carregar dados para o local '{Location}' (ingest automático em segundo plano)…", loc.Id);
                     try
                     {
-                        await ingest.RunAsync(loc, new HashSet<string>(), new HashSet<string>());
+                        await ingest.RunAsync(loc, new HashSet<string>(), skipOptional);
                         log.LogInformation("Ingest automático concluído para '{Location}'.", loc.Id);
                         await resourceSeeder.SeedAsync(ct);
                     }

@@ -181,6 +181,10 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
 
         var rep = results["rep"];
         var sampleInterval = settings.Simulation.WeatherSampleIntervalMinutes;
+        // Same moisture series the native engine uses for the central run: Simard equilibrium + time lags + rain, sampled at the API's weather points.
+        var representative = members[0].Weather;
+        var moistureRows = DeadFuelMoisture.Series(representative, sampleInterval * 60, sc.DurationMinutes / sampleInterval + 1, settings.FuelMoisture, weather.SpinUpHours(wspec) * 60, wspec.FuelMoisture);
+        double foliar = wspec.FuelMoisture?.Values?.FoliarPct ?? settings.NativeEngine.DefaultFoliarMoisturePct;
         return new FireRun
         {
             SimulationId = sim.Id, LocationId = sc.LocationId, Spec = spec, Start = sc.Start, DurationMinutes = sc.DurationMinutes, Ignition = rep.Ignition,
@@ -188,8 +192,10 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
             Weather = Enumerable.Range(0, sc.DurationMinutes / sampleInterval + 1).Select(i =>
             {
                 var p = track.At(i * sampleInterval);
+                var row = moistureRows[i];
                 return new WeatherSample { Time = sc.Start.AddMinutes(i * sampleInterval), Source = "scenario", WindKmh = Math.Round(p.WindKmh, 1), WindFromDeg = Math.Round(p.WindFromDeg), HumidityPct = Math.Round(p.HumidityPct), TempC = Math.Round(p.TempC, 1),
-                    FineFuelMoisturePct = Math.Round(DeadFuelMoisture.EquilibriumMoisture(p.HumidityPct, p.TempC, settings.FuelMoisture) * 100, 1) };
+                    GustKmh = p.GustKmh > 0 ? Math.Round(p.GustKmh, 1) : null, PrecipitationMmH = p.PrecipitationMmH > 0 ? Math.Round(p.PrecipitationMmH, 1) : null, FineFuelMoisturePct = Math.Round(row.M1, 1),
+                    FuelMoisture = new FuelMoisture(Math.Round(row.M1, 1), Math.Round(row.M10, 1), Math.Round(row.M100, 1), Math.Round(row.Lh, 1), Math.Round(row.Lw, 1), Math.Round(foliar, 1)) };
             }).ToList(),
             BuildingFactor = effect.BuildingFactor,
         };

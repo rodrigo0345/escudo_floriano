@@ -9,6 +9,7 @@ public static class HourlyWeatherExtensions
     public static WeatherSample ToSample(this HourlyWeather hour) => new()
     {
         Time = hour.Time, WindKmh = hour.WindKmh, WindFromDeg = hour.WindFromDeg, HumidityPct = hour.HumidityPct, TempC = hour.TempC,
+        GustKmh = hour.GustKmh > 0 ? hour.GustKmh : null, PrecipitationMmH = hour.PrecipitationMmH > 0 ? hour.PrecipitationMmH : null,
         Source = hour.Provider.EndsWith("archive", StringComparison.Ordinal) ? "reanalysis" : "forecast",
     };
 }

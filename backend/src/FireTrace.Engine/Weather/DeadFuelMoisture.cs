@@ -4,7 +4,8 @@ namespace FireTrace.Engine.Weather;
 
 /// <summary>
 /// Humidade do combustível morto de 1 h, 10 h e 100 h (%) a partir da meteorologia: equilíbrio de Simard (HR e temperatura) com atraso de
-/// primeira ordem por classe de diâmetro. É o que as noites húmidas e as tardes secas fazem ao combustível fino e grosso.
+/// primeira ordem por classe de diâmetro, mais a água da chuva que entra diretamente no combustível. É o que as noites húmidas, as tardes
+/// secas e os aguaceiros fazem ao combustível fino e grosso.
 /// </summary>
 public static class DeadFuelMoisture
 {
@@ -38,20 +39,36 @@ public static class DeadFuelMoisture
         }
 
         double bias = spec?.DeadBiasPct ?? 0;
-        double Eq(int minute) { var w = wx.At(minute); return EquilibriumMoisture(w.HumidityPct, w.TempC, s) * 100 * wx.MoistScale + bias; }
-        double mean = Enumerable.Range(-spinUpMin, spinUpMin + 1).Where(m => m % s.EquilibriumSampleMinutes == 0).Average(Eq);
-        double m1 = Eq(-spinUpMin), m10 = mean, m100 = mean; // os grossos começam no equilíbrio médio do período anterior
+        double Eq(WeatherPoint w) => EquilibriumMoisture(w.HumidityPct, w.TempC, s) * 100 * wx.MoistScale + bias;
+        double mean = Enumerable.Range(-spinUpMin, spinUpMin + 1).Where(m => m % s.EquilibriumSampleMinutes == 0).Average(m => Eq(wx.At(m)));
+        double m1 = Eq(wx.At(-spinUpMin)), m10 = mean, m100 = mean; // os grossos começam no equilíbrio médio do período anterior
         int minute = -spinUpMin;
         for (int k = 0; k < bands; k++)
         {
             int target = k * step;
             for (; minute < target; minute++)
             {
-                double e = Eq(minute);
-                m1 += (e - m1) * (1 - Math.Exp(-1 / s.TimeLag1hMinutes)); m10 += (e - m10) * (1 - Math.Exp(-1 / s.TimeLag10hMinutes)); m100 += (e - m100) * (1 - Math.Exp(-1 / s.TimeLag100hMinutes));
+                var w = wx.At(minute);
+                double e = Eq(w);
+                m1 += (e - m1) * (1 - Math.Exp(-1 / s.TimeLag1hMinutes));
+                m10 += (e - m10) * (1 - Math.Exp(-1 / s.TimeLag10hMinutes));
+                m100 += (e - m100) * (1 - Math.Exp(-1 / s.TimeLag100hMinutes));
+
+                // Rain wets the dead fuel directly: mm falling in this minute × the class's absorption. It dries afterwards through the same time lag.
+                double rainMm = w.PrecipitationMmH / 60.0;
+                if (rainMm > 0)
+                {
+                    m1 += rainMm * s.RainWettingPctPerMm1h;
+                    m10 += rainMm * s.RainWettingPctPerMm10h;
+                    m100 += rainMm * s.RainWettingPctPerMm100h;
+                }
+                m1 = Math.Clamp(m1, s.MinDeadMoisturePct, s.MaxDeadMoisturePct);
+                m10 = Math.Clamp(m10, s.MinDeadMoisturePct, s.MaxDeadMoisturePct);
+                m100 = Math.Clamp(m100, s.MinDeadMoisturePct, s.MaxDeadMoisturePct);
             }
-            var w = wx.At(target);
-            rows.Add(new Row(w.WindKmh, w.WindFromDeg, Math.Max(m1, s.MinDeadMoisturePct), Math.Max(m10, s.MinDeadMoisturePct), Math.Max(m100, s.MinDeadMoisturePct),
+            var targetWeather = wx.At(target);
+            rows.Add(new Row(targetWeather.WindKmh, targetWeather.WindFromDeg,
+                Math.Max(m1, s.MinDeadMoisturePct), Math.Max(m10, s.MinDeadMoisturePct), Math.Max(m100, s.MinDeadMoisturePct),
                 spec?.Values?.LiveHerbaceousPct ?? s.LiveHerbaceousPct, spec?.Values?.LiveWoodyPct ?? s.LiveWoodyPct));
         }
         return rows;

@@ -33,7 +33,7 @@ export function defaultFormValues(run?: { start: string; durationMinutes: number
   return {
     start: run ? isoLocal(run.start) : '2026-08-17T15:00',
     duration: run?.durationMinutes ?? 180,
-    mode: 'provider',
+    mode: 'manual',
     wind: round(w?.windKmh ?? 20),
     dir,
     hum: round(w?.humidityPct ?? 25),
