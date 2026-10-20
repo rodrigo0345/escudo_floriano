@@ -19,44 +19,110 @@
   cursor: pointer;
   position: absolute;
   left: 14px;
-  top: 14px;
-  width: 54px;
-  height: 54px;
+  bottom: 58px;
+  width: 104px;
+  height: 104px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line);
   display: grid;
   place-items: center;
-  padding: 0;
+  padding: 4px;
+  z-index: 4;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.needle {
-  text-align: center;
-  line-height: 1;
-  color: var(--acc);
-  font-size: 15px;
+.compass:hover {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 45%, transparent);
 }
 
-.needle small {
-  color: var(--fg);
+.compassRose {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.compassFace {
+  fill: color-mix(in srgb, var(--panel2) 92%, transparent);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.compassInner {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 0.8;
+}
+
+.tickMajor {
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+
+.tickMid {
+  stroke: var(--mut);
+  stroke-width: 1;
+}
+
+.tickMinor {
+  stroke: var(--mut);
+  stroke-width: 0.6;
+  opacity: 0.7;
+}
+
+.compassLabel {
+  fill: var(--fg);
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.compassCardinal {
+  font-size: 8.6px;
+  font-weight: 800;
+}
+
+.compassNorth {
+  fill: #e5484d;
   font-size: 10px;
+}
+
+.compassNeedle {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.needleNorth {
+  fill: #e5484d;
+}
+
+.needleSouth {
+  fill: var(--mut);
+  opacity: 0.6;
+}
+
+.compassHub {
+  fill: var(--fg);
+  stroke: var(--panel);
+  stroke-width: 1.2;
 }
 
 .readout {
   position: absolute;
   right: 12px;
-  bottom: 10px;
+  bottom: 38px;
   font-size: 12px;
   text-align: right;
   text-shadow: 0 1px 3px #000;
-  color: #e8e6df;
+  color: var(--fg);
   pointer-events: none;
   line-height: 1.5;
 }
 
 .scaleBar {
   position: absolute;
-  left: 14px;
+  left: 132px;
   bottom: 14px;
   display: flex;
   align-items: center;
@@ -75,7 +141,7 @@
 
 .scaleLabel {
   font-size: 11px;
-  color: #f2f0ea;
+  color: var(--fg);
   text-shadow: 0 1px 3px #000;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -150,11 +216,12 @@
 
 .attrib {
   position: absolute;
-  left: 8px;
-  bottom: 36px;
+  right: 12px;
+  bottom: 12px;
   font-size: 10px;
   opacity: 0.75;
-  max-width: 55%;
+  max-width: 42%;
+  text-align: right;
   pointer-events: none;
   text-shadow: 0 1px 2px #000;
   color: #ddd;
@@ -164,15 +231,15 @@
 .hud {
   position: absolute;
   left: 14px;
-  top: 80px;
+  top: 14px;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 6px 10px;
   align-items: center;
-  width: 236px;
+  width: 300px;
   padding: 9px 11px;
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
   border: 1px solid var(--line);
   z-index: 3;
 }
@@ -214,6 +281,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.hudSource {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  color: var(--mut);
+  margin-top: -3px;
+}
+
 .bar {
   display: block;
   grid-column: 1 / -1;
@@ -239,104 +313,250 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   z-index: 3;
 }
 
-.box {
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 9px 12px;
-  font-size: 12px;
-  max-width: 290px;
-  line-height: 1.5;
+.layerControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: min(470px, calc(100vw - 440px));
 }
 
-.box .mut {
+.layerPanel {
+  width: 304px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px #0006;
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.layerSection {
+  padding: 11px 13px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.layerSection + .layerSection {
+  border-top: 1px solid var(--line);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.sectionTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.sectionMeta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: var(--mut);
+  font-variant-numeric: tabular-nums;
+}
+
+.sectionNote {
   display: block;
-  margin-top: 5px;
-  font-size: 11px;
+  margin-top: 7px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--mut);
+}
+
+.toggleGroup + .toggleGroup {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line);
 }
 
 .overlayRow {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  min-height: 22px;
   cursor: pointer;
   user-select: none;
 }
 
-.overlayRow input {
+.overlayRow input,
+.waterKind input {
   margin: 0;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  accent-color: var(--acc);
+  cursor: pointer;
+}
+
+.overlayRow span {
+  flex: 1;
 }
 
 .overlayLegend {
-  margin: 2px 0 6px 22px;
+  margin: 5px 0 0 21px;
+}
+
+.overlayLegend > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+
+.overlayLegend > .densityRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  grid-column: 1 / -1;
+}
+
+.densityLabel {
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.densitySlider {
+  flex: 1;
+  height: 4px;
+  accent-color: var(--acc);
+  cursor: pointer;
+}
+
+.densityValue {
+  font-family: var(--mono);
+  font-size: 10px;
+  min-width: 32px;
+  text-align: right;
+  color: var(--fg);
+}
+
+.legendNote {
+  display: block;
+  margin-top: 7px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--mut);
 }
 
 .ramp {
-  height: 10px;
-  border-radius: var(--radius);
-  margin: 6px 0 2px;
+  height: 9px;
+  border-radius: 2px;
+  margin: 3px 0;
 }
 
 .rampLabels {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
   color: var(--mut);
 }
 
 .lg {
-  display: flex;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  padding: 1px 0;
+  gap: 8px;
+  padding: 1.5px 0;
 }
 
 .lg i {
   width: 12px;
   height: 12px;
-  border-radius: var(--radius);
+  border-radius: 2px;
   flex: none;
 }
 
 .lg span {
-  flex: 1;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lg small {
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--mut);
+  font-variant-numeric: tabular-nums;
 }
 
 .waterKind {
-  display: flex;
+  display: grid;
+  grid-template-columns: 13px 10px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  padding: 2px 0;
+  gap: 8px;
+  padding: 2.5px 0;
   cursor: pointer;
   user-select: none;
 }
 
-.waterKind input {
-  margin: 0;
-}
-
 .waterKind i {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex: none;
-  border: 2px solid #fff;
+  border: 1.5px solid #fff;
   box-sizing: border-box;
 }
 
 .waterKind span {
-  flex: 1;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .waterKind small {
-  font-size: 11px;
-  opacity: 0.7;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--mut);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 700px) {
+  .compass {
+    width: 88px;
+    height: 88px;
+    bottom: 54px;
+  }
+
+  .hud {
+    left: 14px;
+    bottom: 154px;
+    width: min(300px, calc(100vw - 28px));
+  }
+
+  .layerControls {
+    max-width: calc(100vw - 32px);
+  }
+
+  .layerPanel {
+    width: min(304px, calc(100vw - 24px));
+  }
+
+  .attrib {
+    display: none;
+  }
+
+  .readout {
+    bottom: 34px;
+    max-width: 60%;
+  }
 }

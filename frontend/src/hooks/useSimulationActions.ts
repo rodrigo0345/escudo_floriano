@@ -67,8 +67,15 @@ export function useSimulationActions() {
         startMs: run.startMs,
         durationMinutes: run.durationMinutes,
       });
-      const first = simulation.scenarioSnapshot.ignitions[0].position;
+      const points = simulation.scenarioSnapshot.ignitions.map((ig, i) => ({
+        ...ig,
+        label: ig.label ?? `Foco ${i + 1}`,
+      }));
+      const first = points[0]?.position;
       state.setRun(run);
+      state.setIgnitions(points);
+      world.fire.setIgnitions(points);
+
       // opened by id the picker must name *this* fire, not the first one: by scenario id, else by the snapshot's name, else "custom"
       const ownScenario = simulation.scenarioId ?? data.scenarios.find((s) => s.name === simulation.scenarioSnapshot.name)?.id ?? 'custom';
       if (simulation.kind !== 'what_if') {
@@ -77,6 +84,7 @@ export function useSimulationActions() {
       } else if (!useAppStore.getState().scenarioId) {
         state.setScenario(ownScenario); // a plan's run opened directly; from the plans panel the picker already points at its fire
       }
+
       // draw the plan whose what-if this is; a baseline has none
       if (simulation.kind === 'what_if' && simulation.planId) {
         plansApi
@@ -90,8 +98,8 @@ export function useSimulationActions() {
           })
           .catch((e: Error) => console.warn('plano no mapa:', e.message));
       } else state.setActivePlan(null);
-      state.setIgnition({ lat: first.lat, lon: first.lon });
-      world.fire.setIgnition(first.lat, first.lon, `Ignição ${formatDateTime(run.startMs)}`);
+
+      if (!first) return;
       if (!framedFirstRun) {
         world.focusOnLatLon(first.lat, first.lon);
         framedFirstRun = true;
@@ -108,10 +116,10 @@ export function useSimulationActions() {
       await loadImpact(run.id);
       // Flipping between the base and a plan from the plans panel keeps the minute on screen, so the two fires can be compared at the
       // same moment; any other load starts at T+30 (back at T+30 a fire that had grown would seem to have vanished).
-      const tab = useAppStore.getState().tab;
-      const comparing = tab === 'plans' && state.run !== null;
+      const currentTab = useAppStore.getState().tab;
+      const comparing = currentTab === 'plans' && state.run !== null;
       state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
-      if (tab !== 'plans' && tab !== 'demo' && tab !== 'resources') state.setTab('incident'); // these tabs stay open while a run loads
+      if (!comparing && currentTab !== 'plans' && currentTab !== 'demo' && currentTab !== 'resources') state.setTab('incident');
     },
     [world, loadImpact],
   );
@@ -187,9 +195,9 @@ export function useSimulationActions() {
       }
       const scenario = store.data.scenarios.find((s) => s.id === scenarioId);
       if (!scenario) return;
-      const at = scenario.ignitions[0].position;
-      store.setIgnition({ lat: at.lat, lon: at.lon });
-      world.fire.setIgnition(at.lat, at.lon, `Ignição ${formatDateTime(scenario.start)}`);
+      const points = scenario.ignitions.map((ig, i) => ({ ...ig, label: ig.label ?? `Foco ${i + 1}` }));
+      store.setIgnitions(points);
+      world.fire.setIgnitions(points);
       // a built-in scenario never changes, so reuse an already computed result instead of re-running it
       const previous = await simulationsApi.latestSucceeded(scenarioId);
       if (previous) await showSimulation(async () => previous);
@@ -217,5 +225,5 @@ export function useSimulationActions() {
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, showSimulationById, runSimulation, showSimulation, cancelJob, reloadImpact };
+  return { selectScenario, showSimulation, showSimulationById, runSimulation, cancelJob, reloadImpact };
 }

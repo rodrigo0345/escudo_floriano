@@ -93,3 +93,113 @@
 .spaced {
   margin-top: 10px;
 }
+
+.baseLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--mut);
+}
+
+.baseLine b {
+  color: var(--fg);
+}
+
+.warn {
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.roseRow {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.9fr) 1.1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.roseMeta {
+  display: grid;
+  gap: 5px;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.form .preset,
+.form .presetOn {
+  width: 100%;
+  padding: 7px 8px;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--mut);
+}
+
+.form .presetOn {
+  border-color: var(--acc);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--acc) 16%, var(--panel2));
+}
+
+.form .preset:disabled,
+.form .presetOn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ignitions {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.ignitionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.ignitionRow > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ignitionRow small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form .ignitionRow button {
+  width: auto;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.form .delay {
+  display: grid;
+  gap: 1px;
+  font-size: 9px;
+  color: var(--mut);
+  width: 54px;
+}
+
+.form .delay input {
+  padding: 3px 4px;
+  font-size: 11px;
+  text-align: center;
+}

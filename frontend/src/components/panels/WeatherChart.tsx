@@ -26,7 +26,7 @@ export function WeatherChart({ samples, cursorMs = null }: { samples: WeatherSam
     <>
       <svg className={styles.chart} viewBox={`0 0 ${W} ${H}`}>
         <polyline fill="none" stroke="#e5484d" strokeWidth="1.5" strokeDasharray="4 3" points={line((s) => ((s.tempC ?? 0) - minT) / (maxT - minT))} />
-        <polyline fill="none" stroke="#4c8dff" strokeWidth="2" points={line((s) => (s.humidityPct ?? 0) / 100)} />
+        <polyline fill="none" stroke="#d8b26a" strokeWidth="2" points={line((s) => (s.humidityPct ?? 0) / 100)} />
         <polyline fill="none" stroke="#ff6a1a" strokeWidth="2" points={line((s) => (s.windKmh ?? 0) / maxWind)} />
         {cursorMs != null ? <line x1={x(cursorMs)} x2={x(cursorMs)} y1="8" y2={TOP + HEIGHT + 5} stroke="#fff" strokeDasharray="3 3" /> : null}
       </svg>
@@ -36,7 +36,7 @@ export function WeatherChart({ samples, cursorMs = null }: { samples: WeatherSam
           vento (máx {maxWind.toFixed(0)} km/h)
         </span>
         <span>
-          <i style={{ background: '#4c8dff' }} />
+          <i style={{ background: '#d8b26a' }} />
           humidade %
         </span>
         <span>

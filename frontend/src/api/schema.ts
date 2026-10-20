@@ -2458,6 +2458,22 @@ export interface components {
              */
             type: "backfire";
         };
+        InterventionFuelRemoval: components["schemas"]["InterventionBase"] & {
+            /** @constant */
+            type: "fuel_removal";
+            geometry: components["schemas"]["Polygon"];
+            /** @enum {string} */
+            method?: "hand_tool" | "machine" | "grazing";
+            constructionMinutes?: number;
+            /** @description Fração da propagação que a área tratada bloqueia (0–1), aplicada a partir de `constructionMinutes`. */
+            effectiveness: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "fuel_removal";
+        };
         InterventionCrewDeployment: components["schemas"]["InterventionBase"] & {
             /** @constant */
             type: "crew_deployment";
@@ -2504,7 +2520,7 @@ export interface components {
             type: "evacuation";
         };
         /** @description Efeito físico de uma decisão que o motor pode aplicar. É o que liga um **plano** a uma **simulação** e permite comparar decisões sobre o mesmo cenário. */
-        Intervention: components["schemas"]["InterventionRoadClosure"] | components["schemas"]["InterventionFireLine"] | components["schemas"]["InterventionAerialDrop"] | components["schemas"]["InterventionBackfire"] | components["schemas"]["InterventionCrewDeployment"] | components["schemas"]["InterventionStructureProtection"] | components["schemas"]["InterventionEvacuation"];
+        Intervention: components["schemas"]["InterventionRoadClosure"] | components["schemas"]["InterventionFireLine"] | components["schemas"]["InterventionAerialDrop"] | components["schemas"]["InterventionBackfire"] | components["schemas"]["InterventionFuelRemoval"] | components["schemas"]["InterventionCrewDeployment"] | components["schemas"]["InterventionStructureProtection"] | components["schemas"]["InterventionEvacuation"];
         /** @description Área já a arder, por exemplo o perímetro observado no terreno ou por drone. */
         InitialFire: {
             perimeter: components["schemas"]["Geometry"];
@@ -3469,7 +3485,7 @@ export interface components {
             /** @description Limitações ou versão em que passa a ser suportado. */
             note?: string;
         };
-        /** @description O que o servidor *realmente* suporta agora. O contrato pode definir mais do que o motor já faz: a UI e os clientes consultam isto para desativar o que ainda não existe, e o servidor responde `422 unsupported_capability` se o ignorarem. */
+        /** @description O que o servidor *realmente* suporta agora. O contrato pode definir mais do que o motor já faz: a UI e os clientes consultam isto para desativar o que ainda não existe, e o servidor responde `501 unsupported_capability` se o ignorarem. */
         Capabilities: {
             apiVersion: string;
             serverVersion?: string;
@@ -4136,8 +4152,17 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Pedido bem formado mas inválido (`validation_failed`, `unsupported_capability`, `ignition_not_flammable`…). */
+        /** @description Pedido bem formado mas inválido (`validation_failed`, `ignition_not_flammable`, …). */
         Unprocessable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Capacidade ainda não implementada (`unsupported_capability`). */
+        Unsupported: {
             headers: {
                 [name: string]: unknown;
             };
@@ -6970,6 +6995,7 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
+            501: components["responses"]["Unsupported"];
             default: components["responses"]["UnexpectedError"];
         };
     };
@@ -7000,6 +7026,7 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
+            501: components["responses"]["Unsupported"];
             default: components["responses"]["UnexpectedError"];
         };
     };
