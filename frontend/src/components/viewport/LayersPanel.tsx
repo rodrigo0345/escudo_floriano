@@ -4,6 +4,7 @@ import type { WaterPointKind } from '@/api';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
 import { useEngine, useWorld } from '@/engine/EngineContext';
+import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import type { ViewModeName } from '@/engine/viewMode';
 import { useAppStore } from '@/store/appStore';
@@ -35,6 +36,7 @@ export function LayersPanel() {
       <div className={styles.layerPanel}>
         <WaterBox />
         <OverlayBox />
+        <PlanBox />
         <BaseLayerLegend />
       </div>
     </div>
@@ -116,6 +118,40 @@ function OverlayBox() {
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** Legend and per-kind switches for the agents' plan drawn on the map (only while a plan's simulation is on screen). */
+function PlanBox() {
+  const world = useWorld();
+  const plan = useAppStore((s) => s.activePlan);
+  const [, redraw] = useState(0);
+
+  useEffect(() => world?.plan.subscribe(() => redraw((n) => n + 1)), [world]);
+
+  if (!world || !plan) return null;
+  const kinds = (Object.keys(PLAN_KINDS) as PlanKind[]).filter((k) => world.plan.counts[k]);
+  if (!kinds.length) return null;
+  return (
+    <div className={styles.box}>
+      <b>Plano {plan.variant ?? ''} dos agentes</b>
+      {kinds.map((k) => (
+        <label className={styles.waterKind} key={k}>
+          <input
+            type="checkbox"
+            checked={world.plan.isVisible(k)}
+            onChange={(e) => {
+              world.plan.setVisible(k, e.target.checked);
+              redraw((n) => n + 1);
+            }}
+          />
+          <i style={{ background: PLAN_KINDS[k].color }} />
+          <span>{PLAN_KINDS[k].label}</span>
+          <small>{world.plan.counts[k]}</small>
+        </label>
+      ))}
+      <span className="mut">passe o rato sobre um elemento para ver a ação e a razão do agente</span>
+    </div>
   );
 }
 

@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 
-import { simulationsApi, type Simulation, type SimulationRequest } from '@/api';
+import { plansApi, simulationsApi, type Simulation, type SimulationRequest } from '@/api';
 import { Impact } from '@/domain/impact';
-import { formatTime } from '@/domain/weather';
+import { formatDateTime, formatTime } from '@/domain/weather';
 import { useWorld } from '@/engine/EngineContext';
 import type { Milestone } from '@/engine/layers/fireLayer';
 import { useAppStore } from '@/store/appStore';
@@ -75,10 +75,30 @@ export function useSimulationActions() {
       state.setRun(run);
       state.setIgnitions(points);
       world.fire.setIgnitions(points);
+
+      // opened by id the picker must name *this* fire, not the first one: by scenario id, else by the snapshot's name, else "custom"
+      const ownScenario = simulation.scenarioId ?? data.scenarios.find((s) => s.name === simulation.scenarioSnapshot.name)?.id ?? 'custom';
       if (simulation.kind !== 'what_if') {
         state.setBaseSimulationId(run.id); // the plans panel lists plans made for this baseline
-        state.setScenario(simulation.scenarioId ?? 'custom'); // opened by id: the scenario picker must name *this* fire, not the first one
-      } // a plan's what-if is the same fire as its baseline: the picker keeps pointing at it
+        state.setScenario(ownScenario);
+      } else if (!useAppStore.getState().scenarioId) {
+        state.setScenario(ownScenario); // a plan's run opened directly; from the plans panel the picker already points at its fire
+      }
+
+      // draw the plan whose what-if this is; a baseline has none
+      if (simulation.kind === 'what_if' && simulation.planId) {
+        plansApi
+          .get(simulation.planId as string)
+          .then((plan) => {
+            const store = useAppStore.getState();
+            if (store.run?.id !== run.id) return; // another simulation was loaded meanwhile
+            store.setActivePlan(plan);
+            // a plan's run opened directly (`?sim=`): its baseline is named in the plan, so the plans panel can list its siblings
+            if (!store.baseSimulationId && plan.basis?.simulationId) store.setBaseSimulationId(plan.basis.simulationId as string);
+          })
+          .catch((e: Error) => console.warn('plano no mapa:', e.message));
+      } else state.setActivePlan(null);
+
       if (!first) return;
       if (!framedFirstRun) {
         world.focusOnLatLon(first.lat, first.lon);

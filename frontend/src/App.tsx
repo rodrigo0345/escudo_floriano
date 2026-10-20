@@ -4,7 +4,6 @@ import { KeyboardShortcuts } from '@/components/layout/KeyboardShortcuts';
 import { PlaybackBar } from '@/components/layout/PlaybackBar';
 import { TopBar } from '@/components/layout/TopBar';
 import styles from '@/components/layout/layout.module.css';
-import { MetricsBar } from '@/components/panels/MetricsBar';
 import { ResourcesView } from '@/components/resources/ResourcesView';
 import { SidePanel } from '@/components/panels/SidePanel';
 import { Viewport } from '@/components/viewport/Viewport';
@@ -51,7 +50,6 @@ export function App() {
     <EngineProvider>
       <div className={styles.app}>
         <TopBar />
-        <MetricsBar />
         <div className={styles.main}>
           <Viewport />
           <SidePanel />
@@ -59,8 +57,8 @@ export function App() {
         </div>
         <PlaybackBar />
       </div>
-      <KeyboardShortcuts />
       <Controllers />
+      <KeyboardShortcuts />
     </EngineProvider>
   );
 }

@@ -26,15 +26,19 @@ Each agent
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .contracts import OBJECTIVES, INTERVENTION_TYPES, UNSAFE_ON_WIRE
+from .sectors import Assignment, Sector, line_across, line_segment, zone_around
 from .tiers import FirefighterTier, tier_for_vehicle
 
 # Spec ``Responsibility`` -> vehicle capabilities that let a vehicle take it (the backend warns
 # ``responsibility_not_supported`` otherwise). Only what the agents assign is listed.
 EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", "perimeter_security"})
+
+LINE_FACTOR = {FirefighterTier.HELICOPTER: 1.5, FirefighterTier.TRUCK: 1.0, FirefighterTier.SQUAD: 0.8}
+"""Half-length of the line a tier makes, in work-zone radii: an aircraft lays a long curtain, a crew on foot a short line."""
 
 PROTECT_LIFE = "protect_life"
 MINIMIZE_BURNED_AREA = "minimize_burned_area"
@@ -55,14 +59,35 @@ class Situation:
     """Decision instant, minutes since ignition. ``None`` = the last milestone (end of the run)."""
     rules: dict[str, Any] | None = None
     """The backend's ``GET /rules`` (safety distances, suppression effectiveness...). ``None`` = defaults below."""
+    ignition: dict[str, Any] | None = None
+    """Where the fire started (the scenario's first ignition): the position of last resort."""
+    life_horizon_minutes: int = 180
+    """How far ahead the life planner looks: emptying a town takes hours, so it looks further than the fire fight does."""
+    focus: Sector | None = None
+    """The stretch of front this agent was assigned. When set, position, bearing, speed and intensity are *its* sector's."""
 
     @property
     def safe_distance_m(self) -> float:
         return float(((self.rules or {}).get("safety") or {}).get("minSafeDistanceM") or 100.0)
 
     @property
+    def zone_radius_m(self) -> float:
+        """Radius of the ground one crew works (``Rules.suppression.zoneRadiusM``)."""
+        return float(((self.rules or {}).get("suppression") or {}).get("zoneRadiusM") or 180.0)
+
+    @property
+    def anchor(self) -> dict[str, Any]:
+        """Where to act: the assigned sector, else the fire's head, else where it started. Never a guessed place."""
+        position = self.head_position or self.ignition
+        if not position:
+            raise ValueError(f"no fire position for {self.simulation_id}: no sector, no head in the summary and no ignition")
+        return position
+
+    @property
     def head_bearing_deg(self) -> float:
         """Where the head is moving towards. Falls back to downwind (wind blows *from* ``windFromDeg``)."""
+        if self.focus is not None:
+            return self.focus.bearing_deg
         bearing = self.latest_milestone.get("headBearingDeg")
         if bearing is not None:
             return float(bearing)
@@ -108,14 +133,20 @@ class Situation:
 
     @property
     def head_speed_mmin(self) -> float:
+        if self.focus is not None:
+            return self.focus.speed_mmin
         return float(self.latest_milestone.get("headSpeedMmin") or 0.0)
 
     @property
     def max_intensity_kwm(self) -> float:
+        if self.focus is not None:
+            return self.focus.intensity_kwm
         return float(self.latest_milestone.get("maxIntensityKwm") or 0.0)
 
     @property
     def head_position(self) -> dict[str, Any]:
+        if self.focus is not None:
+            return self.focus.position
         return self.latest_milestone.get("headPosition") or {}
 
     @property
@@ -127,10 +158,10 @@ class Situation:
         arrivals = [asset["arrivalMinute"]["p50"] for asset in self.threatened_places]
         return min(arrivals) if arrivals else None
 
-    def people_in_danger_within(self) -> list[dict[str, Any]]:
-        """Threatened places whose fire arrival (p50) falls inside the horizon."""
-        horizon = self.horizon_minutes
-        return [asset for asset in self.threatened_places if asset["arrivalMinute"]["p50"] <= horizon]
+    def people_in_danger_within(self, horizon: int | None = None) -> list[dict[str, Any]]:
+        """Threatened places whose fire arrival (p50) falls inside the horizon (the fighting horizon unless another is given)."""
+        limit = self.horizon_minutes if horizon is None else horizon
+        return [asset for asset in self.threatened_places if asset["arrivalMinute"]["p50"] <= limit]
 
 
 def situation_from_simulation(
@@ -141,14 +172,18 @@ def situation_from_simulation(
     horizon_minutes: int = 60,
     at_minute: int | None = None,
     rules: dict[str, Any] | None = None,
+    ignition: dict[str, Any] | None = None,
+    life_horizon_minutes: int = 180,
 ) -> Situation:
     return Situation(
+        life_horizon_minutes=life_horizon_minutes,
         simulation_id=simulation_id,
         horizon_minutes=horizon_minutes,
         threatened=threatened,
         summary=summary,
         at_minute=at_minute,
         rules=rules,
+        ignition=ignition,
     )
 
 
@@ -232,6 +267,7 @@ class FirefighterAgent:
     SAFETY_MARGIN_MIN = 15  # minutes of headway we insist on before the fire arrives
 
     def __init__(self, observation: Observation) -> None:
+        self._assignment = Assignment()
         self.observation = observation
         self.agent_id = observation.agent_id
         self.tier = observation.tier
@@ -278,8 +314,18 @@ class FirefighterAgent:
         )
 
     # -- decide -----------------------------------------------------------------
-    def decide(self, situation: Situation) -> DecisionMessage:
-        in_danger = situation.people_in_danger_within()
+    def decide(self, situation: Situation, assignment: Assignment | None = None) -> DecisionMessage:
+        """``assignment`` is what the orchestrator gave this unit (its sector of the front and its place); without one the
+        unit acts on the fire's head, which is what every unit did before sectors existed."""
+        self._assignment = assignment or Assignment()
+        if self._assignment.sector is not None:
+            situation = replace(situation, focus=self._assignment.sector)  # position, bearing, speed and intensity of *its* sector
+        if self._assignment.place is not None:
+            in_danger = [self._assignment.place]  # the life planner gave this unit its own place (possibly beyond the fighting horizon)
+        elif assignment is not None:
+            in_danger = []  # an orchestrator is in charge and gave this unit no place: it keeps fighting the fire
+        else:
+            in_danger = situation.people_in_danger_within()  # no orchestrator: every unit reacts to the people in its horizon
         if in_danger:
             proposals, reason, confidence = self._protect_life(situation, in_danger)
             objective = PROTECT_LIFE
@@ -308,7 +354,7 @@ class FirefighterAgent:
         the head (opposite its bearing) and a lookout on the flank. Distances come from the backend's `/rules`."""
         lat, lon = _centroid(geometry) if geometry else (None, None)
         if lat is None:
-            position = situation.head_position or {"lat": 41.42, "lon": -8.27}
+            position = situation.anchor
             lat, lon = float(position["lat"]), float(position["lon"])
         bearing = situation.head_bearing_deg
         safe_lat, safe_lon = _destination(lat, lon, (bearing + 180.0) % 360.0, max(situation.safe_distance_m * 3.0, 300.0))
@@ -319,8 +365,26 @@ class FirefighterAgent:
             "lookouts": [{"lat": look_lat, "lon": look_lon}],
         }
 
+    # -- where this unit works ------------------------------------------------------
+    def _line(self, situation: Situation, position: dict[str, Any] | None = None) -> dict[str, Any]:
+        """A line *across* the fire's path at the unit's sector (or at ``position``), as long as its tier can build;
+        units sharing a sector are laid side by side (``slot``) instead of on top of each other."""
+        at = position or situation.anchor
+        if position is None and self._assignment.segment_m:
+            # the orchestrator measured what this unit can build in the stage, and where its piece sits in the barrier
+            return line_segment(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, self._assignment.segment_m, self._assignment.offset_m)
+        half = situation.zone_radius_m * LINE_FACTOR[self.tier]
+        return line_across(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, half, self._assignment.slot)
+
+    def _zone(self, situation: Situation, factor: float = 1.0) -> dict[str, Any]:
+        """The ground one crew works around its sector (``Rules.suppression.zoneRadiusM``), beside its neighbours."""
+        at = situation.anchor
+        return zone_around(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, situation.zone_radius_m * factor, self._assignment.slot)
+
     # -- branch 1: people in the path → evacuate first ----------------------------
     def _protect_life(self, situation: Situation, in_danger: list[dict[str, Any]]) -> tuple[list[ActionProposal], str, float]:
+        if in_danger[0].get("assetType") == "building_zone":
+            return self._defend_zone(situation, in_danger[0])
         arrival = min(asset["arrivalMinute"]["p50"] for asset in in_danger)
         names = ", ".join(str(asset.get("name") or asset["id"]) for asset in in_danger)
         people = sum(int(asset.get("population") or 0) for asset in in_danger)
@@ -343,7 +407,7 @@ class FirefighterAgent:
                         "type": "aerial_drop",
                         "label": f"Cortina {names}",
                         "start": {"offsetMinutes": 0},
-                        "geometry": _drop_line_geometry(place.get("position")),
+                        "geometry": self._line(situation, place.get("position")),
                         "agent": agent,
                         "effectiveness": effectiveness,
                         "effectDurationMinutes": 45,
@@ -413,6 +477,39 @@ class FirefighterAgent:
         quantified = f"evacuar primeiro ({people} pessoas; margem {self.SAFETY_MARGIN_MIN} min), depois {follow_ups[0].intervention['type']} em sequência."
         reason = f"{base} A minha decisão pela regra 'vidas primeiro': {quantified}"
         return [evacuation, *follow_ups], reason, 0.75
+
+    def _defend_zone(self, situation: Situation, zone: dict[str, Any]) -> tuple[list[ActionProposal], str, float]:
+        """Defend a patch of ground with houses on it (not a backend place): the engine stays and wets the buildings.
+
+        The target is the zone's geometry. Engines assigned to the same zone each carry their own effectiveness and the backend
+        multiplies them, so three engines on one zone protect it far more than one.
+        """
+        effectiveness = situation.suppression_effectiveness(self.observation.crew_onboard, self.observation.water_capacity_l)
+        arrival = float(zone["arrivalMinute"]["p50"])
+        buildings, people = int(zone.get("buildings") or 0), int(zone.get("population") or 0)
+        protection = ActionProposal(
+            action_type="structure_protection",
+            title=f"Defender {buildings} edifícios (zona {zone['id']})",
+            proposal_id=f"prot-{self.agent_id}",
+            intervention={
+                "type": "structure_protection",
+                "label": f"Defesa {zone['id']}",
+                "start": {"offsetMinutes": 0},
+                "geometry": zone["geometry"],
+                "effectiveness": effectiveness,
+            },
+            priority="high",
+            resources=self._ground_resources("structure_protection"),
+            expected_effect=f"Reduz os edifícios perdidos nesta zona (eficácia ~{effectiveness:.0%} por viatura, pelas regras do servidor).",
+            confidence=0.7,
+            safety_notes="Defender a partir da zona já ardida ou de segurança; retirar se o fogo chegar em menos do que o limite das regras.",
+            extra_action_fields={"targets": [{"geometry": zone["geometry"], "label": str(zone["name"])}], "tactic": "wetting"},
+        )
+        reason = (
+            f"O fogo previsto chega a {buildings} edifícios ({people} pessoas) em ~{arrival:.0f} min e nenhuma localidade os cobre: "
+            f"defendo esta zona (eficácia ~{effectiveness:.0%} com {self.observation.crew_onboard} pessoas e {self.observation.water_capacity_l:.0f} L)."
+        )
+        return [protection], reason, 0.7
 
     def _protect_structures(
         self, situation: Situation, in_danger: list[dict[str, Any]], base: str, arrival: float, people: int, names: str
@@ -527,7 +624,7 @@ class FirefighterAgent:
                     "type": "aerial_drop",
                     "label": "Largada cabeça",
                     "start": {"offsetMinutes": 0},
-                    "geometry": _drop_line_geometry(situation.head_position),
+                    "geometry": self._line(situation),
                     "agent": agent,
                     "effectiveness": effectiveness,
                     "effectDurationMinutes": duration,
@@ -555,7 +652,7 @@ class FirefighterAgent:
                         "personnel": self.observation.crew_onboard,
                         "vehicles": 1,
                         "waterL": self.observation.water_capacity_l,
-                        "geometry": _area_around(situation.head_position, 0.002),
+                        "geometry": self._zone(situation),
                         "durationMinutes": 60,
                     },
                     priority="high",
@@ -575,7 +672,7 @@ class FirefighterAgent:
                     "type": "fire_line",
                     "label": "Linha molhada flanco",
                     "start": {"offsetMinutes": 0},
-                    "geometry": _short_line_behind(situation.head_position),
+                    "geometry": self._line(situation),
                     "constructionMinutes": 40,
                     "effectiveness": 0.8,
                     "method": "wet_line",
@@ -600,7 +697,7 @@ class FirefighterAgent:
                         "type": "fire_line",
                         "label": "Handline flanco",
                         "start": {"offsetMinutes": 0},
-                        "geometry": _short_line_behind(situation.head_position),
+                        "geometry": self._line(situation),
                         "constructionMinutes": 60,
                         "effectiveness": 0.7,
                         "method": "handline",
@@ -621,7 +718,7 @@ class FirefighterAgent:
                     "type": "fuel_removal",
                     "label": "Descapamento flanco",
                     "start": {"offsetMinutes": 0},
-                    "geometry": _area_around(situation.head_position, 0.003),
+                    "geometry": self._zone(situation, 1.5),
                     "method": "hand_tool",
                     "constructionMinutes": 45,
                     "effectiveness": 0.6,
@@ -673,8 +770,9 @@ def _destination(lat: float, lon: float, bearing_deg: float, distance_m: float) 
 
 
 def _area_around(position: dict[str, Any] | None, radius_deg: float = 0.004) -> dict[str, Any]:
+    """A square around a place (evacuation area). The place must have a position: nothing is guessed."""
     if not position:
-        return _area_around({"lat": 41.42, "lon": -8.27}, radius_deg)
+        raise ValueError("cannot draw an area around a place with no position")
     lat, lon = float(position["lat"]), float(position["lon"])
     ring = [
         [lon - radius_deg, lat - radius_deg],
@@ -684,21 +782,6 @@ def _area_around(position: dict[str, Any] | None, radius_deg: float = 0.004) -> 
         [lon - radius_deg, lat - radius_deg],
     ]
     return {"type": "Polygon", "coordinates": [ring]}
-
-
-def _drop_line_geometry(position: dict[str, Any] | None) -> dict[str, Any]:
-    """A drop line ~0.01° wide centred at ``position`` (LineString, per the schema)."""
-    return _short_line_behind(position, half_width_deg=0.005)
-
-
-def _short_line_behind(position: dict[str, Any] | None, half_width_deg: float = 0.004) -> dict[str, Any]:
-    if not position:
-        position = {"lat": 41.42, "lon": -8.27}
-    lat, lon = float(position["lat"]), float(position["lon"])
-    return {
-        "type": "LineString",
-        "coordinates": [[lon - half_width_deg, lat - half_width_deg], [lon + half_width_deg, lat - half_width_deg]],
-    }
 
 
 __all__ = [

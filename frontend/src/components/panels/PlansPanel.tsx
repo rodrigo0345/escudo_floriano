@@ -82,7 +82,7 @@ export function PlansPanel() {
     if (!baseId) return;
     setBusy(plan.id as string);
     try {
-      const sim = await plansApi.simulate(plan.id as string, baseId);
+      const sim = await plansApi.simulateAndWait(plan.id as string, baseId);
       setRuns((previous) => new Map(previous).set(plan.id as string, sim));
     } catch (e) {
       showBanner(`Simulação do plano: ${(e as Error).message}`);

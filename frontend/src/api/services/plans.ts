@@ -14,8 +14,6 @@ import type {
   Simulation,
 } from '../types';
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 export interface PlanQueryParams {
   locationId?: string;
   simulationId?: string;
@@ -34,9 +32,6 @@ export const plansApi = {
 
   all: (params: Omit<PlanQueryParams, 'limit' | 'cursor'> = {}): Promise<PlanSummary[]> =>
     fetchAllPages<PlanSummary>('/plans', params as Record<string, string>),
-
-  /** Plans whose basis is this baseline simulation. */
-  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
 
   get: async (id: string): Promise<Plan> => {
     const { data } = await http.get<Plan>(`/plans/${id}`);
@@ -74,24 +69,9 @@ export const plansApi = {
     return data;
   },
 
-  /**
-   * Starts the plan's what-if. A baseline id waits for the run (the plans panel compares the two fires);
-   * an explicit request returns the queued simulation, leaving polling to the caller.
-   */
-  simulate: async (id: string, request?: PlanSimulationRequest | string): Promise<Simulation> => {
-    const wait = typeof request === 'string';
-    const body: PlanSimulationRequest = typeof request === 'string'
-      ? { baselineSimulationId: request, label: `what-if ${id}` }
-      : request ?? {};
-    const { data } = await http.post<Simulation>(`/plans/${id}/simulate`, body, wait ? { headers: { Prefer: 'wait=60' } } : undefined);
-    if (!wait) return data;
-    let sim = data;
-    while (sim.status === 'queued' || sim.status === 'running') {
-      await sleep(1500);
-      sim = (await http.get<Simulation>(`/simulations/${sim.id}`)).data;
-    }
-    if (sim.status !== 'succeeded') throw new Error(sim.error?.detail ?? sim.error?.title ?? `Simulação ${sim.status}`);
-    return sim;
+  simulate: async (id: string, request?: PlanSimulationRequest): Promise<Simulation> => {
+    const { data } = await http.post<Simulation>(`/plans/${id}/simulate`, request ?? {});
+    return data;
   },
 
   actions: async (id: string): Promise<Action[]> => fetchAllPages<Action>(`/plans/${id}/actions`),
@@ -108,6 +88,11 @@ export const plansApi = {
     return data;
   },
 
+  // ---- helpers of the plans panel (agents' plans for a baseline and their what-if runs)
+
+  /** Plans whose basis is this baseline simulation (`GET /plans?simulationId=`). */
+  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
+
   /**
    * The latest finished what-if run of each plan, keyed by plan id. The API has no "simulations of this plan" filter,
    * so every finished what-if is listed and matched on its `planId` here.
@@ -122,5 +107,21 @@ export const plansApi = {
       if (!known || String(sim.finishedAt ?? '') > String(known.finishedAt ?? '')) latest.set(planId, sim);
     }
     return latest;
+  },
+
+  /** "What happens if we apply this plan?": runs the what-if and waits for it (a failed run is reported, never dropped silently). */
+  simulateAndWait: async (planId: string, baselineSimulationId: string): Promise<Simulation> => {
+    const { data } = await http.post<Simulation>(
+      `/plans/${planId}/simulate`,
+      { baselineSimulationId, label: `what-if ${planId}` },
+      { headers: { Prefer: 'wait=60' } },
+    );
+    let sim = data;
+    while (sim.status === 'queued' || sim.status === 'running') {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+      sim = (await http.get<Simulation>(`/simulations/${sim.id}`)).data;
+    }
+    if (sim.status !== 'succeeded') throw new Error(sim.error?.detail ?? sim.error?.title ?? `Simulação ${sim.status}`);
+    return sim;
   },
 };

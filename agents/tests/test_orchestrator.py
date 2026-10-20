@@ -136,9 +136,13 @@ class TestPlanCycle:
         reasons = result.reasons_log()
         assert reasons and all(reason.strip() for reason in reasons)
         plan_a = store.posted_plans[0]
-        rationales = {action["rationale"] for action in plan_a["actions"]}
-        assert rationales <= set(reasons), "each action carries the agent's reason, verbatim"
+        # actions the agents proposed carry their own reason verbatim; the command-level shelter advisories carry the life planner's
+        rationales = {action["rationale"] for action in plan_a["actions"] if action["type"] != "shelter_in_place"}
+        assert rationales <= set(reasons), "each agent action carries the agent's reason, verbatim"
+        assert all(action["rationale"].strip() for action in plan_a["actions"])
         for action in plan_a["actions"]:
+            if action["type"] == "shelter_in_place":
+                continue  # a public advisory: it has no physical effect on the fire
             assert len(action["simulationEffects"]) == 1
             assert action["simulationEffects"][0]["type"] in contracts.INTERVENTION_TYPES
 
@@ -161,6 +165,8 @@ class TestPlanCycle:
         orchestrator.run_cycle("sim-penanet")
         for plan in store.posted_plans:
             for action in plan["actions"]:
+                if action["type"] == "shelter_in_place":
+                    continue  # command-level advisory, no firefighter intervention
                 kind = action["simulationEffects"][0]["type"]
                 if kind == "aerial_drop":
                     vehicle_ids = [
