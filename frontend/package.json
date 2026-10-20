@@ -15,6 +15,7 @@
     "generate:api-types": "openapi-typescript ../api-spec/openapi.json -o src/api/schema.ts"
   },
   "dependencies": {
+    "3d-tiles-renderer": "0.3.45",
     "axios": "1.7.9",
     "react": "18.3.1",
     "react-dom": "18.3.1",

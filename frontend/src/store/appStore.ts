@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import type { Capabilities, Location, Plan, Smoke } from '@/api';
 import { extractTimelineEventsFromSnapshot } from '@/domain/simulationForm';
 
+import type { CitySource } from '@/engine/layers/photorealLayer';
 import type {
   BaseLayer,
   Banner,
@@ -60,6 +61,11 @@ export interface AppState {
   probMode: boolean;
   smokeEnabled: boolean;
   windEnabled: boolean;
+  /** The photoreal 3D city (local tiles). Off by default: nothing is loaded until the operator turns it on. */
+  cityEnabled: boolean;
+  /** Where the 3D city comes from, and (live only) the Google key the operator typed: memory only, never persisted. */
+  citySource: CitySource;
+  cityKey: string;
   cloudsEnabled: boolean;
   windDensity: number;
   pickIgnitionSlot: 0 | 1 | null;
@@ -97,6 +103,9 @@ export interface AppState {
   setBaseLayer: (layer: BaseLayer) => void;
   setProbMode: (on: boolean) => void;
   setSmokeEnabled: (on: boolean) => void;
+  setCityEnabled: (on: boolean) => void;
+  setCitySource: (source: CitySource) => void;
+  setCityKey: (key: string) => void;
   setWindEnabled: (on: boolean) => void;
   setCloudsEnabled: (on: boolean) => void;
   setWindDensity: (density: number) => void;
@@ -135,6 +144,9 @@ export const useAppStore = create<AppState>((set) => ({
   probMode: false,
   smokeEnabled: true,
   windEnabled: false,
+  cityEnabled: false,
+  citySource: 'live',
+  cityKey: '',
   cloudsEnabled: true,
   windDensity: 50,
   pickIgnitionSlot: null,
@@ -191,6 +203,9 @@ export const useAppStore = create<AppState>((set) => ({
   setBaseLayer: (baseLayer) => set({ baseLayer }),
   setProbMode: (probMode) => set({ probMode }),
   setSmokeEnabled: (smokeEnabled) => set({ smokeEnabled }),
+  setCityEnabled: (cityEnabled) => set({ cityEnabled }),
+  setCitySource: (citySource) => set({ citySource }),
+  setCityKey: (cityKey) => set({ cityKey }),
   setWindEnabled: (windEnabled) => set({ windEnabled }),
   setCloudsEnabled: (cloudsEnabled) => set({ cloudsEnabled }),
   setWindDensity: (windDensity: number) => set({ windDensity }),

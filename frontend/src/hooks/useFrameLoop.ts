@@ -127,6 +127,7 @@ export function useFrameLoop(): void {
           );
         }
       }
+      world.updateCity();
       world.units.update(tf);
     });
   }, [engine, world]);

@@ -193,7 +193,7 @@ export class SmokeSystem {
       const v0 = (cy + 0.5) / height;
       const x = geo.x(u0) + (dEast + g1 * sigma) / geo.unit;
       const zw = geo.z(v0) - (dNorth + g2 * sigma) / geo.unit;
-      const ground = geo.y(geo.elevAtUV(Math.min(Math.max(x / geo.W + 0.5, 0), 1), Math.min(Math.max(zw / geo.H + 0.5, 0), 1)));
+      const ground = geo.y(geo.elevAtUV(Math.min(Math.max(x / geo.W + 0.5, 0), 1), Math.min(Math.max(zw / geo.H + 0.5, 0), 1)), x, zw);
       this.position[o] = x;
       this.position[o + 1] = ground + zMeters / geo.unit + 1;
       this.position[o + 2] = zw;

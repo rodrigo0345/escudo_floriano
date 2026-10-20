@@ -8,6 +8,7 @@ import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import type { ViewModeName } from '@/engine/viewMode';
 import { useAppStore } from '@/store/appStore';
+import { liveBudget, type CityManifest, type CitySource } from '@/engine/layers/photorealLayer';
 import type { BaseLayer } from '@/store/types';
 
 import styles from './viewport.module.css';
@@ -34,6 +35,7 @@ export function LayersPanel() {
         <BaseLayerSwitch />
       </div>
       <div className={styles.layerPanel}>
+        <CityBox />
         <WaterBox />
         <OverlayBox />
         <PlanBox />
@@ -64,6 +66,114 @@ function BaseLayerSwitch() {
   const baseLayer = useAppStore((s) => s.baseLayer);
   const setBaseLayer = useAppStore((s) => s.setBaseLayer);
   return <SegmentedControl options={BASE_LAYERS} value={baseLayer} onChange={setBaseLayer} />;
+}
+
+/**
+ * The photoreal 3D city. It is offered only when local tiles exist (saved once with `tools/fetch_tiles3d.py`); it is off until the operator turns it on, and without tiles
+ * nothing is shown and nothing is requested. Its provider's credit is shown on the map while it is on.
+ */
+function CityBox() {
+  const world = useWorld();
+  const cityEnabled = useAppStore((s) => s.cityEnabled);
+  const setCityEnabled = useAppStore((s) => s.setCityEnabled);
+  const citySource = useAppStore((s) => s.citySource);
+  const setCitySource = useAppStore((s) => s.setCitySource);
+  const setCityKey = useAppStore((s) => s.setCityKey);
+  const [manifest, setManifest] = useState<CityManifest | null | undefined>(undefined);
+  const [typedKey, setTypedKey] = useState('');
+  const [trim, setTrim] = useState(0);
+  const budget = liveBudget();
+
+  useEffect(() => {
+    if (!world) return;
+    let cancelled = false;
+    setManifest(undefined);
+    void world.city.probe().then((m) => !cancelled && setManifest(m));
+    return () => {
+      cancelled = true;
+    };
+  }, [world]);
+
+  if (!world || manifest === undefined) return null;
+  const live = citySource === 'live' || !manifest;
+  const switchOn = () => {
+    setCitySource(live ? 'live' : 'local');
+    if (live) setCityKey(typedKey.trim());
+    setCityEnabled(true);
+  };
+  return (
+    <section className={styles.layerSection}>
+      <div className={styles.sectionHead}>
+        <b className={styles.sectionTitle}>Cidade 3D</b>
+        <span className={styles.sectionMeta}>{cityEnabled ? (live ? 'ao vivo' : 'tiles locais') : 'desligada'}</span>
+      </div>
+      {manifest ? (
+        <SegmentedControl
+          options={[
+            { value: 'live', label: 'Ao vivo (Google)' },
+            { value: 'local', label: 'Cópia local' },
+          ]}
+          value={live ? 'live' : 'local'}
+          onChange={(v) => {
+            setCityEnabled(false);
+            setCitySource(v as CitySource);
+          }}
+        />
+      ) : null}
+      {cityEnabled ? (
+        <>
+          <label className={styles.overlayRow}>
+            <input type="checkbox" checked onChange={() => setCityEnabled(false)} />
+            <span>Cidade 3D ligada (desligar)</span>
+          </label>
+          <label className={styles.cityRow}>
+            <span className={styles.densityLabel}>Altura {trim > 0 ? '+' : ''}{trim} m</span>
+            <input
+              type="range"
+              className={styles.densitySlider}
+              min={-40}
+              max={40}
+              step={1}
+              value={trim}
+              onChange={(e) => {
+                setTrim(+e.target.value);
+                world.city.setHeightTrim(+e.target.value);
+              }}
+            />
+          </label>
+          <span className={styles.sectionNote}>se os edifícios flutuam ou afundam no terreno, ajuste a altura</span>
+        </>
+      ) : live ? (
+        <>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Chave Google Map Tiles (não é guardada)"
+            value={typedKey}
+            onChange={(e) => setTypedKey(e.target.value)}
+            className={styles.cityKey}
+          />
+          <button className="primary" disabled={!typedKey.trim() || budget.used >= budget.limit} onClick={switchOn}>
+            Ligar cidade 3D
+          </button>
+          <span className={styles.sectionNote}>
+            A chave fica só em memória e desaparece ao desligar ou recarregar. Cada ligação abre uma sessão paga (cerca de 0,006 $); hoje {budget.used}/{budget.limit}.
+            Os tiles carregam por zonas e ficam mais nítidos ao aproximar.
+          </span>
+        </>
+      ) : (
+        <>
+          <button className="primary" onClick={switchOn}>
+            Ligar cidade 3D (cópia local)
+          </button>
+          <span className={styles.sectionNote}>
+            {manifest?.source} · {((manifest?.bytes ?? 0) / 1e9).toFixed(1)} GB · obtido a {manifest ? new Date(manifest.fetchedAt).toLocaleDateString('pt-PT') : ''}. Menos nítida de perto.
+          </span>
+        </>
+      )}
+    </section>
+  );
 }
 
 function OverlayBox() {

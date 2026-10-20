@@ -31,6 +31,9 @@ export async function loadHeightmap(url: string): Promise<Float32Array> {
 
 type BaseLayerName = 'satellite' | 'topo' | 'species';
 
+/** Height (world units, 1 = 10 m) the fire sheet floats above the ground over the 3D city, so it is not buried in the tiles' slightly different ground. */
+const OVERLAY_LIFT = 0.2;
+
 interface OrthoTile {
   x: number;
   y: number;
@@ -52,8 +55,12 @@ interface ShadeField {
  * only swaps which texture each tile material points at — the mesh itself never rebuilds.
  */
 export class TerrainMesh {
-  readonly mesh: THREE.Mesh;
+  /** One child mesh per orthophoto tile: the renderer culls each against the camera, so only the visible part of the terrain is drawn. */
+  readonly mesh: THREE.Group;
   readonly geometry: THREE.BufferGeometry;
+  private readonly chunks: THREE.Mesh[] = [];
+  private readonly chunkGeometries: THREE.BufferGeometry[] = [];
+  private overlay = false;
   readonly attribution: string;
   readonly sourceLabel: string;
   readonly ready: Promise<void>;
@@ -69,6 +76,7 @@ export class TerrainMesh {
     fireData: { value: new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType) },
     fireDim: { value: new THREE.Vector2(1, 1) },
     fireTime: { value: -1 },
+    overlayOnly: { value: 0 },
   };
 
   constructor(
@@ -99,7 +107,7 @@ export class TerrainMesh {
         const k = j * rw + i;
         const u = (i + 0.5) / rw;
         const v = (j + 0.5) / rh;
-        pos.set([geo.x(u), geo.y(geo.elev[k]), geo.z(v)], k * 3);
+        pos.set([geo.x(u), geo.y(geo.elev[k], geo.x(u), geo.z(v)), geo.z(v)], k * 3);
         uv.set([u, 1 - v], k * 2);
       }
     }
@@ -111,17 +119,19 @@ export class TerrainMesh {
         tileGroups[ty * N + tx].push(a, a + rw, a + 1, a + 1, a + rw, a + rw + 1);
       }
     }
+    // the shared vertex data; normals need the whole mesh's triangles once, then each tile keeps only its own index
     const index: number[] = [];
     const geometry = new THREE.BufferGeometry();
-    tileGroups.forEach((list, t) => {
-      geometry.addGroup(index.length, list.length, t);
+    tileGroups.forEach((list) => {
       // a plain loop: `push(...list)` overflows the call stack for the hundreds of thousands of indices a tile holds
       for (let q = 0; q < list.length; q++) index.push(list[q]);
     });
-    geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const position = new THREE.BufferAttribute(pos, 3);
+    geometry.setAttribute('position', position);
     geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geometry.setIndex(index);
     geometry.computeVertexNormals();
+    geometry.setIndex(null);
     this.geometry = geometry;
 
     for (let t = 0; t < N * N; t++) {
@@ -135,7 +145,24 @@ export class TerrainMesh {
       this.tileTex.push(tex);
       this.materials.push(this.makeMaterial(tex));
     }
-    this.mesh = new THREE.Mesh(geometry, this.materials);
+    this.mesh = new THREE.Group();
+    tileGroups.forEach((list, t) => {
+      const chunk = new THREE.BufferGeometry();
+      chunk.setAttribute('position', position);
+      chunk.setAttribute('uv', geometry.getAttribute('uv'));
+      chunk.setAttribute('normal', geometry.getAttribute('normal'));
+      chunk.setIndex(new THREE.Uint32BufferAttribute(Uint32Array.from(list), 1));
+      // the shared position buffer would give every chunk the bounding sphere of the whole terrain: measure only the vertices this chunk uses
+      const box = new THREE.Box3();
+      const corner = new THREE.Vector3();
+      for (let q = 0; q < list.length; q++) box.expandByPoint(corner.fromBufferAttribute(position, list[q]));
+      chunk.boundingBox = box;
+      chunk.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+      const mesh = new THREE.Mesh(chunk, this.materials[t]);
+      this.chunkGeometries.push(chunk);
+      this.chunks.push(mesh);
+      this.mesh.add(mesh);
+    });
 
     const sources = ortho.length
       ? ortho.map((t) => ({ idx: t.y * N + t.x, url: t.url }))
@@ -159,6 +186,7 @@ export class TerrainMesh {
     const material = new THREE.MeshStandardMaterial({ map, roughness: 0.95, metalness: 0 });
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
+      shader.fragmentShader = `uniform float overlayOnly;\n${shader.fragmentShader}`;
       shader.vertexShader = `varying vec2 vGUv;\n${shader.vertexShader.replace(
         '#include <uv_vertex>',
         '#include <uv_vertex>\n vGUv = uv;',
@@ -168,7 +196,8 @@ export class TerrainMesh {
           '#include <map_fragment>',
           `#include <map_fragment>
           vec4 fireC = fireColor(vec2(vGUv.x, 1.0 - vGUv.y));
-          diffuseColor.rgb = mix(diffuseColor.rgb, fireC.rgb, fireC.a);`,
+          diffuseColor.rgb = mix(diffuseColor.rgb, fireC.rgb, fireC.a);
+          diffuseColor.a = mix(1.0, fireC.a, overlayOnly);`,
         )
         .replace(
           '#include <emissivemap_fragment>',
@@ -347,9 +376,41 @@ export class TerrainMesh {
   /** Instant (minutes, may be fractional) to show the fire at; negative = no fire. */
   setFireTime(minutes: number): void {
     this.uniforms.fireTime.value = minutes;
+    this.updateChunkVisibility();
   }
 
   clearFire(): void {
     this.uniforms.fireTime.value = -1;
+    this.updateChunkVisibility();
+  }
+
+  // ------------------------------------------------------------ over the 3D city
+  /**
+   * With the photoreal city on, the terrain no longer shows imagery: it becomes a see-through sheet, a little above the ground, that draws only the fire (and its glow)
+   * on top of the city. It is depth-tested, so buildings still hide the flames behind them, and it is not drawn at all while there is no fire.
+   */
+  setOverlay(on: boolean): void {
+    this.overlay = on;
+    this.uniforms.overlayOnly.value = on ? 1 : 0;
+    this.mesh.position.y = on ? OVERLAY_LIFT : 0;
+    for (const material of this.materials) {
+      material.transparent = on;
+      material.depthWrite = !on;
+      material.polygonOffset = on;
+      material.polygonOffsetFactor = on ? -2 : 0;
+      material.polygonOffsetUnits = on ? -2 : 0;
+      material.needsUpdate = true;
+    }
+    this.updateChunkVisibility();
+  }
+
+  private updateChunkVisibility(): void {
+    const visible = !this.overlay || this.uniforms.fireTime.value >= 0;
+    if (this.mesh.visible !== visible) this.mesh.visible = visible;
+  }
+
+  dispose(): void {
+    this.geometry.dispose();
+    this.chunkGeometries.forEach((g) => g.dispose());
   }
 }
