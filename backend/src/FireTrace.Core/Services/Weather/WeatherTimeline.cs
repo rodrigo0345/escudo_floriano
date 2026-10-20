@@ -2,6 +2,7 @@ using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Common;
 using FireTrace.Core.Domain.Weather;
 using FireTrace.Engine.Weather;
+using FireTrace.ExternalData.Map;
 
 namespace FireTrace.Core.Services.Weather;
 
@@ -14,10 +15,10 @@ public static class WeatherTimeline
     sealed class Cell(int minute)
     {
         public int Minute = minute;
-        public double Wind, Dir, Humidity, Temp, Gust, Precip;
+        public double Wind, Dir, Humidity, Temp, Gust, Precip, Cloud;
     }
 
-    public static WeatherTrack Build(WeatherSpec spec, IReadOnlyList<WeatherSample> hourly, DateTimeOffset start, int durationMinutes, WeatherTimelineSettings t, int spinUpHours)
+    public static WeatherTrack Build(WeatherSpec spec, IReadOnlyList<WeatherSample> hourly, DateTimeOffset start, int durationMinutes, WeatherTimelineSettings t, int spinUpHours, LatLon point)
     {
         int from = -spinUpHours * 60, to = durationMinutes + t.MarginMinutes;
         var cells = Enumerable.Range(0, (to - from) / t.StepMinutes + 1).Select(i => new Cell(from + i * t.StepMinutes)).ToArray();
@@ -25,11 +26,11 @@ public static class WeatherTimeline
         if (spec.Base == WeatherBase.Provider)
         {
             if (hourly.Count == 0) throw new InvalidOperationException("Sem dados meteorológicos para o intervalo pedido.");
-            var real = new WeatherTrack(hourly.Select(s => new WeatherPoint((s.Time - start).TotalMinutes, s.WindKmh ?? 0, s.WindFromDeg ?? 0, s.HumidityPct ?? t.ProviderFallback.HumidityPct, s.TempC ?? t.ProviderFallback.TempC)));
+            var real = new WeatherTrack(hourly.Select(s => new WeatherPoint((s.Time - start).TotalMinutes, s.WindKmh ?? 0, s.WindFromDeg ?? 0, s.HumidityPct ?? t.ProviderFallback.HumidityPct, s.TempC ?? t.ProviderFallback.TempC, s.GustKmh ?? 0, s.PrecipitationMmH ?? 0, s.CloudCoverPct ?? 0)));
             foreach (var c in cells)
             {
                 var p = real.At(c.Minute);
-                (c.Wind, c.Dir, c.Humidity, c.Temp) = (p.WindKmh, p.WindFromDeg, p.HumidityPct, p.TempC);
+                (c.Wind, c.Dir, c.Humidity, c.Temp, c.Gust, c.Precip, c.Cloud) = (p.WindKmh, p.WindFromDeg, p.HumidityPct, p.TempC, p.GustKmh, p.PrecipitationMmH, p.CloudCoverPct);
             }
         }
         else foreach (var c in cells) (c.Wind, c.Dir, c.Humidity, c.Temp) = (t.NoneBase.WindKmh, t.NoneBase.WindFromDeg, t.NoneBase.HumidityPct, t.NoneBase.TempC);
@@ -38,8 +39,13 @@ public static class WeatherTimeline
         ApplyKeyframes(cells, spec.Keyframes ?? new(), start, interpolation, spec.Base == WeatherBase.None);
         foreach (var e in spec.Events ?? new()) if (e.Enabled) ApplyEvent(cells, e, start, interpolation, t);
 
-        return new WeatherTrack(cells.Select(c => new WeatherPoint(c.Minute, Math.Max(0, c.Wind), Angles.Normalize(c.Dir), Math.Clamp(c.Humidity, t.MinHumidityPct, t.MaxHumidityPct), c.Temp,
-            Math.Max(c.Gust, 0), Math.Max(c.Precip, 0))));
+        // a radiação vem da posição do sol (sítio e hora) e da nebulosidade final, depois dos pontos-chave e dos eventos: assim uma frente com chuva também escurece o dia
+        return new WeatherTrack(cells.Select(c =>
+        {
+            double cloud = Math.Clamp(c.Cloud, 0, 100);
+            return new WeatherPoint(c.Minute, Math.Max(0, c.Wind), Angles.Normalize(c.Dir), Math.Clamp(c.Humidity, t.MinHumidityPct, t.MaxHumidityPct), c.Temp,
+                Math.Max(c.Gust, 0), Math.Max(c.Precip, 0), cloud, SolarRadiation.Wm2(point.Lat, point.Lon, start.AddMinutes(c.Minute), cloud));
+        }));
     }
 
     // ------------------------------------------------------------------------------------------------ pontos-chave
@@ -47,14 +53,16 @@ public static class WeatherTimeline
 
     static void ApplyKeyframes(Cell[] cells, List<WeatherKeyframe> keyframes, DateTimeOffset start, Interpolation interp, bool baseIsNone)
     {
-        void Apply(Func<WeatherKeyframe, double?> pick, Action<Cell, double> set, bool angle = false)
+        // `before`: o valor sem série real antes do primeiro ponto-chave; sem ele vale o primeiro valor (vento, temperatura, humidade). A chuva, as rajadas e as nuvens começam do zero:
+        // quem põe chuva só aos 90 min não quer chuva desde o início.
+        void Apply(Func<WeatherKeyframe, double?> pick, Action<Cell, double> set, bool angle = false, double? before = null)
         {
             var anchors = keyframes.Select(k => (K: k, V: pick(k))).Where(t => t.V is not null)
                 .Select(t => new Anchor(t.K.At.MinutesFrom(start), t.V!.Value, t.K.Transition ?? interp.Default)).OrderBy(a => a.Minute).ToArray();
             if (anchors.Length == 0) return;
             foreach (var c in cells)
             {
-                if (c.Minute < anchors[0].Minute) { if (baseIsNone) set(c, anchors[0].Value); continue; } // antes do primeiro ponto: série real (ou o primeiro valor)
+                if (c.Minute < anchors[0].Minute) { if (baseIsNone) set(c, before ?? anchors[0].Value); continue; } // antes do primeiro ponto: série real (ou `before`, ou o primeiro valor)
                 int i = Array.FindLastIndex(anchors, a => a.Minute <= c.Minute);
                 if (i == anchors.Length - 1) { set(c, anchors[i].Value); continue; }
                 var (a, b) = (anchors[i], anchors[i + 1]);
@@ -66,8 +74,9 @@ public static class WeatherTimeline
         Apply(k => k.WindFromDeg, (c, v) => c.Dir = v, angle: true);
         Apply(k => k.TempC, (c, v) => c.Temp = v);
         Apply(k => k.HumidityPct, (c, v) => c.Humidity = v);
-        Apply(k => k.GustKmh, (c, v) => c.Gust = v);
-        Apply(k => k.PrecipitationMmH, (c, v) => c.Precip = v);
+        Apply(k => k.GustKmh, (c, v) => c.Gust = v, before: 0);
+        Apply(k => k.PrecipitationMmH, (c, v) => c.Precip = v, before: 0);
+        Apply(k => k.CloudCoverPct, (c, v) => c.Cloud = v, before: 0);
     }
 
     static double Ease(double f, string transition) => transition switch
@@ -128,6 +137,7 @@ public static class WeatherTimeline
                     c.Temp += (s.TempDeltaC ?? 0) * w;
                     c.Humidity += (s.HumidityDeltaPct ?? 0) * w;
                     if (c.Minute <= t0 + dur) c.Precip += s.PrecipitationMmH ?? 0;
+                    if (s.PrecipitationMmH > 0) c.Cloud = Math.Max(c.Cloud, t.RainOvercastCloudPct * w); // uma frente com chuva traz o céu encoberto, e a massa de ar nova fica
                 }
                 break;
             }
@@ -152,13 +162,14 @@ public static class WeatherTimeline
                     if (w <= 0) continue;
                     c.Precip += s.IntensityMmH * w;
                     c.Humidity += (t.RainSaturationHumidityPct - c.Humidity) * w; // a chuva satura o ar: o combustível fino humedece
+                    c.Cloud += Math.Max(0, t.RainOvercastCloudPct - c.Cloud) * w; // e cobre o céu
                 }
                 break;
             case CustomSeriesEvent s:
                 ApplyKeyframes(cells, s.Samples.Select(x => new WeatherKeyframe
                 {
                     At = new TimeSpec(Time: x.Time), WindKmh = x.WindKmh, WindFromDeg = x.WindFromDeg, TempC = x.TempC, HumidityPct = x.HumidityPct,
-                    GustKmh = x.GustKmh, PrecipitationMmH = x.PrecipitationMmH,
+                    GustKmh = x.GustKmh, PrecipitationMmH = x.PrecipitationMmH, CloudCoverPct = x.CloudCoverPct,
                 }).ToList(), start, interp, baseIsNone: false);
                 break;
         }
