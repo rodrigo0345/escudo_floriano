@@ -1,6 +1,6 @@
 import type {
   Facility,
-  LatLon,
+  Ignition,
   Location,
   Place,
   RoadCollection,
@@ -67,4 +67,4 @@ export interface Banner {
   kind: BannerKind;
 }
 
-export type Ignition = LatLon;
+export type IgnitionPoint = Ignition;

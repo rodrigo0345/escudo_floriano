@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { KeyboardShortcuts } from '@/components/layout/KeyboardShortcuts';
 import { PlaybackBar } from '@/components/layout/PlaybackBar';
 import { TopBar } from '@/components/layout/TopBar';
 import styles from '@/components/layout/layout.module.css';
@@ -57,6 +58,7 @@ export function App() {
         <PlaybackBar />
       </div>
       <Controllers />
+      <KeyboardShortcuts />
     </EngineProvider>
   );
 }

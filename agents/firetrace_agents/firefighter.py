@@ -210,6 +210,11 @@ class ActionProposal:
     extra_action_fields: dict[str, Any] = field(default_factory=dict)
     """Action-schema fields specific to the type (``tactic`` for fire_attack,
     ``area``/``mode`` for evacuation, ``targets`` for structure_protection)."""
+    target: dict[str, Any] | None = None
+    """Where the unit has to get to (``LatLon``) when the intervention has no geometry to take it from (a place's position)."""
+    eta_minutes: float | None = None
+    """Set by the orchestrator from ``POST /routing/route``: minutes until the unit is on the spot (``None`` = not computed)."""
+    from_station: str | None = None
 
     def __post_init__(self) -> None:
         if self.action_type not in {"fire_attack", "evacuation", "structure_protection"}:
@@ -256,6 +261,11 @@ class Observation:
     water_capacity_l: float
     passenger_capacity: int
     capabilities: frozenset[str]
+    station_id: str | None = None
+    """Where the unit is based: the origin of its route (``fromStationId``)."""
+    vehicle_type: str | None = None
+    off_road: bool = False
+    """A vehicle that can leave the road for the last stretch; everyone else walks it."""
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +299,9 @@ class FirefighterAgent:
                 water_capacity_l=float(vehicle.get("waterCapacityL") or 0.0),
                 passenger_capacity=int(vehicle.get("passengerCapacity") or 0),
                 capabilities=frozenset(vehicle.get("capabilities") or []),
+                station_id=vehicle.get("stationId"),
+                vehicle_type=vehicle.get("type"),
+                off_road=bool(vehicle.get("offRoad")),
             )
         )
 
@@ -310,6 +323,7 @@ class FirefighterAgent:
                 water_capacity_l=0.0,
                 passenger_capacity=0,
                 capabilities=frozenset(pool.get("certifications") or []),
+                station_id=pool.get("stationId"),
             )
         )
 
@@ -544,6 +558,7 @@ class FirefighterAgent:
                 "targets": [{"placeId": asset["id"], "label": str(asset.get("name") or asset["id"])} for asset in in_danger],
                 "tactic": "wetting",
             },
+            target=in_danger[0].get("position"),  # the intervention names a place, not a point
         )
         for follow in suppression:
             follow.title += " (só após a defesa dos edifícios)"

@@ -1,10 +1,22 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 
 import { weatherApi, type WeatherSample } from '@/api';
+import { WindRosePicker } from '@/components/common/WindRosePicker';
 import { ProgressBar } from '@/components/common/StatCard';
 import { compass } from '@/domain/georef';
-import { buildPreviewRequest, buildSimulationRequest, defaultFormValues, type SimulationFormValues } from '@/domain/simulationForm';
+import {
+  bearingDelta,
+  buildPreviewRequest,
+  buildSimulationRequest,
+  defaultFormValues,
+  presetAvailable,
+  resizePresetEvents,
+  type PresetId,
+  type SimulationFormValues,
+} from '@/domain/simulationForm';
+import { useProviderBase } from '@/hooks/useProviderBase';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
+import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './panels.module.css';
@@ -16,50 +28,141 @@ const MEMBER_OPTIONS = [
   { value: 12, label: '12 · normal' },
 ];
 
-/** "Simulate with other weather": edit wind/humidity/temperature (and a mid-fire wind shift), preview the series, run. */
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/** "Simulate with other weather": absolute wind/humidity/temperature, provider base, presets and two ignitions. */
 export function SimulationForm() {
   const run = useAppStore((s) => s.run);
   const locationId = useAppStore((s) => s.locationId);
-  const ignition = useAppStore((s) => s.ignition);
-  const pickIgnition = useAppStore((s) => s.pickIgnition);
+  const data = useAppStore((s) => s.data);
+  const ignitions = useAppStore((s) => s.ignitions);
+  const pickIgnitionSlot = useAppStore((s) => s.pickIgnitionSlot);
   const job = useAppStore((s) => s.job);
   const progress = useAppStore((s) => s.progress);
   const limits = useAppStore((s) => s.capabilities?.limits);
-  const { setPickIgnition, setHint, setScenario } = useAppStore.getState();
+  const addIgnition = useAppStore((s) => s.addIgnition);
+  const updateIgnition = useAppStore((s) => s.updateIgnition);
+  const removeIgnition = useAppStore((s) => s.removeIgnition);
+  const setIgnitions = useAppStore((s) => s.setIgnitions);
+  const setPickIgnitionSlot = useAppStore((s) => s.setPickIgnitionSlot);
+  const setHint = useAppStore((s) => s.setHint);
+  const setScenario = useAppStore((s) => s.setScenario);
+  const world = useWorld();
   const { runSimulation, cancelJob } = useSimulationActions();
 
-  const [values, setValues] = useState<SimulationFormValues>(() => defaultFormValues());
+  const [values, setValues] = useState<SimulationFormValues>(() => defaultFormValues(run));
+  const [weatherTouched, setWeatherTouched] = useState(false);
   const [preview, setPreview] = useState<WeatherSample[] | null>(null);
+  const baseState = useProviderBase(run, locationId, values.start, values.duration);
+  const base = baseState.base;
+  const baseKey = locationId ? `${locationId}|${values.start}|${values.duration}` : null;
+
   const set = <K extends keyof SimulationFormValues>(key: K, value: SimulationFormValues[K]) => setValues((v) => ({ ...v, [key]: value }));
   const num = (key: keyof SimulationFormValues) => (e: ChangeEvent<HTMLInputElement>) =>
     set(key, (e.target.value === '' ? 0 : +e.target.value) as never);
+  const setWeather = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC', value: number) => {
+    setWeatherTouched(true);
+    setPreview(null);
+    setValues((v) => ({ ...v, [key]: value }));
+  };
+  const weatherNum = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC') => (e: ChangeEvent<HTMLInputElement>) =>
+    setWeather(key, e.target.value === '' ? 0 : +e.target.value);
+  const baseForWindow = (start: string, duration: number) =>
+    base && locationId && baseState.key === `${locationId}|${start}|${duration}` ? base : null;
 
   // when a scenario's run loads, reset the form to that scenario's values
-  const scenarioSnapshot = run?.simulation.scenarioSnapshot;
   useEffect(() => {
-    if (!run || !scenarioSnapshot) return;
-    setValues(defaultFormValues({ start: scenarioSnapshot.start, durationMinutes: run.durationMinutes, weather: run.weather }));
+    if (!run) return;
+    const defaults = defaultFormValues(run);
+    setValues(defaultFormValues(run, baseForWindow(defaults.start, defaults.duration)));
+    setWeatherTouched(false);
     setPreview(null);
   }, [run?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // provider base arrives asynchronously: seed the absolute controls unless the operator already edited them
+  useEffect(() => {
+    if (!base || weatherTouched || values.mode !== 'provider' || baseState.key !== baseKey) return;
+    setPreview(null);
+    setValues((v) => ({
+      ...v,
+      windKmh: round1(base.windKmh),
+      windFromDeg: Math.round(base.dirDeg),
+      humPct: round1(base.humPct),
+      tempC: round1(base.tempC),
+    }));
+  }, [base, baseKey, baseState.key, values.mode, weatherTouched]);
+
+  // keep preset windows and ignition delays inside the run duration
+  useEffect(() => {
+    setValues((v) => ({ ...v, presetEvents: resizePresetEvents(v.presetEvents, v.duration) }));
+    const clamped = ignitions.map((ig, i) => (i > 0 ? { ...ig, timeOffsetMinutes: Math.min(ig.timeOffsetMinutes ?? 0, values.duration) } : ig));
+    if (clamped.some((ig, i) => ig.timeOffsetMinutes !== ignitions[i].timeOffsetMinutes)) setIgnitions(clamped);
+  }, [values.duration]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // adding/removing/moving an ignition in this panel updates the map markers immediately
+  useEffect(() => {
+    if (world) world.fire.setIgnitions(ignitions);
+  }, [world, ignitions]);
 
   const busyByUser = !!job && !job.auto;
   const maxMembers = limits?.maxEnsembleMembers;
   const memberOptions = MEMBER_OPTIONS.filter((o) => !maxMembers || o.value <= maxMembers);
   const maxDuration = limits?.maxDurationMinutes ?? 720;
+  const maxIgnitions = Math.min(2, limits?.maxIgnitions ?? 2);
+  const windFactor = base && base.windKmh > 0.1 ? values.windKmh / base.windKmh : null;
+  const dirShift = base ? bearingDelta(values.windFromDeg, base.dirDeg) : 0;
+  const humShift = base ? values.humPct - base.humPct : 0;
+  const tempShift = base ? values.tempC - base.tempC : 0;
+  const baseReady = values.mode !== 'provider' || (!!base && baseState.key === baseKey);
+  const requireBase = () => {
+    if (baseReady) return true;
+    setHint('A obter a meteorologia do provedor…');
+    return false;
+  };
 
   const onPreview = async () => {
-    if (!locationId) return;
+    if (!locationId || !requireBase()) return;
     try {
-      setPreview((await weatherApi.resolve(buildPreviewRequest(values, locationId))).samples ?? []);
+      setPreview((await weatherApi.resolve(buildPreviewRequest(values, locationId, base))).samples ?? []);
     } catch (e) {
       setHint(`Meteorologia: ${(e as Error).message}`);
     }
   };
 
   const onRun = () => {
-    if (!locationId || !ignition) return;
-    setScenario('custom');
-    void runSimulation(buildSimulationRequest(values, locationId, ignition));
+    if (!locationId || !ignitions.length || !requireBase()) return;
+    try {
+      const request = buildSimulationRequest(values, locationId, ignitions, base);
+      setScenario('custom');
+      void runSimulation(request);
+    } catch (e) {
+      setHint(`Simulação: ${(e as Error).message}`);
+    }
+  };
+
+  const addSecondIgnition = () => {
+    if (ignitions.length >= maxIgnitions) return;
+    const center = data?.location.weatherPoint ?? data?.location.center;
+    const first = ignitions[0]?.position;
+    const origin = first ?? center;
+    if (!origin) return;
+    addIgnition({
+      position: { lat: origin.lat + 0.0025, lon: origin.lon + 0.0025 },
+      label: 'Foco 2',
+      timeOffsetMinutes: Math.min(45, Math.max(0, values.duration)),
+    });
+  };
+
+  const togglePreset = (id: PresetId) => {
+    if (id === 'second_ignition') {
+      addSecondIgnition();
+      return;
+    }
+    setPreview(null);
+    setValues((v) => ({
+      ...v,
+      presetEvents: v.presetEvents.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
+    }));
   };
 
   return (
@@ -84,67 +187,98 @@ export function SimulationForm() {
           </select>
         </label>
 
-        {values.mode === 'provider' ? (
-          <div className={styles.group}>
-            <label>
-              Vento: <b>{values.windScale}%</b>
-              <input type="range" min={25} max={300} step={5} value={values.windScale} onChange={num('windScale')} />
-            </label>
-            <label>
-              Rodar o vento: <b>{`${values.dirShift > 0 ? '+' : ''}${values.dirShift}°`}</b>
-              <input type="range" min={-180} max={180} step={5} value={values.dirShift} onChange={num('dirShift')} />
-            </label>
-            <div className={styles.two}>
-              <label>
-                Humidade (± pontos %)
-                <input type="number" step={1} value={values.humShift} onChange={num('humShift')} />
-              </label>
-              <label>
-                Temperatura (± °C)
-                <input type="number" step={1} value={values.tempShift} onChange={num('tempShift')} />
-              </label>
-            </div>
+        <div className={styles.group}>
+          <div className={styles.baseLine}>
+            <span>Base {baseState.fallback ? 'aproximada' : 'do provedor'}:</span>
+            {base ? (
+              <b>
+                {Math.round(base.windKmh)} km/h de {compass(base.dirDeg)} · {Math.round(base.humPct)}% · {Math.round(base.tempC)} °C
+              </b>
+            ) : (
+              <b>{baseState.loading ? 'a obter…' : 'sem dados'}</b>
+            )}
           </div>
-        ) : (
-          <div className={styles.group}>
-            <div className={styles.two}>
-              <label>
-                Vento (km/h)
-                <input type="number" min={0} max={150} value={values.wind} onChange={num('wind')} />
-              </label>
-              <label>
-                Vento de (°) <b>{compass(values.dir)}</b>
-                <input type="number" min={0} max={360} value={values.dir} onChange={num('dir')} />
-              </label>
-            </div>
-            <div className={styles.two}>
-              <label>
-                Humidade (%)
-                <input type="number" min={1} max={100} value={values.hum} onChange={num('hum')} />
-              </label>
-              <label>
-                Temperatura (°C)
-                <input type="number" value={values.temp} onChange={num('temp')} />
-              </label>
-            </div>
-          </div>
-        )}
+          {base && base.windKmh <= 0.1 ? (
+            <small className={styles.warn}>Vento base nulo: usa-se vento absoluto; os presets de vento ficam indisponíveis.</small>
+          ) : null}
+          {baseState.loading ? <small className="mut">A obter a meteorologia do provedor…</small> : null}
+          {baseState.error ? (
+            <small className={styles.warn}>
+              Provedor indisponível; a usar a série efetiva do cenário como aproximação. {baseState.error}
+            </small>
+          ) : null}
 
-        <label className={styles.check}>
-          <input type="checkbox" checked={values.shiftOn} onChange={(e) => set('shiftOn', e.target.checked)} /> Mudança de vento durante o incêndio
-        </label>
-        {values.shiftOn ? (
-          <div className={`${styles.two} ${styles.group}`}>
+          <div className={styles.two}>
             <label>
-              Aos (min desde o início)
-              <input type="number" min={0} value={values.shiftAt} onChange={num('shiftAt')} />
+              Vento (km/h)
+              <input type="number" min={0} max={150} step={1} value={values.windKmh} onChange={weatherNum('windKmh')} />
             </label>
             <label>
-              Passa a soprar de (°) <b>{compass(values.shiftTo)}</b>
-              <input type="number" min={0} max={360} value={values.shiftTo} onChange={num('shiftTo')} />
+              Humidade (%)
+              <input type="number" min={1} max={100} step={1} value={values.humPct} onChange={weatherNum('humPct')} />
             </label>
           </div>
-        ) : null}
+
+          <div className={styles.roseRow}>
+            <WindRosePicker value={values.windFromDeg} onChange={(deg) => setWeather('windFromDeg', Math.round(deg))} />
+            <div className={styles.roseMeta}>
+              <label>
+                Vento de (°) <b>{compass(values.windFromDeg)}</b>
+                <input
+                  type="number"
+                  min={0}
+                  max={360}
+                  step={5}
+                  value={Math.round(values.windFromDeg)}
+                  onChange={weatherNum('windFromDeg')}
+                />
+              </label>
+              <small className="mut">O ar sopra para {compass(values.windFromDeg + 180)}.</small>
+            </div>
+          </div>
+
+          <label>
+            Temperatura (°C)
+            <input type="number" step={1} value={values.tempC} onChange={weatherNum('tempC')} />
+          </label>
+
+          {values.mode === 'provider' ? (
+            <small className="mut">
+              Ajuste face à base: {windFactor != null ? `${Math.round(windFactor * 100)}% de vento` : 'vento base nulo'} ·{' '}
+              {dirShift > 0 ? '+' : ''}
+              {Math.round(dirShift)}° · {humShift > 0 ? '+' : ''}
+              {round1(humShift)} p.p. · {tempShift > 0 ? '+' : ''}
+              {round1(tempShift)} °C
+            </small>
+          ) : null}
+        </div>
+
+        <div className={styles.presets}>
+          {values.presetEvents.map((preset) => {
+            const available = presetAvailable(preset.id, values.duration, values.mode === 'provider' ? base?.windKmh : undefined);
+            const active = preset.id === 'second_ignition' ? ignitions.length > 1 : preset.enabled && available;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={active ? styles.presetOn : styles.preset}
+                disabled={!available || (preset.id === 'second_ignition' && ignitions.length >= maxIgnitions)}
+                onClick={() => togglePreset(preset.id)}
+                title={
+                  preset.id === 'second_ignition'
+                    ? 'Adicionar um segundo foco 45 min depois do início'
+                    : !available
+                      ? values.mode === 'provider' && base != null && base.windKmh <= 0.1
+                        ? 'Sem vento base: os presets de vento não se aplicam'
+                        : 'Duração insuficiente para este preset'
+                      : undefined
+                }
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
 
         <label>
           Ensemble (simulações com a meteorologia perturbada)
@@ -157,14 +291,54 @@ export function SimulationForm() {
           </select>
         </label>
 
-        <button onClick={() => { const next = !pickIgnition; setPickIgnition(next); setHint(next ? 'Clique no terreno para definir a ignição' : ''); }}>
-          {pickIgnition ? 'Clique no terreno…' : 'Escolher ignição no mapa'}
-        </button>
-        <small className="mut">Ignição: {ignition ? `${ignition.lat.toFixed(4)}, ${ignition.lon.toFixed(4)}` : '—'}</small>
+        <div className={styles.ignitions}>
+          {ignitions.map((ig, i) => (
+            <div key={i} className={styles.ignitionRow}>
+              <div>
+                <b>{ig.label ?? `Foco ${i + 1}`}</b>
+                <small className="mut">
+                  {ig.position.lat.toFixed(4)}, {ig.position.lon.toFixed(4)}
+                  {ig.timeOffsetMinutes ? ` · T+${ig.timeOffsetMinutes} min` : ''}
+                </small>
+              </div>
+              {i > 0 ? (
+                <label className={styles.delay} title="Minutos desde o início">
+                  <span>Atraso</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={values.duration}
+                    step={5}
+                    value={ig.timeOffsetMinutes ?? 0}
+                    onChange={(e) => updateIgnition(i, { timeOffsetMinutes: Math.max(0, Math.min(values.duration, +e.target.value || 0)) })}
+                  />
+                </label>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = pickIgnitionSlot === i ? null : (i as 0 | 1);
+                  setPickIgnitionSlot(next);
+                  setHint(next != null ? `Clique no terreno para mover o foco ${i + 1}` : '');
+                }}
+              >
+                {pickIgnitionSlot === i ? 'Clique no terreno…' : 'Mover'}
+              </button>
+              {i > 0 ? (
+                <button type="button" onClick={() => removeIgnition(i)} title="Remover segundo foco">
+                  ×
+                </button>
+              ) : null}
+            </div>
+          ))}
+          <button type="button" onClick={addSecondIgnition} disabled={ignitions.length >= maxIgnitions || !(data?.location.weatherPoint ?? data?.location.center)}>
+            Adicionar 2.º foco
+          </button>
+        </div>
 
         <div className={styles.two}>
           <button onClick={onPreview}>Pré-visualizar</button>
-          <button className="primary" onClick={onRun} disabled={busyByUser || !ignition}>
+          <button className="primary" onClick={onRun} disabled={busyByUser || !ignitions.length}>
             Simular
           </button>
         </div>
@@ -178,7 +352,9 @@ export function SimulationForm() {
         {job ? <button onClick={() => void cancelJob()}>Cancelar simulação</button> : null}
         <button
           onClick={() => {
-            if (run && scenarioSnapshot) setValues(defaultFormValues({ start: scenarioSnapshot.start, durationMinutes: run.durationMinutes, weather: run.weather }));
+            const defaults = defaultFormValues(run);
+            setValues(defaultFormValues(run, baseForWindow(defaults.start, defaults.duration)));
+            setWeatherTouched(false);
             setPreview(null);
           }}
         >

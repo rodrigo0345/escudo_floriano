@@ -36,6 +36,21 @@ python -m firetrace_agents --simulation-id <id> --at-minute 60               # o
 Results are printed, never written to files. Everything created in the backend is titled `[lab]`; nothing is deleted.
 Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` (tab **Planos** lists the plans of a baseline and draws them).
 
+## As a service (docker compose)
+
+The `agents` service in `docker-compose.yaml` runs `firetrace_agents/watcher.py`: every 10 s it asks `GET /simulations?kind=baseline&status=succeeded&updatedAfter=…`,
+and for each baseline with no plans (`GET /plans?simulationId=`) it publishes plans A and B and asks for both what-if runs (`POST /plans/{id}/simulate`).
+A baseline started from the UI has its plans in tab **Planos** about 45 s later (Falperra, measured), with no terminal involved.
+
+```powershell
+docker compose up -d --build agents      # needs the backend; never `down -v`
+docker compose logs -f agents
+```
+
+Settings are the `AGENTS_*` variables listed at the top of `watcher.py` (poll interval, minute the plans decide on, house zones on/off...). Baselines whose label
+starts with `[lab]` (the experiments of the scripts) are left alone, and a restart never plans twice. The image is built from `agents/` (the root `.dockerignore`
+leaves it out) and reads the contract from the mounted `api-spec/`.
+
 ## How a plan is made
 
 1. `GET /simulations/{id}/threatened`, `/summary`, `/vectors` and `GET /rules` give the situation (never a guessed position).
@@ -55,8 +70,14 @@ Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` 
 * **Continuing from an outline is not exact**: a chained run ends ~9% larger than the uninterrupted one. Compare with the chained control, not the original run.
 * **The backend never applies an evacuation** to `populationExposed` (checked in code and by experiment), so lives are the agents' own model with
   explicit assumptions (`life.py`). Only 2 of the 6 built-in scenarios put people in the fire's way.
-* **Planning sees the forecast's own fire** (perfect foresight unless `--forecast-wind-shift` is used), starts the response with the whole fleet on site, and
-  has no water, fatigue or travel time yet. Treat reductions as upper bounds.
+* **Planning sees the forecast's own fire** (perfect foresight unless `--forecast-wind-shift` is used) and has no water or fatigue yet.
+* **Travel time (`travel.py`)**: each unit's arrival comes from `POST /routing/route` (station → target, avoiding closures and the predicted fire; helicopters fly
+  straight), the effect starts then (the backend uses each effect's own `start`, not the action's `etaMinutes`), and a unit with no route is not assigned.
+  With it the Penha campaign gains **−0%** area against the chained control (without it, −15%, and −70% buildings with house zones): those gains came from units that
+  were on site at minute 0. The campaign sends every unit from its station again each stage (it does not remember who is already deployed), which undervalues it.
+  The last stretch off the network uses the backend's own limits (`Routing.WalkKmh` 3 km/h, `Routing.MaxSnapM` 500 m: constants in `travel.py`, since the contract does not expose them).
+  The backend now checks plans the same way (`target_unreachable`, `route_off_network`) and stores its own route and `etaMinutes` for every ground vehicle of an action whose
+  target it can read, so fire-attack actions carry `line` / `anchorPoint`. `--no-travel` restores the old assumption, but those plans are then rejected by the backend when a unit cannot get there.
 * `fuel_removal` (the only tool that truly blocks the fire) is disabled: the spec and the backend disagree on its shape.
 
 ## Open proposals for the spec / backend (not applied: they belong to those verticals)

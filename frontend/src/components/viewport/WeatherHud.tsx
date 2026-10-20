@@ -17,6 +17,7 @@ export function WeatherHud() {
   const engine = useEngine();
   const run = useAppStore((s) => s.run);
   const t = useAppStore((s) => s.t);
+  const scenarioId = useAppStore((s) => s.scenarioId);
   const arrow = useRef<SVGGElement>(null);
   const windToDeg = useRef(0);
 
@@ -53,7 +54,7 @@ export function WeatherHud() {
         <small>{weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}</small>
       </div>
       <div className={styles.hudRows}>
-        <span>Temperatura</span>
+        <span title="Temperatura do ar do modelo meteorológico; não é a temperatura do fogo">Temp. do ar</span>
         <b>{Math.round(weather.tempC)} °C</b>
         <span>Humidade do ar</span>
         <b>{Math.round(weather.humidityPct)} %</b>
@@ -63,6 +64,7 @@ export function WeatherHud() {
         <span title="Humidade do combustível morto fino em equilíbrio com o ar: quanto mais baixa, mais depressa arde">Comb. fino</span>
         <b>{weather.fineFuelMoisturePct != null ? `${weather.fineFuelMoisturePct.toFixed(1)} %` : '—'}</b>
       </div>
+      <small className={styles.hudSource}>{scenarioId === 'custom' ? 'temperatura do ar definida no cenário' : 'temperatura do ar · ERA5 / Open-Meteo'}</small>
     </div>
   );
 }

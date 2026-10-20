@@ -28,6 +28,7 @@ The orchestrator can also request a what-if run of a published plan
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
@@ -40,6 +41,7 @@ from .capacity import line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
 from .sectors import Assignment, Sector, assign_units, plan_sectors, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
+from .travel import TravelPlanner, centroid
 
 
 @dataclass
@@ -98,6 +100,7 @@ class OrchestratorAgent:
         self._registry = AgentRegistry()
         self._intervention_support: dict[str, bool] = {}
         self._building_data: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}  # location → (grid, building points): static, fetched once
+        self._routes: dict[Any, Any] = {}  # (unit, target, simulation, instant) → Travel: candidate plans over one forecast ask the same routes
 
     # -- team --------------------------------------------------------------------
     @property
@@ -140,6 +143,7 @@ class OrchestratorAgent:
         concentration: int | None = None,
         life_horizon_minutes: int = 180,
         building_zones: int = 0,
+        travel: bool = True,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
 
@@ -149,7 +153,9 @@ class OrchestratorAgent:
         ``stage_minutes`` makes the lines as long as each unit can build in that time (see ``capacity.py``); without it
         every unit lays the tier's fixed length. ``concentration`` additionally spends those metres on that many of the most
         dangerous sectors, as one barrier each, instead of spreading the units over the front. ``building_zones`` is how many patches of
-        houses (not backend places) the fire engines defend, three engines each; 0 leaves every engine on the fire.
+        houses (not backend places) the fire engines defend, three engines each; 0 leaves every engine on the fire. ``travel`` asks
+        ``POST /routing/route`` how long each unit needs to reach its action (see ``travel.py``): the effect starts then, and a unit
+        that cannot get there is not assigned; without it every unit is on site at minute 0, as before.
         """
         simulation = self._simulation(simulation_id)
         ignitions = ((simulation or {}).get("scenarioSnapshot") or {}).get("ignitions") or []
@@ -179,6 +185,8 @@ class OrchestratorAgent:
             result.decisions.append(message)
 
         guarded = self._guard_decisions(result)
+        if travel:
+            guarded = self._apply_travel(guarded, situation, location_id, result)
         plan_a = self._compose_plan(guarded, result, situation, variant="A", location_id=location_id, title_prefix=title_prefix)
         plan_b = self._compose_plan(guarded, result, situation, variant="B", location_id=location_id, title_prefix=title_prefix)
         result.plan_a, result.plan_b = plan_a, plan_b
@@ -485,6 +493,50 @@ class OrchestratorAgent:
             kept[agent_id] = survivors
         return kept
 
+    def _apply_travel(
+        self,
+        kept: dict[str, list[tuple[DecisionMessage, ActionProposal]]],
+        situation: Situation,
+        location_id: str,
+        result: CycleResult,
+    ) -> dict[str, list[tuple[DecisionMessage, ActionProposal]]]:
+        """Give every proposal the time its unit needs to get there; drop what the unit cannot reach (and what waits for it)."""
+        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes)
+        agents = {agent.agent_id: agent for agent in self.agents}
+        for agent_id, pairs in kept.items():
+            agent = agents.get(agent_id)
+            if agent is None:
+                continue
+            dropped: set[str] = set()
+            survivors: list[tuple[DecisionMessage, ActionProposal]] = []
+            told = False
+            for message, proposal in pairs:
+                if (proposal.trigger and proposal.trigger.get("actionId") in dropped) or any(d in dropped for d in proposal.depends_on):
+                    result.issues.append(AgentIssue(agent_id, proposal.title, "dropped: it waits for an action this unit cannot reach."))
+                    dropped.add(proposal.proposal_id)
+                    continue
+                target = proposal.target or centroid(proposal.intervention.get("geometry"))
+                if target is None:
+                    survivors.append((message, proposal))
+                    continue
+                route = planner.eta(agent, target)
+                if not route.reachable:
+                    result.issues.append(AgentIssue(agent_id, proposal.title, f"dropped: the unit cannot get there ({route.reason})."))
+                    dropped.add(proposal.proposal_id)
+                    continue
+                proposal.eta_minutes, proposal.from_station = route.eta_minutes, route.from_station
+                if route.eta_minutes is not None and not told:
+                    message.reason += f" Viagem: {route.describe()} (encaminhamento do servidor, sem fogo previsto nem cortes pelo caminho)."
+                    told = True
+                deadline = (proposal.intervention.get("completeBy") or {}).get("offsetMinutes") if proposal.intervention.get("type") == "evacuation" else None
+                if deadline is not None and route.eta_minutes is not None and route.eta_minutes > float(deadline):
+                    result.issues.append(AgentIssue(agent_id, proposal.title, f"late: the unit arrives in ~{route.eta_minutes:.0f} min, after the evacuation deadline ({deadline} min)."))
+                survivors.append((message, proposal))
+            kept[agent_id] = survivors
+        if planner.unavailable:
+            result.issues.append(AgentIssue("orchestrator", "travel times", "routing unavailable: the plans carry no arrival times."))
+        return kept
+
     # -- plan composition -----------------------------------------------------------
     def _compose_plan(
         self,
@@ -530,6 +582,8 @@ class OrchestratorAgent:
             )
             if proposal.resources:
                 action["resources"] = proposal.resources
+                if proposal.eta_minutes is not None:  # the backend's own routing said how long each unit needs to be there
+                    action["resources"] = [{**r, "etaMinutes": round(proposal.eta_minutes, 1), **({"fromStationId": proposal.from_station} if proposal.from_station else {})} for r in proposal.resources]
             waits = id(proposal) not in parallel
             if proposal.depends_on and waits:
                 action["dependsOn"] = list(proposal.depends_on)
@@ -542,6 +596,10 @@ class OrchestratorAgent:
                 # The backend ignores `trigger`/`dependsOn` when it simulates a plan: it only reads each effect's own
                 # `start`. So "attack after the evacuation" has to be written into the effect's start time too.
                 intervention["start"] = {"offsetMinutes": _follow_up_delay(by_id.get(proposal.trigger.get("actionId")))}
+            if proposal.eta_minutes is not None and isinstance(intervention.get("start"), dict):
+                # nothing works before the unit is there: the backend applies the effect from its `start`, and a missing ETA would put crews on the fire at once
+                begin = intervention["start"].get("offsetMinutes") or 0
+                intervention["start"] = {**intervention["start"], "offsetMinutes": max(begin, math.ceil(proposal.eta_minutes))}
             decided_at = int(situation.at_minute or 0)
             if decided_at:
                 # the backend honours `start`: offsets count from the scenario start, so a decision taken at T+N begins at N (+ its own delay)
@@ -551,6 +609,14 @@ class OrchestratorAgent:
                         intervention[key] = {**spec, "offsetMinutes": spec["offsetMinutes"] + decided_at}
             action["simulationEffects"] = [intervention]
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
+            if proposal.action_type == "fire_attack" and "line" not in action and "anchorPoint" not in action:
+                # where the action works, in the fields the backend reads it from (``line`` / ``anchorPoint``): without them it cannot check that the
+                # units can get there, nor compute and store their routes. The effect on the fire still comes from ``simulationEffects``.
+                geometry = intervention.get("geometry") or {}
+                if geometry.get("type") == "LineString":
+                    action["line"] = geometry
+                elif (point := proposal.target or centroid(geometry)) is not None:
+                    action["anchorPoint"] = {"lat": point["lat"], "lon": point["lon"]}
             actions.append(action)
             summary.append(f"- **{message.agent_id}** ({message.tier.value}, {message.objective}): {message.reason}")
         if result.life and result.life.decisions:

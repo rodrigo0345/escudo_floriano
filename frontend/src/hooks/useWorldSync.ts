@@ -17,12 +17,22 @@ export function useWorldSync(): void {
   const world = useWorld();
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
+  const windEnabled = useAppStore((s) => s.windEnabled);
+  const windDensity = useAppStore((s) => s.windDensity);
   const run = useAppStore((s) => s.run);
   const activePlan = useAppStore((s) => s.activePlan);
   const locationData = useAppStore((s) => s.data);
   const t = useAppStore((s) => s.t);
+  const playing = useAppStore((s) => s.playing);
   const probMode = useAppStore((s) => s.probMode);
   const detailCache = useRef(new Map<string, Detail>());
+  const smokeCache = useRef(new Map<string, Smoke>());
+  const inFlightDetail = useRef(false);
+  const latestDetailT = useRef(t);
+  latestDetailT.current = t;
+  const inFlightSmoke = useRef(false);
+  const latestSmokeT = useRef(t);
+  latestSmokeT.current = t;
 
   // base layer (satellite / topo / species)
   useEffect(() => {
@@ -43,6 +53,25 @@ export function useWorldSync(): void {
     if (world) world.smoke.enabled = smokeEnabled;
   }, [world, smokeEnabled]);
 
+  // convective-wind field: reload with the run, then follow the playback minute
+  useEffect(() => {
+    if (!world) return;
+    world.wind.setEnabled(windEnabled);
+    world.wind.setDensity(windDensity);
+    if (!run) {
+      world.wind.setRun(null);
+      return;
+    }
+    world.wind.setRun(run);
+    world.wind.setTime(t);
+  }, [world, run?.id, windEnabled]);
+  useEffect(() => {
+    if (world) {
+      world.wind.setDensity(windDensity);
+      if (run) world.wind.setTime(t);
+    }
+  }, [world, run?.id, t, windDensity]);
+
   // the agents' plan on the terrain (a structure-protection effect names a place, so places and facilities are looked up by id)
   useEffect(() => {
     if (!world) return;
@@ -55,61 +84,146 @@ export function useWorldSync(): void {
   // a new run invalidates cached per-minute detail
   useEffect(() => {
     detailCache.current.clear();
+    smokeCache.current.clear();
   }, [run?.id]);
 
   // perimeter + spread arrows for the current minute
   useEffect(() => {
     if (!world || !run) return;
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      const key = `${run.id}:${t}`;
-      let detail = detailCache.current.get(key);
-      if (!detail) {
+
+    const key = `${run.id}:${t}`;
+    const cached = detailCache.current.get(key);
+    if (cached) {
+      world.fire.setPerimeter(cached[0]);
+      world.fire.setArrows(cached[1]);
+      return;
+    }
+
+    if (playing) {
+      if (inFlightDetail.current) return;
+
+      const fetchNext = async (wantedT: number) => {
+        inFlightDetail.current = true;
         try {
-          detail = await Promise.all([simulationsApi.perimeter(run.id, t), simulationsApi.vectors(run.id, t)]);
+          const detail = await Promise.all([
+            simulationsApi.perimeter(run.id, wantedT),
+            simulationsApi.vectors(run.id, wantedT),
+          ]);
+          detailCache.current.set(`${run.id}:${wantedT}`, detail);
+          if (useAppStore.getState().run?.id === run.id) {
+            world.fire.setPerimeter(detail[0]);
+            world.fire.setArrows(detail[1]);
+          }
         } catch (e) {
           console.warn('detalhe do fogo:', (e as Error).message);
-          return;
+        } finally {
+          inFlightDetail.current = false;
+          const currentT = latestDetailT.current;
+          const currentRun = useAppStore.getState().run;
+          const isPlaying = useAppStore.getState().playing;
+          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
+            const nextKey = `${run.id}:${currentT}`;
+            if (detailCache.current.has(nextKey)) {
+              const nextCached = detailCache.current.get(nextKey)!;
+              world.fire.setPerimeter(nextCached[0]);
+              world.fire.setArrows(nextCached[1]);
+            } else {
+              void fetchNext(currentT);
+            }
+          }
         }
-        detailCache.current.set(key, detail);
-      }
-      if (cancelled) return;
-      world.fire.setPerimeter(detail[0]);
-      world.fire.setArrows(detail[1]);
-    }, DETAIL_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [world, run, t]);
+      };
+
+      void fetchNext(t);
+    } else {
+      let cancelled = false;
+      const timer = setTimeout(async () => {
+        try {
+          const detail = await Promise.all([
+            simulationsApi.perimeter(run.id, t),
+            simulationsApi.vectors(run.id, t),
+          ]);
+          detailCache.current.set(key, detail);
+          if (!cancelled && useAppStore.getState().run?.id === run.id) {
+            world.fire.setPerimeter(detail[0]);
+            world.fire.setArrows(detail[1]);
+          }
+        } catch (e) {
+          console.warn('detalhe do fogo:', (e as Error).message);
+        }
+      }, DETAIL_DEBOUNCE_MS);
+
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
+  }, [world, run, t, playing]);
 
   // smoke resource (plume height, roads without visibility) for the current minute
-  const smokeCache = useRef(new Map<string, Smoke>());
   useEffect(() => {
     if (!run || !smokeEnabled) {
       useAppStore.getState().setSmokeInfo(null);
       return;
     }
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      const key = `${run.id}:${t}`;
-      let info = smokeCache.current.get(key);
-      if (!info) {
+
+    const key = `${run.id}:${t}`;
+    const cached = smokeCache.current.get(key);
+    if (cached) {
+      useAppStore.getState().setSmokeInfo(cached);
+      return;
+    }
+
+    if (playing) {
+      if (inFlightSmoke.current) return;
+
+      const fetchNextSmoke = async (wantedT: number) => {
+        inFlightSmoke.current = true;
         try {
-          info = await simulationsApi.smoke(run.id, t);
+          const info = await simulationsApi.smoke(run.id, wantedT);
+          smokeCache.current.set(`${run.id}:${wantedT}`, info);
+          if (useAppStore.getState().run?.id === run.id) {
+            useAppStore.getState().setSmokeInfo(info);
+          }
         } catch (e) {
           console.warn('fumo:', (e as Error).message);
-          return;
+        } finally {
+          inFlightSmoke.current = false;
+          const currentT = latestSmokeT.current;
+          const currentRun = useAppStore.getState().run;
+          const isPlaying = useAppStore.getState().playing;
+          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
+            const nextKey = `${run.id}:${currentT}`;
+            if (smokeCache.current.has(nextKey)) {
+              useAppStore.getState().setSmokeInfo(smokeCache.current.get(nextKey)!);
+            } else {
+              void fetchNextSmoke(currentT);
+            }
+          }
         }
-        smokeCache.current.set(key, info);
-      }
-      if (!cancelled) useAppStore.getState().setSmokeInfo(info);
-    }, DETAIL_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [run?.id, t, smokeEnabled]);
+      };
+
+      void fetchNextSmoke(t);
+    } else {
+      let cancelled = false;
+      const timer = setTimeout(async () => {
+        try {
+          const info = await simulationsApi.smoke(run.id, t);
+          smokeCache.current.set(key, info);
+          if (!cancelled && useAppStore.getState().run?.id === run.id) {
+            useAppStore.getState().setSmokeInfo(info);
+          }
+        } catch (e) {
+          console.warn('fumo:', (e as Error).message);
+        }
+      }, DETAIL_DEBOUNCE_MS);
+
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
+  }, [run?.id, t, smokeEnabled, playing]);
   const smokeInfo = useAppStore((s) => s.smokeInfo);
 
   // roads and places colored by impact (and roads obscured by smoke)

@@ -35,8 +35,8 @@ export class SceneEngine {
 
     this.scene.background = new THREE.Color(SKY);
     this.scene.fog = new THREE.Fog(SKY, 1200, 7000);
-    this.scene.add(new THREE.HemisphereLight(0xdfeaff, 0x4a4036, 1.0));
-    const sun = new THREE.DirectionalLight(0xfff1d6, 2.1);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x242424, 1.0));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
     sun.position.set(-500, 600, 300);
     this.scene.add(sun);
 
