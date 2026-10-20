@@ -19,12 +19,16 @@ export function WeatherChart({ samples, cursorMs = null }: { samples: WeatherSam
   const temps = samples.map((s) => s.tempC ?? 0);
   const minT = Math.min(...temps);
   const maxT = Math.max(...temps, minT + 1);
+  const maxPrecip = Math.max(...samples.map((s) => s.precipitationMmH ?? 0), 0);
   const line = (value: (s: WeatherSample) => number) =>
     samples.map((s) => `${x(+new Date(s.time)).toFixed(1)},${(TOP + HEIGHT - value(s) * HEIGHT).toFixed(1)}`).join(' ');
 
   return (
     <>
       <svg className={styles.chart} viewBox={`0 0 ${W} ${H}`}>
+        {maxPrecip > 0 ? (
+          <polyline fill="none" stroke="#38bdf8" strokeWidth="2" strokeDasharray="2 2" points={line((s) => (s.precipitationMmH ?? 0) / Math.max(maxPrecip, 5))} />
+        ) : null}
         <polyline fill="none" stroke="#e5484d" strokeWidth="1.5" strokeDasharray="4 3" points={line((s) => ((s.tempC ?? 0) - minT) / (maxT - minT))} />
         <polyline fill="none" stroke="#d8b26a" strokeWidth="2" points={line((s) => (s.humidityPct ?? 0) / 100)} />
         <polyline fill="none" stroke="#ff6a1a" strokeWidth="2" points={line((s) => (s.windKmh ?? 0) / maxWind)} />
@@ -43,6 +47,12 @@ export function WeatherChart({ samples, cursorMs = null }: { samples: WeatherSam
           <i style={{ background: '#e5484d' }} />
           temp. ({minT.toFixed(0)}–{maxT.toFixed(0)} °C)
         </span>
+        {maxPrecip > 0 ? (
+          <span>
+            <i style={{ background: '#38bdf8' }} />
+            chuva (máx {maxPrecip.toFixed(1)} mm/h)
+          </span>
+        ) : null}
       </div>
     </>
   );

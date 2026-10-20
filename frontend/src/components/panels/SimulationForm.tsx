@@ -60,12 +60,12 @@ export function SimulationForm() {
   const set = <K extends keyof SimulationFormValues>(key: K, value: SimulationFormValues[K]) => setValues((v) => ({ ...v, [key]: value }));
   const num = (key: keyof SimulationFormValues) => (e: ChangeEvent<HTMLInputElement>) =>
     set(key, (e.target.value === '' ? 0 : +e.target.value) as never);
-  const setWeather = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC', value: number) => {
+  const setWeather = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC' | 'precipitationMmH' | 'cloudCoverPct', value: number) => {
     setWeatherTouched(true);
     setPreview(null);
     setValues((v) => ({ ...v, [key]: value }));
   };
-  const weatherNum = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC') => (e: ChangeEvent<HTMLInputElement>) =>
+  const weatherNum = (key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC' | 'precipitationMmH' | 'cloudCoverPct') => (e: ChangeEvent<HTMLInputElement>) =>
     setWeather(key, e.target.value === '' ? 0 : +e.target.value);
   const baseForWindow = (start: string, duration: number) =>
     base && locationId && baseState.key === `${locationId}|${start}|${duration}` ? base : null;
@@ -237,9 +237,34 @@ export function SimulationForm() {
             </div>
           </div>
 
+          <div className={styles.two}>
+            <label>
+              Temperatura (°C)
+              <input type="number" step={1} value={values.tempC} onChange={weatherNum('tempC')} />
+            </label>
+            <label>
+              Chuva (mm/h)
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                value={values.precipitationMmH}
+                onChange={weatherNum('precipitationMmH')}
+              />
+            </label>
+          </div>
+
           <label>
-            Temperatura (°C)
-            <input type="number" step={1} value={values.tempC} onChange={weatherNum('tempC')} />
+            Neblina / Nuvens (%)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={5}
+              value={values.cloudCoverPct}
+              onChange={weatherNum('cloudCoverPct')}
+            />
           </label>
 
           {values.mode === 'provider' ? (
@@ -249,6 +274,8 @@ export function SimulationForm() {
               {Math.round(dirShift)}° · {humShift > 0 ? '+' : ''}
               {round1(humShift)} p.p. · {tempShift > 0 ? '+' : ''}
               {round1(tempShift)} °C
+              {values.precipitationMmH > 0 ? ` · +${round1(values.precipitationMmH)} mm/h chuva` : ''}
+              {values.cloudCoverPct > 0 ? ` · ${Math.round(values.cloudCoverPct)}% nuvens` : ''}
             </small>
           ) : null}
         </div>

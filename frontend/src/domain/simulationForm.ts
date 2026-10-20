@@ -7,7 +7,7 @@ const WHOLE_RUN_PADDING_MIN = 720;
 
 export type WeatherMode = 'provider' | 'manual';
 
-export type PresetId = 'front' | 'breeze' | 'afternoon' | 'second_ignition';
+export type PresetId = 'front' | 'breeze' | 'afternoon' | 'rain_shower' | 'storm' | 'fog' | 'second_ignition';
 
 export interface PresetWeatherEvent {
   id: PresetId;
@@ -24,6 +24,8 @@ export interface SimulationFormValues {
   windFromDeg: number;
   humPct: number;
   tempC: number;
+  precipitationMmH: number;
+  cloudCoverPct: number;
   members: number;
   presetEvents: PresetWeatherEvent[];
 }
@@ -43,7 +45,7 @@ const wholeRunWindow = (duration: number) => ({
   end: { offsetMinutes: duration + WHOLE_RUN_PADDING_MIN },
 });
 
-/** The four one-click recipes; the fourth adds an ignition and has no weather event. */
+/** The one-click recipes for weather shifts, rain, storms, fog, and secondary ignitions. */
 export function createPresetEvents(duration: number): PresetWeatherEvent[] {
   return [
     {
@@ -61,7 +63,7 @@ export function createPresetEvents(duration: number): PresetWeatherEvent[] {
           type: 'wind_scale',
           enabled: true,
           applyToGusts: true,
-          window: { start: { offsetMinutes: 45 }, end: { offsetMinutes: 120 } },
+          window: { start: { offsetMinutes: 45 }, end: { offsetMinutes: Math.min(120, duration) } },
           factor: 1.7,
         },
       ],
@@ -92,6 +94,73 @@ export function createPresetEvents(duration: number): PresetWeatherEvent[] {
         },
       ],
     },
+    {
+      id: 'rain_shower',
+      label: 'Aguaceiros (T+30–90)',
+      enabled: false,
+      events: [
+        {
+          type: 'precipitation',
+          enabled: true,
+          window: { start: { offsetMinutes: 30 }, end: { offsetMinutes: Math.min(90, duration) } },
+          intensityMmH: 6.0,
+          rampMinutes: 10,
+        },
+      ],
+    },
+    {
+      id: 'storm',
+      label: 'Trovoada / Frente (T+60)',
+      enabled: false,
+      events: [
+        {
+          type: 'precipitation',
+          enabled: true,
+          window: { start: { offsetMinutes: 60 }, end: { offsetMinutes: Math.min(120, duration) } },
+          intensityMmH: 15.0,
+          rampMinutes: 5,
+        },
+        {
+          type: 'wind_scale',
+          enabled: true,
+          applyToGusts: true,
+          window: { start: { offsetMinutes: 60 }, end: { offsetMinutes: Math.min(120, duration) } },
+          factor: 1.8,
+        },
+        {
+          type: 'temperature_shift',
+          enabled: true,
+          window: { start: { offsetMinutes: 60 }, end: { offsetMinutes: duration } },
+          deltaC: -6,
+        },
+      ],
+    },
+    {
+      id: 'fog',
+      label: 'Neblina matinal (T+0–60)',
+      enabled: false,
+      events: [
+        {
+          type: 'humidity_shift',
+          enabled: true,
+          window: { start: { offsetMinutes: 0 }, end: { offsetMinutes: Math.min(60, duration) } },
+          deltaPct: 35,
+        },
+        {
+          type: 'temperature_shift',
+          enabled: true,
+          window: { start: { offsetMinutes: 0 }, end: { offsetMinutes: Math.min(60, duration) } },
+          deltaC: -5,
+        },
+        {
+          type: 'wind_scale',
+          enabled: true,
+          applyToGusts: true,
+          window: { start: { offsetMinutes: 0 }, end: { offsetMinutes: Math.min(60, duration) } },
+          factor: 0.5,
+        },
+      ],
+    },
     { id: 'second_ignition', label: '2.º foco (T+45)', enabled: false, events: [] },
   ];
 }
@@ -104,6 +173,9 @@ export function resizePresetEvents(presets: PresetWeatherEvent[], duration: numb
 
 export const presetAvailable = (id: PresetId, duration: number, baseWindKmh?: number | null): boolean => {
   if (id === 'second_ignition') return true;
+  if (id === 'fog') return duration >= 30;
+  if (id === 'rain_shower') return duration >= 45;
+  if (id === 'storm') return duration >= 75;
   if (baseWindKmh != null && baseWindKmh <= 0.1) return false;
   if (id === 'front') return duration >= 90;
   if (id === 'breeze') return duration >= 120;
@@ -117,6 +189,7 @@ export function defaultFormValues(
 ): SimulationFormValues {
   const duration = run?.durationMinutes ?? 180;
   const stats = base ?? weatherMeans(run?.weather ?? []) ?? DEFAULT_BASE;
+  const currentSample = run?.weather?.[0];
   return {
     start: run ? isoLocal(run.startMs) : '2026-08-17T15:00',
     duration,
@@ -125,6 +198,8 @@ export function defaultFormValues(
     windFromDeg: normalizeDeg(round(stats.dirDeg)),
     humPct: round(stats.humPct, 1),
     tempC: round(stats.tempC, 1),
+    precipitationMmH: round(currentSample?.precipitationMmH ?? 0, 1),
+    cloudCoverPct: round(currentSample?.cloudCoverPct ?? 0, 0),
     members: 12,
     presetEvents: createPresetEvents(duration),
   };
@@ -164,6 +239,14 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
     if (Math.abs(v.tempC - base.tempC) > 0.5) {
       events.push({ type: 'temperature_shift', enabled: true, window: whole, deltaC: v.tempC - base.tempC });
     }
+    if (v.precipitationMmH > 0) {
+      events.push({
+        type: 'precipitation',
+        enabled: true,
+        window: whole,
+        intensityMmH: v.precipitationMmH,
+      });
+    }
   }
 
   for (const preset of v.presetEvents) {
@@ -182,6 +265,8 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
               windFromDeg: normalizeDeg(v.windFromDeg),
               humidityPct: v.humPct,
               tempC: v.tempC,
+              precipitationMmH: v.precipitationMmH > 0 ? v.precipitationMmH : undefined,
+              cloudCoverPct: v.cloudCoverPct > 0 ? v.cloudCoverPct : undefined,
             },
           ],
         }
