@@ -19,5 +19,5 @@ public sealed class RoadSpeeds(RoutingSettings routing, Rules rules)
         return routing.RoadTypicalSpeedKmh.TryGetValue(key, out var kmh) && _factor.TryGetValue(key, out var factor) ? kmh * factor : routing.UnknownRoadSpeedKmh;
     }
 
-    public TravelProfile Profile(bool allowOffRoad = false, bool emergency = true, double? maxSpeedKmh = null) => new(this, allowOffRoad, emergency, maxSpeedKmh);
+    public TravelProfile Profile(bool allowOffRoad = false, bool emergency = true, double? maxSpeedKmh = null, double? widthM = null, double? maxSlopePercent = null) => new(this, allowOffRoad, emergency, maxSpeedKmh, widthM, maxSlopePercent);
 }

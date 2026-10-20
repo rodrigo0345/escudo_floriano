@@ -1,15 +1,21 @@
 using FireTrace.Core.Domain.Common;
+using FireTrace.Core.Domain.Dispatches;
+using FireTrace.Core.Domain.Plans;
+using FireTrace.Core.Domain.Plans.Actions;
 using FireTrace.Core.Domain.Resources;
+using FireTrace.Core.Domain.RoadClosures;
 using FireTrace.Core.Repositories;
 using FireTrace.ExternalData.Map;
 using FireTrace.ExternalData.Store;
 using Microsoft.Extensions.Logging;
+using NetTopologySuite.Geometries;
 
 namespace FireTrace.Core.Services.Resources;
 
 /// <summary>
 /// Semeia as organizações padrão (Bombeiros, GNR, INEM, Proteção Civil), os postos a partir
-/// das instalações de emergência descobertas no mapa, e viaturas de combate e socorro associadas.
+/// das instalações de emergência descobertas no mapa, viaturas associadas, cortes de via,
+/// planos de resposta táticos operacionais (A e B) e despachos no terreno.
 /// </summary>
 public sealed class ResourceSeeder(
     IMapReader map,
@@ -18,9 +24,13 @@ public sealed class ResourceSeeder(
     IDocumentStore<Vehicle> vehicleStore,
     IDocumentStore<PersonnelPool> poolStore,
     IDocumentStore<Equipment> equipmentStore,
+    IDocumentStore<RoadClosure> closureStore,
+    IDocumentStore<Plan> planStore,
+    IDocumentStore<Dispatch> dispatchStore,
     TimeProvider clock,
     ILogger<ResourceSeeder> log)
 {
+    static readonly GeometryFactory Gf = NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(4326);
     public async Task SeedAsync(CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
@@ -266,6 +276,294 @@ public sealed class ResourceSeeder(
 
             log.LogInformation("Recursos semeados para '{Location}': {Stations} postos, {Vehicles} viaturas.", location.Id, stationCount, vehicleCount);
         }
+
+        // 4. Cortes de estrada operacionais
+        var penhaRoadClosure = new RoadClosure
+        {
+            Id = "clo-penha-access",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LocationId = "guimaraes",
+            RoadIds = new() { "rd-penha-access" },
+            Geometry = Gf.CreateLineString(new[] { new Coordinate(-8.2686, 41.4298), new Coordinate(-8.2710, 41.4320) }),
+            Kind = ClosureKind.Full,
+            Reason = ClosureReason.FirePredicted,
+            Status = ClosureStatus.Active,
+            Start = now.AddHours(-1),
+            End = now.AddHours(5),
+            ResponsibleOrganizationId = "org-gnr",
+            Source = "police",
+            Notes = "Corte total preventivo na via de subida à Penha devido a incêndio florestal."
+        };
+        var existingClosure = await closureStore.GetAsync(penhaRoadClosure.Id, ct);
+        await closureStore.UpsertAsync(existingClosure is null ? penhaRoadClosure : penhaRoadClosure with { CreatedAt = existingClosure.CreatedAt }, ct);
+
+        // 5. Planos de Resposta Operacionais (Plano A e Plano B)
+        var planA = new Plan
+        {
+            Id = "plan-penha-a",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LocationId = "guimaraes",
+            Title = "Plano A — Ataque Inicial Direto e Contenção de Flancos",
+            Variant = "A",
+            Strategy = "Ataque direto ao flanco esquerdo com linhas de mangueira e autotanques, corte preventivo de vias e vigilância UEPS",
+            Summary = "Mobilização rápida de equipas de combate para conter a cabeça do incêndio na Penha antes da linha de cumeada, estabelecendo perímetro de segurança.",
+            Basis = new PlanBasis(ScenarioId: "sc-penha-pior-hora-2026", SituationAsOf: now),
+            AlertLevel = AlertLevel.Orange,
+            Status = PlanStatus.Active,
+            ActivatedAt = now.AddMinutes(-30),
+            Objectives = new()
+            {
+                new("Proteger aglomerados habitacionais e santuário da Penha", 0.9),
+                new("Conter a progressão do flanco esquerdo na encosta oeste", 0.8)
+            },
+            Actions = new()
+            {
+                new FireAttackAction
+                {
+                    Id = "act-penha-a1",
+                    Title = "Ataque direto ao flanco com linhas de mangueira 45mm",
+                    OrganizationId = "org-bombeiros",
+                    SupportingOrganizationIds = new() { "org-gnr" },
+                    Priority = ActionPriority.Critical,
+                    Status = ActionStatus.InProgress,
+                    Tactic = "Ataque direto e ancoragem",
+                    AnchorPoint = new LatLon(41.4305, -8.2690),
+                    Objective = "Travar avanço do fogo em direção ao parque de campismo",
+                    ExpectedDurationMinutes = 120,
+                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-25), Note: "Combate ativo com 1 linha de 45mm")
+                },
+                new RoadClosureAction
+                {
+                    Id = "act-penha-a2",
+                    Title = "Corte de trânsito na subida à Penha",
+                    OrganizationId = "org-gnr",
+                    Priority = ActionPriority.High,
+                    Status = ActionStatus.InProgress,
+                    RoadIds = new() { "rd-penha-access" },
+                    Kind = ClosureKind.Full,
+                    Reason = ClosureReason.FirePredicted,
+                    ClosureId = "clo-penha-access",
+                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-30), Note: "Via cortada e sinalizada")
+                },
+                new MedicalStandbyAction
+                {
+                    Id = "act-penha-a3",
+                    Title = "Prontidão médica pré-hospitalar no Posto Médico Avançado",
+                    OrganizationId = "org-inem",
+                    Priority = ActionPriority.High,
+                    Status = ActionStatus.InProgress,
+                    Positions = new() { new Target(Label: "PMA Penha", Position: new LatLon(41.4320, -8.2725)) },
+                    HospitalAlert = "Hospital Senhora da Oliveira (Guimarães)",
+                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-20), Note: "PMA operacional")
+                },
+                new StructureProtectionAction
+                {
+                    Id = "act-penha-a4",
+                    Title = "Proteção perimetral do Santuário e Parque de Campismo",
+                    OrganizationId = "org-bombeiros",
+                    Priority = ActionPriority.Normal,
+                    Status = ActionStatus.Planned,
+                    Targets = new() { new Target(Label: "Santuário da Penha", Position: new LatLon(41.4300, -8.2700)) },
+                    Tactic = "Cortina de proteção e arrefecimento de estruturas"
+                }
+            }
+        };
+        var existingPlanA = await planStore.GetAsync(planA.Id, ct);
+        await planStore.UpsertAsync(existingPlanA is null ? planA : planA with { CreatedAt = existingPlanA.CreatedAt }, ct);
+
+        var planB = new Plan
+        {
+            Id = "plan-penha-b",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LocationId = "guimaraes",
+            Title = "Plano B — Contenção Indireta e Faixas de Gestão de Combustível",
+            Variant = "B",
+            Strategy = "Contenção indireta apoiada na rede de faixas corta-fogo, estabelecimento de PCO municipal e pontos de controlo de tráfego GNR",
+            Summary = "Estratégia defensiva de contingência: recuo para faixas corta-fogo consolidadas com abertura de aceiros e controlo rigoroso de acessos.",
+            Basis = new PlanBasis(ScenarioId: "sc-penha-pior-hora-2026", SituationAsOf: now),
+            AlertLevel = AlertLevel.Red,
+            Status = PlanStatus.Proposed,
+            Objectives = new()
+            {
+                new("Criar linha de paragem em aceiro estratégico", 0.85),
+                new("Evacuação preventiva de pontos vulneráveis", 0.95)
+            },
+            Actions = new()
+            {
+                new EstablishCommandPostAction
+                {
+                    Id = "act-penha-b1",
+                    Title = "Instalação do Posto de Comando Operacional (PCO) Conjunto",
+                    OrganizationId = "org-prociv",
+                    Priority = ActionPriority.Critical,
+                    Status = ActionStatus.Planned,
+                    Location = new Target(Label: "Campo de São Mamede / PCO", Position: new LatLon(41.4475, -8.2910)),
+                    RadioChannel = "SIRESP-CANAL-EMERG-GMR-01"
+                },
+                new FuelBreakAction
+                {
+                    Id = "act-penha-b2",
+                    Title = "Consolidação e limpeza da faixa corta-fogo sul",
+                    OrganizationId = "org-bombeiros",
+                    Priority = ActionPriority.High,
+                    Status = ActionStatus.Planned,
+                    Line = Gf.CreateLineString(new[] { new Coordinate(-8.2670, 41.4280), new Coordinate(-8.2720, 41.4300) }),
+                    Removal = Core.Domain.Interventions.FuelRemoval.Understory,
+                    WidthM = 15
+                },
+                new TrafficControlPointAction
+                {
+                    Id = "act-penha-b3",
+                    Title = "Ponto de controlo de trânsito e triagem de moradores",
+                    OrganizationId = "org-gnr",
+                    Priority = ActionPriority.High,
+                    Status = ActionStatus.Planned,
+                    Position = new LatLon(41.4330, -8.2740),
+                    Mode = "resident_access_only",
+                    Instructions = "Apenas moradores com comprovativo e veículos de socorro"
+                },
+                new PublicAlertAction
+                {
+                    Id = "act-penha-b4",
+                    Title = "Aviso à população para confinamento e encerramento de acessos",
+                    OrganizationId = "org-prociv",
+                    Priority = ActionPriority.High,
+                    Status = ActionStatus.Planned,
+                    Channels = new() { "sms", "siren", "broadcast" },
+                    Messages = new()
+                    {
+                        new("pt", "Aviso Proteção Civil Guimarães: Incêndio florestal ativo na Penha. Evite a circulação nas imediações e siga as instruções das autoridades.")
+                    }
+                }
+            }
+        };
+        var existingPlanB = await planStore.GetAsync(planB.Id, ct);
+        await planStore.UpsertAsync(existingPlanB is null ? planB : planB with { CreatedAt = existingPlanB.CreatedAt }, ct);
+
+        // 6. Despachos ativos associados ao Plano A
+        var allVehicles = await vehicleStore.ListAsync(ct);
+        var vfci = allVehicles.FirstOrDefault(v => v.Type == VehicleType.ForestFirefightingVehicle);
+        if (vfci is not null)
+        {
+            var dispVfci = new Dispatch
+            {
+                Id = "disp-vfci-penha",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = vfci.OrganizationId,
+                ResourceType = ResourceType.Vehicle,
+                ResourceId = vfci.Id,
+                Personnel = vfci.CrewCapacity,
+                Responsibility = Responsibility.Firefighting,
+                Target = new Target(Label: "Flanco Sul da Penha", Position: new LatLon(41.4305, -8.2690)),
+                FromStationId = vfci.StationId,
+                Status = DispatchStatus.OnScene,
+                PlanId = "plan-penha-a",
+                ActionId = "act-penha-a1",
+                ArrivedAt = now.AddMinutes(-20),
+                StartAt = now.AddMinutes(-30),
+                Water = new WaterStatus(3000, 3500),
+                Notes = "Combate direto ao flanco com 5 operacionais e linha de 45mm."
+            };
+            var existingDisp = await dispatchStore.GetAsync(dispVfci.Id, ct);
+            await dispatchStore.UpsertAsync(existingDisp is null ? dispVfci : dispVfci with { CreatedAt = existingDisp.CreatedAt }, ct);
+
+            await vehicleStore.UpsertAsync(vfci with
+            {
+                State = vfci.State with
+                {
+                    Status = VehicleStatus.Assigned,
+                    Responsibility = Responsibility.Firefighting,
+                    CurrentPlanId = "plan-penha-a",
+                    CurrentActionId = "act-penha-a1",
+                    CurrentDispatchId = dispVfci.Id,
+                    UpdatedAt = now
+                }
+            }, ct);
+        }
+
+        var gnrVeh = allVehicles.FirstOrDefault(v => v.Type == VehicleType.TrafficUnit);
+        if (gnrVeh is not null)
+        {
+            var dispGnr = new Dispatch
+            {
+                Id = "disp-gnr-penha",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = gnrVeh.OrganizationId,
+                ResourceType = ResourceType.Vehicle,
+                ResourceId = gnrVeh.Id,
+                Personnel = gnrVeh.CrewCapacity,
+                Responsibility = Responsibility.TrafficControl,
+                Target = new Target(Label: "Corte de Via Penha Norte", Position: new LatLon(41.4330, -8.2740)),
+                FromStationId = gnrVeh.StationId,
+                Status = DispatchStatus.OnScene,
+                PlanId = "plan-penha-a",
+                ActionId = "act-penha-a2",
+                ArrivedAt = now.AddMinutes(-25),
+                StartAt = now.AddMinutes(-30),
+                Notes = "Corte e sinalização de trânsito com 2 militares."
+            };
+            var existingDisp = await dispatchStore.GetAsync(dispGnr.Id, ct);
+            await dispatchStore.UpsertAsync(existingDisp is null ? dispGnr : dispGnr with { CreatedAt = existingDisp.CreatedAt }, ct);
+
+            await vehicleStore.UpsertAsync(gnrVeh with
+            {
+                State = gnrVeh.State with
+                {
+                    Status = VehicleStatus.Assigned,
+                    Responsibility = Responsibility.TrafficControl,
+                    CurrentPlanId = "plan-penha-a",
+                    CurrentActionId = "act-penha-a2",
+                    CurrentDispatchId = dispGnr.Id,
+                    UpdatedAt = now
+                }
+            }, ct);
+        }
+
+        var inemVeh = allVehicles.FirstOrDefault(v => v.Type == VehicleType.Ambulance);
+        if (inemVeh is not null)
+        {
+            var dispInem = new Dispatch
+            {
+                Id = "disp-inem-penha",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = inemVeh.OrganizationId,
+                ResourceType = ResourceType.Vehicle,
+                ResourceId = inemVeh.Id,
+                Personnel = inemVeh.CrewCapacity,
+                Responsibility = Responsibility.Medical,
+                Target = new Target(Label: "PMA Penha", Position: new LatLon(41.4320, -8.2725)),
+                FromStationId = inemVeh.StationId,
+                Status = DispatchStatus.OnScene,
+                PlanId = "plan-penha-a",
+                ActionId = "act-penha-a3",
+                ArrivedAt = now.AddMinutes(-18),
+                StartAt = now.AddMinutes(-25),
+                Notes = "Prontidão socorrista no Posto Médico Avançado."
+            };
+            var existingDisp = await dispatchStore.GetAsync(dispInem.Id, ct);
+            await dispatchStore.UpsertAsync(existingDisp is null ? dispInem : dispInem with { CreatedAt = existingDisp.CreatedAt }, ct);
+
+            await vehicleStore.UpsertAsync(inemVeh with
+            {
+                State = inemVeh.State with
+                {
+                    Status = VehicleStatus.Assigned,
+                    Responsibility = Responsibility.Medical,
+                    CurrentPlanId = "plan-penha-a",
+                    CurrentActionId = "act-penha-a3",
+                    CurrentDispatchId = dispInem.Id,
+                    UpdatedAt = now
+                }
+            }, ct);
+        }
+
+        log.LogInformation("Planos, ações, cortes de via e despachos operacionais semeados com sucesso.");
     }
 
     static List<Vehicle> CreateVehiclesForStation(Station st, Facility? fac, DateTimeOffset now)

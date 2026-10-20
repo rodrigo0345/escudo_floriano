@@ -41,6 +41,7 @@ public sealed class MinimumTravelTimeSolver(FireBehaviorModel model)
             if (t < arrival[c]) { arrival[c] = t; frontier.Enqueue(c, t); }
         }
 
+        var suppression = SuppressionIndex.Of(job.Suppression, n);
         var closed = new bool[n];
         var adjustment = member.Adjustment ?? job.Adjustment; // o ajuste do membro já tem as barreiras galgadas pelo seu vento (ver BarrierSet)
         var bands = job.Landscape;
@@ -75,6 +76,8 @@ public sealed class MinimumTravelTimeSolver(FireBehaviorModel model)
                 // velocidade; é a célula de destino que decide se arde. `crownBoost` (de c, a fonte) acelera só se c já estiver em copas.
                 double moistureFactor = model.MoistureFactor(MoistureAt((int)t), bands, n, nc);
                 double ros0 = model.BaseRos(bands, n, nc) * model.ReferenceRosMPerMin * model.WindAtSurface(bands, n, nc, windFactor) * moistureFactor * adjustment[nc] * crownBoost;
+                // firefighters (and drops, and finished lines) slow the fire only while they are working where it is entering, and direct attack fades with the flame intensity at the source cell
+                ros0 *= suppression.Factor(nc, t, intensityHere);
                 if (ros0 <= 1e-6) continue;
                 double bearing = Math.Atan2(dx, -dy) * 180 / Math.PI; // direção desta ligação (0 = norte)
                 double ros = ros0 * FireBehaviorModel.EllipseFactor(bearing, windFromDeg, lb) * model.SlopeFactor(bands, n, nc, bearing);

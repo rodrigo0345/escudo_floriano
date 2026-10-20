@@ -7,6 +7,7 @@ using FireTrace.Core.Domain.Errors;
 using FireTrace.Core.Domain.Fire;
 using FireTrace.Core.Domain.Fuel;
 using FireTrace.Core.Domain.Interventions;
+using FireTrace.Core.Domain.Plans;
 using FireTrace.Core.Domain.Rules;
 using FireTrace.Core.Domain.Scenarios;
 using FireTrace.Core.Domain.Simulations;
@@ -15,6 +16,7 @@ using FireTrace.Core.Models.Fire;
 using FireTrace.Core.Models.Meta;
 using FireTrace.Core.Models.Paging;
 using FireTrace.Core.Repositories;
+using FireTrace.Core.Services.Operations;
 using FireTrace.Core.Services.Weather;
 using FireTrace.Engine.Contracts;
 using FireTrace.Engine.Weather;
@@ -29,9 +31,10 @@ namespace FireTrace.Core.Services.Fire;
 /// entrega-os ao motor (ELMFIRE) e guarda o resultado para as consultas (`FireResults`).
 /// </summary>
 public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocumentStore<Scenario> scenarios, IMapReader map, WeatherService weather, IFireEngine engine, IFireRunRepository runs,
-    TimeProvider clock, IIdGenerator ids, SimulationQueue queue, IEnumerable<IInterventionProvider> providers, FireTraceSettings settings, LandscapeBuilder landscapeBuilder, FuelCatalog fuels)
+    TimeProvider clock, IIdGenerator ids, SimulationQueue queue, IEnumerable<IInterventionProvider> providers, FireTraceSettings settings, LandscapeBuilder landscapeBuilder, FuelCatalog fuels,
+    IDocumentStore<Plan> plans, CrewSafety crewSafety)
 {
-    static readonly ConditionalWeakTable<TerrainGrids, Lazy<Task<Landscape>>> Landscapes = new();
+    readonly ConditionalWeakTable<TerrainGrids, Lazy<Task<Landscape>>> _landscapes = new();
     readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new();
 
     // ===================================================================================================== pedir e consultar
@@ -119,7 +122,11 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
             await runs.SaveAsync(run, cts.Token);
             var current = await sims.GetAsync(id, CancellationToken.None);
             if (current?.Status == SimulationStatus.Cancelled) { await runs.DeleteAsync(id, CancellationToken.None); return; }
-            await Save(sim with { Status = SimulationStatus.Succeeded, FinishedAt = clock.GetUtcNow(), Progress = new("done", 100, run.Members.Length, run.Members.Length), Stats = Stats(run, await map.GetTerrainAsync(sim.LocationId, CancellationToken.None)) });
+            var stats = Stats(run, await map.GetTerrainAsync(sim.LocationId, CancellationToken.None));
+            // a plan's what-if also answers "who is caught in this fire?" (the rule lives in CrewSafety; where to put crews is the planner's call)
+            var exposures = sim.PlanId is { } planId && await plans.GetAsync(planId, CancellationToken.None) is { } plan ? await crewSafety.EvaluateAsync(plan, run, CancellationToken.None) : null;
+            if (exposures is not null) stats = stats with { CrewCasualties = exposures.Sum(e => e.Casualties) };
+            await Save(sim with { Status = SimulationStatus.Succeeded, FinishedAt = clock.GetUtcNow(), Progress = new("done", 100, run.Members.Length, run.Members.Length), Stats = stats, CrewExposures = exposures });
         }
         catch (OperationCanceledException) { /* cancelada: o estado já foi atualizado por CancelAsync */ }
         catch (Exception e)
@@ -136,7 +143,7 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
         var terrain = await map.GetTerrainAsync(sc.LocationId, ct);
         var net = await map.GetRoadsAsync(sc.LocationId, ct);
         var places = await map.GetPlacesAsync(sc.LocationId, ct);
-        var landscape = await Landscapes.GetValue(terrain, t => new Lazy<Task<Landscape>>(async () =>
+        var landscape = await _landscapes.GetValue(terrain, t => new Lazy<Task<Landscape>>(async () =>
             landscapeBuilder.Build(t, net, await map.GetFirebreaksAsync(sc.LocationId, ct), await map.GetWaterwaysAsync(sc.LocationId, ct)))).Value;
 
         var interventions = new List<Intervention>(sc.Interventions ?? new());
@@ -145,7 +152,8 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
             if (sim.PlanId is { } planId) interventions.AddRange(await p.ForPlanAsync(planId, ct));
             if (sim.Tags?.Contains("with-dispatches") == true) interventions.AddRange(await p.ForActiveDispatchesAsync(sc.LocationId, ct));
         }
-        var effect = InterventionApplier.Apply(interventions, terrain, places, landscape.Adjustment, settings.Rules.Suppression, settings.Interventions);
+        bool timed = settings.Engine.Provider != "elmfire"; // o ELMFIRE não aceita tempo: aí tudo vale desde o início
+        var effect = InterventionApplier.Apply(interventions, terrain, places, landscape.Adjustment, settings.Rules.Suppression, settings.Interventions, sc.Start, timed);
 
         var spec = terrain.Spec;
         var ignitions = sc.Ignitions.Select(i => ToIgnitionCell(terrain, i)).ToList();
@@ -166,7 +174,8 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
 
         await Save(sim with { Progress = new("running_members", settings.Simulation.ProgressPercent.RunningMembers, 0, members.Count) });
         var report = Progress(sim.Id, members.Count, ct);
-        var results = await engine.RunAsync(new FireJob(spec.ToEngineGrid(), landscapeBuilder.Treat(landscape.Bands, spec.CellCount, effect.Treatments, settings.Interventions.FuelRemoval), effect.Adjustment, ignitions, sc.DurationMinutes, members, weather.SpinUpHours(wspec) * 60, sc.Engine?.Spotting ?? settings.Defaults.Spotting, burned, wspec.FuelMoisture, report.Report), ct);
+        var results = await engine.RunAsync(new FireJob(spec.ToEngineGrid(), landscapeBuilder.Treat(landscape.Bands, spec.CellCount, effect.Treatments, settings.Interventions.FuelRemoval), effect.Adjustment, ignitions, sc.DurationMinutes, members, weather.SpinUpHours(wspec) * 60, sc.Engine?.Spotting ?? settings.Defaults.Spotting, burned, wspec.FuelMoisture, report.Report,
+            effect.Windows is { Count: > 0 } w ? new SuppressionPlan(w, settings.Rules.Suppression.FullEffectUpToKwm, settings.Rules.Suppression.NoEffectFromKwm, settings.Interventions.MinSpreadFactor) : null), ct);
         await report.Idle(); // sem gravações de progresso atrasadas por cima do estado seguinte
         await Save(await GetAsync(sim.Id, ct) with { Progress = new("post_processing", settings.Simulation.ProgressPercent.PostProcessing, members.Count, members.Count) });
 

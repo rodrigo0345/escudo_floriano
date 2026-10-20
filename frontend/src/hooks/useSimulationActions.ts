@@ -102,9 +102,10 @@ export function useSimulationActions() {
       await loadImpact(run.id);
       // Flipping between the base and a plan from the plans panel keeps the minute on screen, so the two fires can be compared at the
       // same moment; any other load starts at T+30 (back at T+30 a fire that had grown would seem to have vanished).
-      const comparing = useAppStore.getState().tab === 'plans' && state.run !== null;
+      const tab = useAppStore.getState().tab;
+      const comparing = tab === 'plans' && state.run !== null;
       state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
-      if (!comparing && useAppStore.getState().tab !== 'plans') state.setTab('incident');
+      if (tab !== 'plans' && tab !== 'demo' && tab !== 'resources') state.setTab('incident'); // these tabs stay open while a run loads
     },
     [world, loadImpact],
   );
@@ -210,5 +211,5 @@ export function useSimulationActions() {
     if (run) await loadImpact(run.id);
   }, [loadImpact]);
 
-  return { selectScenario, showSimulationById, runSimulation, cancelJob, reloadImpact };
+  return { selectScenario, showSimulationById, runSimulation, showSimulation, cancelJob, reloadImpact };
 }

@@ -8,7 +8,8 @@
 
 Any teammate can propose a contract change, but **no agent may edit `api-spec/openapi.json` unilaterally**:
 1. **Propose first:** Stop and present the proposed contract diff to the teammate running the session (using your tool's interactive question feature if multiple design options exist).
-2. **Send a Contract Change Packet** (if handing off to `backend/`):
+2. **Output a Contract Change Packet in chat and suggest opening a GitHub Issue:**
+   Always print the packet below in your response first (so it can be copy-pasted directly), and ask the teammate running the session if you should also open a GitHub Issue via `gh issue create`:
    ```markdown
    [CONTRACT PROPOSAL: <vertical> → openapi.json]
    - Endpoint / Schema: <e.g. POST /plans/validate or PlanAction>
@@ -27,7 +28,10 @@ When two verticals fail to talk to each other (`400`, `422`, `500`, missing fiel
 2. **Localize the single earliest split:**
    - **REST boundary (`frontend ↔ backend` or `agents ↔ backend`):** Compare the exact HTTP method, URL, status code, and JSON payload against `api-spec/openapi.json`.
    - **Engine seam (`backend ↔ engine`):** Compare `/jobs/<id>` (`meta.json`, `landscape.i16`, `adj.f32`, `adj_<m>.f32`, `phi0.u8`, `wind_<m>.f32`, `wx_<m>.csv`, `toa.i16`, `flin.u16`, `crown.u8`) between `backend/src/FireTrace.Engine/Elmfire/ElmfireJobFiles.cs` and `engine/runner.py`.
-3. **Output a short Boundary Bug Packet** for the owning teammate:
+3. **If the fault is in your OWN vertical → Fix it directly:**
+   Do NOT output a packet or create an issue for bugs in your own vertical (unless instructed otherwise). Fix the code directly, verify it, and move on.
+4. **If the fault is in ANOTHER vertical → Output a Boundary Bug Packet in chat and suggest opening a GitHub Issue (`gh issue create`):**
+   Always print the packet below in your response first (so it can be copy-pasted), and ask if you should open a GitHub Issue (`gh issue create --title "[BOUNDARY SPLIT: <caller> ↔ <callee>] <short summary>" --body "..."`) so the owning teammate and their agent (`gh issue list` / `gh issue view`) can track and close it directly:
    ```markdown
    [BOUNDARY SPLIT: <caller vertical> ↔ <callee vertical>]
    - Endpoint / File: <URL or /jobs/<id> file>

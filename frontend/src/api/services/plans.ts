@@ -1,18 +1,97 @@
 import { http } from '../httpClient';
 import { fetchAllPages } from '../pagination';
-import type { Plan, PlanSummary, Simulation } from '../types';
+import type {
+  Action,
+  ActionPatch,
+  Page,
+  Plan,
+  PlanInput,
+  PlanPatch,
+  PlanSimulationRequest,
+  PlanStatus,
+  PlanSummary,
+  PlanValidation,
+  Simulation,
+} from '../types';
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+export interface PlanQueryParams {
+  locationId?: string;
+  simulationId?: string;
+  variant?: string;
+  status?: PlanStatus;
+  organizationId?: string;
+  limit?: number;
+  cursor?: string;
+}
 
-/** The plans the agents published for a baseline simulation (`GET /plans?simulationId=`), and their what-if runs. */
 export const plansApi = {
-  /** Plans whose basis is this baseline simulation. */
-  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
-
-  get: async (planId: string): Promise<Plan> => {
-    const { data } = await http.get<Plan>(`/plans/${planId}`);
+  list: async (params: PlanQueryParams = {}): Promise<Page<PlanSummary>> => {
+    const { data } = await http.get<Page<PlanSummary>>('/plans', { params });
     return data;
   },
+
+  all: (params: Omit<PlanQueryParams, 'limit' | 'cursor'> = {}): Promise<PlanSummary[]> =>
+    fetchAllPages<PlanSummary>('/plans', params as Record<string, string>),
+
+  get: async (id: string): Promise<Plan> => {
+    const { data } = await http.get<Plan>(`/plans/${id}`);
+    return data;
+  },
+
+  create: async (body: PlanInput): Promise<Plan> => {
+    const { data } = await http.post<Plan>('/plans', body);
+    return data;
+  },
+
+  validate: async (body: PlanInput): Promise<PlanValidation> => {
+    const { data } = await http.post<PlanValidation>('/plans/validate', body);
+    return data;
+  },
+
+  patch: async (id: string, patch: PlanPatch): Promise<Plan> => {
+    const { data } = await http.patch<Plan>(`/plans/${id}`, patch, {
+      headers: { 'Content-Type': 'application/merge-patch+json' },
+    });
+    return data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await http.delete(`/plans/${id}`);
+  },
+
+  select: async (id: string): Promise<Plan> => {
+    const { data } = await http.post<Plan>(`/plans/${id}/select`, {});
+    return data;
+  },
+
+  activate: async (id: string): Promise<Plan> => {
+    const { data } = await http.post<Plan>(`/plans/${id}/activate`, {});
+    return data;
+  },
+
+  simulate: async (id: string, request?: PlanSimulationRequest): Promise<Simulation> => {
+    const { data } = await http.post<Simulation>(`/plans/${id}/simulate`, request ?? {});
+    return data;
+  },
+
+  actions: async (id: string): Promise<Action[]> => fetchAllPages<Action>(`/plans/${id}/actions`),
+
+  getAction: async (id: string, actionId: string): Promise<Action> => {
+    const { data } = await http.get<Action>(`/plans/${id}/actions/${actionId}`);
+    return data;
+  },
+
+  patchAction: async (id: string, actionId: string, patch: ActionPatch): Promise<Action> => {
+    const { data } = await http.patch<Action>(`/plans/${id}/actions/${actionId}`, patch, {
+      headers: { 'Content-Type': 'application/merge-patch+json' },
+    });
+    return data;
+  },
+
+  // ---- helpers of the plans panel (agents' plans for a baseline and their what-if runs)
+
+  /** Plans whose basis is this baseline simulation (`GET /plans?simulationId=`). */
+  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
 
   /**
    * The latest finished what-if run of each plan, keyed by plan id. The API has no "simulations of this plan" filter,
@@ -30,8 +109,8 @@ export const plansApi = {
     return latest;
   },
 
-  /** "What happens if we apply this plan?": runs the what-if and waits for it (a failed run is reported, never thrown away silently). */
-  simulate: async (planId: string, baselineSimulationId: string): Promise<Simulation> => {
+  /** "What happens if we apply this plan?": runs the what-if and waits for it (a failed run is reported, never dropped silently). */
+  simulateAndWait: async (planId: string, baselineSimulationId: string): Promise<Simulation> => {
     const { data } = await http.post<Simulation>(
       `/plans/${planId}/simulate`,
       { baselineSimulationId, label: `what-if ${planId}` },
@@ -39,7 +118,7 @@ export const plansApi = {
     );
     let sim = data;
     while (sim.status === 'queued' || sim.status === 'running') {
-      await sleep(1500);
+      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
       sim = (await http.get<Simulation>(`/simulations/${sim.id}`)).data;
     }
     if (sim.status !== 'succeeded') throw new Error(sim.error?.detail ?? sim.error?.title ?? `Simulação ${sim.status}`);

@@ -15,7 +15,8 @@ public sealed class RoadCuts
 
     RoadCuts(int[] from, int[] until) { From = from; Until = until; }
 
-    public static RoadCuts Compute(RoadNetwork net, int[] ignition, int[] burnMinutes)
+    /// <param name="radiusCells">Quantas células à volta do troço contam como "perto do fogo" (1 = as vizinhas; a folga de segurança dos percursos usa mais).</param>
+    public static RoadCuts Compute(RoadNetwork net, int[] ignition, int[] burnMinutes, int radiusCells = 1)
     {
         int w = net.Spec.Width, h = net.Spec.Height;
         var from = new int[net.Edges.Count]; var until = new int[net.Edges.Count];
@@ -25,8 +26,8 @@ public sealed class RoadCuts
             foreach (int cell in net.Edges[k].CellIdx)
             {
                 int cx = cell % w, cy = cell / w;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++)
+                for (int dy = -radiusCells; dy <= radiusCells; dy++)
+                    for (int dx = -radiusCells; dx <= radiusCells; dx++)
                     {
                         int nx = cx + dx, ny = cy + dy;
                         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;

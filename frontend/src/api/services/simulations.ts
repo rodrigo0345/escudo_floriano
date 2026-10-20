@@ -39,10 +39,10 @@ export const simulationsApi = {
     await http.post(`/simulations/${simulationId}/cancel`, {});
   },
 
-  /** The most recent successfully-finished simulation of a scenario, if any — reused instead of re-running a built-in scenario every time it's selected. */
+  /** The most recent successfully-finished baseline simulation of a scenario (what-if runs of plans are excluded), if any — reused instead of re-running a built-in scenario every time it's selected. */
   latestSucceeded: async (scenarioId: string): Promise<Simulation | null> => {
     const { data } = await http.get<{ items: Simulation[] }>('/simulations', {
-      params: { scenarioId, status: 'succeeded', limit: 1 },
+      params: { scenarioId, status: 'succeeded', kind: 'baseline', limit: 1 },
     });
     return data.items[0] ?? null;
   },

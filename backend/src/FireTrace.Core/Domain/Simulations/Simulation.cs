@@ -18,6 +18,7 @@ public sealed record Simulation : Entity
     public required string LocationId { get; init; }
     public SimulationProgress? Progress { get; init; }
     public SimulationStats? Stats { get; init; }
+    public List<CrewExposure>? CrewExposures { get; init; }
     public ProblemInfo? Error { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
     public DateTimeOffset? FinishedAt { get; init; }

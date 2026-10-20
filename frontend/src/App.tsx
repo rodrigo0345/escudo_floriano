@@ -3,9 +3,11 @@ import { useEffect } from 'react';
 import { PlaybackBar } from '@/components/layout/PlaybackBar';
 import { TopBar } from '@/components/layout/TopBar';
 import styles from '@/components/layout/layout.module.css';
+import { ResourcesView } from '@/components/resources/ResourcesView';
 import { SidePanel } from '@/components/panels/SidePanel';
 import { Viewport } from '@/components/viewport/Viewport';
 import { EngineProvider, useWorld } from '@/engine/EngineContext';
+import { useDemoSync } from '@/hooks/useDemoSync';
 import { useBootstrap } from '@/hooks/useBootstrap';
 import { useFrameLoop } from '@/hooks/useFrameLoop';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
@@ -23,6 +25,7 @@ function Controllers() {
   useWorldLoader();
   useFrameLoop();
   useWorldSync();
+  useDemoSync();
 
   // once the map is up, show the simulation named by `?sim=<id>` (a baseline or a plan's what-if), else the first built-in scenario
   useEffect(() => {
@@ -35,6 +38,12 @@ function Controllers() {
   return null;
 }
 
+function Workspace() {
+  const tab = useAppStore((s) => s.tab);
+  if (tab === 'resources') return <ResourcesView />;
+  return null;
+}
+
 export function App() {
   return (
     <EngineProvider>
@@ -43,6 +52,7 @@ export function App() {
         <div className={styles.main}>
           <Viewport />
           <SidePanel />
+          <Workspace />
         </div>
         <PlaybackBar />
       </div>
