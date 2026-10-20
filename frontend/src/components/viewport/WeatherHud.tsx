@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+﻿import { useEffect, useMemo, useRef } from 'react';
 
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
-import { sampleWeatherAt } from '@/domain/weather';
+import { fireRiskLevel, sampleWeatherAt } from '@/domain/weather';
 import { useEngine } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
@@ -51,8 +51,25 @@ export function WeatherHud() {
         <small>
           de {compass(weather.windFromDeg)} · {Math.round(weather.windFromDeg)}° (sopra para {compass(to)})
         </small>
-        <small>{weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}</small>
+        <small>
+          {weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}
+          {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ☁️ ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
+        </small>
       </div>
+      {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
+        <div className={styles.hudPrecip}>
+          🌧️ Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
+        </div>
+      ) : null}
+      {fireRiskLevel(weather) === 'extreme' ? (
+        <div className={styles.extremeAlert} title="Condições meteorológicas extremas de propagação de incêndio rural">
+          🚨 <b>RISCO EXTREMO · Regra 30-30-30</b> (T&gt;30°C · HR&lt;30% · V&gt;30 km/h)
+        </div>
+      ) : fireRiskLevel(weather) === 'high' ? (
+        <div className={styles.highRiskAlert} title="Calor excessivo e ar seco aumentam significativamente a combustibilidade dos combustíveis finos">
+          ⚠️ <b>Risco Elevado · Calor e Seca</b> ({Math.round(weather.tempC)}°C · {Math.round(weather.humidityPct)}% HR)
+        </div>
+      ) : null}
       <div className={styles.hudRows}>
         <span title="Temperatura do ar do modelo meteorológico; não é a temperatura do fogo">Temp. do ar</span>
         <b>{Math.round(weather.tempC)} °C</b>

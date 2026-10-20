@@ -1,4 +1,4 @@
-import type { Facility, Location, Place, RoadCollection, VegetationInfo, WaterPoint } from '@/api';
+﻿import type { Facility, Location, Place, RoadCollection, VegetationInfo, WaterPoint } from '@/api';
 import type { Georef } from '@/domain/georef';
 
 import { AssetLayer } from './layers/assetLayer';
@@ -8,6 +8,7 @@ import { UnitLayer } from './layers/unitLayer';
 import { RoadLayer } from './layers/roadLayer';
 import { WaterLayer } from './layers/waterLayer';
 import { WindLayer } from './layers/windLayer';
+import { RainLayer } from './layers/rainLayer';
 import type { Pickable } from './picking';
 import type { SceneEngine } from './sceneEngine';
 import { SmokeSystem } from './smokeSystem';
@@ -40,6 +41,7 @@ export class World {
   readonly fire: FireLayer;
   readonly units: UnitLayer;
   readonly smoke: SmokeSystem;
+  readonly rain: RainLayer;
 
   constructor(
     private readonly engine: SceneEngine,
@@ -57,6 +59,7 @@ export class World {
     this.fire = new FireLayer(geo);
     this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
+    this.rain = new RainLayer();
 
     const scene = engine.scene;
     scene.add(
@@ -69,6 +72,7 @@ export class World {
       this.fire.group,
       this.units.group,
       this.smoke.points,
+      this.rain.group,
     );
   }
 

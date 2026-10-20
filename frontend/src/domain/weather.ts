@@ -1,4 +1,4 @@
-import type { WeatherSample } from '@/api';
+﻿import type { WeatherSample } from '@/api';
 
 import { lerp, lerpDeg } from './colors';
 
@@ -12,6 +12,30 @@ export interface InterpolatedWeather {
   tempC: number;
   humidityPct: number;
   fineFuelMoisturePct: number | null;
+  precipitationMmH: number | null;
+  cloudCoverPct: number | null;
+  solarRadiationWm2: number | null;
+}
+
+export type FireRiskLevel = 'normal' | 'high' | 'extreme';
+
+/**
+ * Evaluates Portuguese rural fire risk:
+ * - 'extreme': "Regra dos 30-30-30" (T >= 30 °C, HR <= 30 %, Wind or gusts >= 30 km/h).
+ * - 'high': Severe heat and dry air (T >= 30 °C, HR <= 30 %).
+ * - 'normal': Standard risk.
+ */
+export function fireRiskLevel(w: InterpolatedWeather | null | undefined): FireRiskLevel {
+  if (!w) return 'normal';
+  const wind30 = w.windKmh >= 30 || (w.gustKmh != null && w.gustKmh >= 30);
+  if (w.tempC >= 30 && w.humidityPct <= 30 && wind30) return 'extreme';
+  if (w.tempC >= 30 && w.humidityPct <= 30) return 'high';
+  return 'normal';
+}
+
+/** Portuguese operational fire-weather indicator: "Regra dos 30-30-30" (T >= 30 °C, HR <= 30 %, Wind >= 30 km/h). */
+export function isExtremeFireWeather(w: InterpolatedWeather | null | undefined): boolean {
+  return fireRiskLevel(w) === 'extreme';
 }
 
 /** Mean conditions of a weather series, with wind direction averaged on the circle. */
@@ -103,6 +127,9 @@ export function sampleWeatherAt(series: WeatherSample[], startMs: number, minute
       a.fuelMoisture?.dead1hPct != null && b.fuelMoisture?.dead1hPct != null
         ? lerp(a.fuelMoisture.dead1hPct, b.fuelMoisture.dead1hPct, f)
         : null,
+    precipitationMmH: a.precipitationMmH != null && b.precipitationMmH != null ? lerp(a.precipitationMmH, b.precipitationMmH, f) : a.precipitationMmH ?? b.precipitationMmH ?? null,
+    cloudCoverPct: a.cloudCoverPct != null && b.cloudCoverPct != null ? lerp(a.cloudCoverPct, b.cloudCoverPct, f) : a.cloudCoverPct ?? b.cloudCoverPct ?? null,
+    solarRadiationWm2: a.solarRadiationWm2 != null && b.solarRadiationWm2 != null ? lerp(a.solarRadiationWm2, b.solarRadiationWm2, f) : a.solarRadiationWm2 ?? b.solarRadiationWm2 ?? null,
   };
 }
 
@@ -114,6 +141,9 @@ function toInterpolated(a: WeatherSample, _b: WeatherSample): InterpolatedWeathe
     tempC: a.tempC ?? 0,
     humidityPct: a.humidityPct ?? 0,
     fineFuelMoisturePct: a.fuelMoisture?.dead1hPct ?? null,
+    precipitationMmH: a.precipitationMmH ?? null,
+    cloudCoverPct: a.cloudCoverPct ?? null,
+    solarRadiationWm2: a.solarRadiationWm2 ?? null,
   };
 }
 
