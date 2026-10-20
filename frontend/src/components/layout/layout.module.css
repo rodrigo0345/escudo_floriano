@@ -1,10 +1,11 @@
 .app {
   height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .main {
+  grid-row: 3;
   position: relative;
   display: grid;
   grid-template-columns: 1fr 400px;
@@ -12,6 +13,7 @@
 }
 
 .top {
+  grid-row: 1;
   display: flex;
   align-items: stretch;
   gap: 22px;
@@ -83,8 +85,8 @@
 }
 
 .tabs button.on {
-  background: transparent;
-  color: var(--fg);
+  background: var(--acc);
+  color: #fff;
   border-bottom-color: var(--acc);
 }
 
@@ -120,7 +122,89 @@
   border-color: var(--mut);
 }
 
+.helpLink {
+  color: var(--mut);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 11px;
+  font-size: 13px;
+}
+
+.helpLink:hover {
+  color: var(--fg);
+  border-color: var(--mut);
+}
+
+.shortcutBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 8, 12, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.shortcutModal {
+  width: min(520px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.55);
+}
+
+.shortcutHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.shortcutHead h3 {
+  margin: 0 0 2px;
+}
+
+.shortcutHead button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.shortcutGrid {
+  display: grid;
+  gap: 5px;
+}
+
+.shortcutRow {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--panel2);
+  font-size: 12px;
+}
+
+.shortcutRow kbd {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 2px 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .bar {
+  grid-row: 4;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -165,9 +249,43 @@
   font-size: 11px;
 }
 
-.scrub {
+.scrubWrap {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 120px;
+}
+
+.scrub {
+  width: 100%;
   accent-color: var(--acc);
+}
+
+.flags {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.flags i {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 13px;
+  margin-left: -1px;
+  border-radius: 1px;
+  transform: translateY(-50%);
+}
+
+.flagWeather {
+  background: var(--acc);
+  opacity: 0.8;
+}
+
+.flagIgnition {
+  background: #ff3b30;
+  height: 17px;
 }
 
 @media (max-width: 900px) {

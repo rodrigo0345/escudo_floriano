@@ -14,6 +14,8 @@ import type {
   Simulation,
 } from '../types';
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export interface PlanQueryParams {
   locationId?: string;
   simulationId?: string;
@@ -32,6 +34,9 @@ export const plansApi = {
 
   all: (params: Omit<PlanQueryParams, 'limit' | 'cursor'> = {}): Promise<PlanSummary[]> =>
     fetchAllPages<PlanSummary>('/plans', params as Record<string, string>),
+
+  /** Plans whose basis is this baseline simulation. */
+  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
 
   get: async (id: string): Promise<Plan> => {
     const { data } = await http.get<Plan>(`/plans/${id}`);
@@ -69,9 +74,24 @@ export const plansApi = {
     return data;
   },
 
-  simulate: async (id: string, request?: PlanSimulationRequest): Promise<Simulation> => {
-    const { data } = await http.post<Simulation>(`/plans/${id}/simulate`, request ?? {});
-    return data;
+  /**
+   * Starts the plan's what-if. A baseline id waits for the run (the plans panel compares the two fires);
+   * an explicit request returns the queued simulation, leaving polling to the caller.
+   */
+  simulate: async (id: string, request?: PlanSimulationRequest | string): Promise<Simulation> => {
+    const wait = typeof request === 'string';
+    const body: PlanSimulationRequest = typeof request === 'string'
+      ? { baselineSimulationId: request, label: `what-if ${id}` }
+      : request ?? {};
+    const { data } = await http.post<Simulation>(`/plans/${id}/simulate`, body, wait ? { headers: { Prefer: 'wait=60' } } : undefined);
+    if (!wait) return data;
+    let sim = data;
+    while (sim.status === 'queued' || sim.status === 'running') {
+      await sleep(1500);
+      sim = (await http.get<Simulation>(`/simulations/${sim.id}`)).data;
+    }
+    if (sim.status !== 'succeeded') throw new Error(sim.error?.detail ?? sim.error?.title ?? `Simulação ${sim.status}`);
+    return sim;
   },
 
   actions: async (id: string): Promise<Action[]> => fetchAllPages<Action>(`/plans/${id}/actions`),
@@ -86,5 +106,21 @@ export const plansApi = {
       headers: { 'Content-Type': 'application/merge-patch+json' },
     });
     return data;
+  },
+
+  /**
+   * The latest finished what-if run of each plan, keyed by plan id. The API has no "simulations of this plan" filter,
+   * so every finished what-if is listed and matched on its `planId` here.
+   */
+  whatIfRuns: async (planIds: string[]): Promise<Map<string, Simulation>> => {
+    const wanted = new Set(planIds);
+    const latest = new Map<string, Simulation>();
+    for (const sim of await fetchAllPages<Simulation>('/simulations', { kind: 'what_if', status: 'succeeded' })) {
+      const planId = sim.planId as string | null | undefined;
+      if (!planId || !wanted.has(planId)) continue;
+      const known = latest.get(planId);
+      if (!known || String(sim.finishedAt ?? '') > String(known.finishedAt ?? '')) latest.set(planId, sim);
+    }
+    return latest;
   },
 };

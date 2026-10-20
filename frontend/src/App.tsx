@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 
+import { KeyboardShortcuts } from '@/components/layout/KeyboardShortcuts';
 import { PlaybackBar } from '@/components/layout/PlaybackBar';
 import { TopBar } from '@/components/layout/TopBar';
 import styles from '@/components/layout/layout.module.css';
+import { MetricsBar } from '@/components/panels/MetricsBar';
 import { ResourcesView } from '@/components/resources/ResourcesView';
 import { SidePanel } from '@/components/panels/SidePanel';
 import { Viewport } from '@/components/viewport/Viewport';
@@ -19,7 +21,7 @@ import { useAppStore } from '@/store/appStore';
 function Controllers() {
   const world = useWorld();
   const scenarios = useAppStore((s) => s.data?.scenarios);
-  const { selectScenario } = useSimulationActions();
+  const { selectScenario, showSimulationById } = useSimulationActions();
 
   useBootstrap();
   useWorldLoader();
@@ -27,10 +29,12 @@ function Controllers() {
   useWorldSync();
   useDemoSync();
 
-  // once the map is up, show the first built-in scenario (a cached result if one exists)
+  // once the map is up, show the simulation named by `?sim=<id>` (a baseline or a plan's what-if), else the first built-in scenario
   useEffect(() => {
     if (!world || !scenarios?.length) return;
-    void selectScenario(scenarios[0].id as string);
+    const wanted = new URLSearchParams(window.location.search).get('sim');
+    if (wanted) void showSimulationById(wanted);
+    else void selectScenario(scenarios[0].id as string);
   }, [world, scenarios]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;
@@ -47,6 +51,7 @@ export function App() {
     <EngineProvider>
       <div className={styles.app}>
         <TopBar />
+        <MetricsBar />
         <div className={styles.main}>
           <Viewport />
           <SidePanel />
@@ -54,6 +59,7 @@ export function App() {
         </div>
         <PlaybackBar />
       </div>
+      <KeyboardShortcuts />
       <Controllers />
     </EngineProvider>
   );

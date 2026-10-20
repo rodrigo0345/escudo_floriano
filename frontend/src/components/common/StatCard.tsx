@@ -2,9 +2,9 @@ import type { ReactNode } from 'react';
 
 import styles from './common.module.css';
 
-export function StatCard({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export function StatCard({ label, value, sub, className }: { label: string; value: ReactNode; sub?: ReactNode; className?: string }) {
   return (
-    <div className={styles.card}>
+    <div className={`${styles.card} ${className ?? ''}`} title={typeof sub === 'string' ? sub : undefined}>
       <small>{label}</small>
       <b>{value}</b>
       {sub ? <small>{sub}</small> : null}
