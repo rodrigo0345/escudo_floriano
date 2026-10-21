@@ -45,6 +45,7 @@ export interface TimelineRangeEvent {
   windKmh?: number;          // for wind shift / storm (default 38 km/h)
   windFromDeg?: number;      // for wind shift (default 270°)
   windFactor?: number;       // for wind scale (default 1.7)
+  applyToGusts?: boolean;    // for wind scale (default true: scale gusts together with mean wind)
   tempDeltaC?: number;       // for temperature shift (-10 to +10 °C)
   humidityDeltaPct?: number; // for humidity shift (-30 to +30 %)
 }
@@ -465,7 +466,7 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
       events.push({
         type: 'wind_scale',
         enabled: true,
-        applyToGusts: true,
+        applyToGusts: ce.applyToGusts ?? true,
         window: win,
         factor: ce.windFactor ?? 1.7,
       });
@@ -592,6 +593,7 @@ export function extractTimelineEventsFromSnapshot(
         startMinute: safeStart,
         endMinute: safeEnd,
         windFactor: e.factor ?? 1.7,
+        applyToGusts: (e as { applyToGusts?: boolean }).applyToGusts ?? true,
       });
     } else if (e.type === 'front_passage') {
       const at = 'at' in e && typeof e.at === 'object' && 'offsetMinutes' in e.at ? e.at.offsetMinutes ?? 0 : 0;

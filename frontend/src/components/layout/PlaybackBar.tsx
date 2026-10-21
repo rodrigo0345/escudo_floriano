@@ -78,6 +78,7 @@ export function PlaybackBar() {
   const [popoverWindFactor, setPopoverWindFactor] = useState(1.7);
   const [popoverTempDelta, setPopoverTempDelta] = useState(6);
   const [popoverHumDelta, setPopoverHumDelta] = useState(-20);
+  const [popoverApplyToGusts, setPopoverApplyToGusts] = useState(true);
   const [popoverBuildupMin, setPopoverBuildupMin] = useState(20);
   const [popoverDissipationMin, setPopoverDissipationMin] = useState(20);
 
@@ -160,6 +161,7 @@ export function PlaybackBar() {
     if (ev.windKmh != null) setPopoverWindKmh(ev.windKmh);
     if (ev.windFromDeg != null) setPopoverWindDeg(ev.windFromDeg);
     if (ev.windFactor != null) setPopoverWindFactor(ev.windFactor);
+    setPopoverApplyToGusts(ev.applyToGusts ?? true);
     if (ev.tempDeltaC != null) setPopoverTempDelta(ev.tempDeltaC);
     if (ev.humidityDeltaPct != null) setPopoverHumDelta(ev.humidityDeltaPct);
     setPopoverBuildupMin(ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
@@ -215,6 +217,7 @@ export function PlaybackBar() {
       windKmh: popoverType === 'wind_shift' || popoverType === 'storm' ? popoverWindKmh : undefined,
       windFromDeg: popoverType === 'wind_shift' ? popoverWindDeg : undefined,
       windFactor: popoverType === 'wind_scale' ? popoverWindFactor : undefined,
+      applyToGusts: popoverType === 'wind_scale' ? popoverApplyToGusts : undefined,
       tempDeltaC: popoverType === 'heat_dry' || popoverType === 'storm' ? popoverTempDelta : undefined,
       humidityDeltaPct: popoverType === 'heat_dry' || popoverType === 'clouds' ? popoverHumDelta : undefined,
       buildupMinutes: (popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') ? popoverBuildupMin : undefined,
@@ -551,19 +554,29 @@ export function PlaybackBar() {
             )}
 
             {popoverType === 'wind_scale' && (
-              <label className={styles.popoverField}>
-                <span>
-                  Multiplicador de Rajada: <b>{popoverWindFactor}x</b>
-                </span>
-                <input
-                  type="range"
-                  min={1.1}
-                  max={3.0}
-                  step={0.1}
-                  value={popoverWindFactor}
-                  onChange={(e) => setPopoverWindFactor(+e.target.value)}
-                />
-              </label>
+              <>
+                <label className={styles.popoverField}>
+                  <span>
+                    Multiplicador de Vento: <b>{popoverWindFactor}x</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={1.1}
+                    max={3.0}
+                    step={0.1}
+                    value={popoverWindFactor}
+                    onChange={(e) => setPopoverWindFactor(+e.target.value)}
+                  />
+                </label>
+                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={popoverApplyToGusts}
+                    onChange={(e) => setPopoverApplyToGusts(e.target.checked)}
+                  />
+                  <span style={{ fontSize: '0.85em' }}>Aplicar também às rajadas (vento contínuo + rajadas)</span>
+                </label>
+              </>
             )}
 
             {popoverType === 'heat_dry' && (
