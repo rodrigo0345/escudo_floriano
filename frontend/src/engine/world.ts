@@ -6,6 +6,7 @@ import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
 import { burnStyles, burnStyleTexture } from './burnShader';
 import { FlameLayer } from './layers/flameLayer';
+import { FleetLayer } from './layers/fleetLayer';
 import { PhotorealLayer, type CitySource } from './layers/photorealLayer';
 import { PlanLayer } from './layers/planLayer';
 import { UnitLayer } from './layers/unitLayer';
@@ -52,6 +53,8 @@ export class World {
   readonly city: PhotorealLayer;
   /** The flames, in 3D, where the fire is burning at the minute shown. */
   readonly flames: FlameLayer;
+  /** Every registered vehicle not in a replayed operation: parked at its station, or where the API says it is. */
+  readonly fleet: FleetLayer;
   readonly rain: RainLayer;
   readonly clouds: CloudLayer;
 
@@ -75,6 +78,7 @@ export class World {
     this.terrain.setBurnStyle(burnStyleTexture(styles, geo.gridWidth, geo.gridHeight));
     this.city = new PhotorealLayer(geo, location.id as string, this.terrain.burn);
     this.flames = new FlameLayer(geo);
+    this.fleet = new FleetLayer(geo);
     this.flames.setStyles(styles);
     // while the city draws, the terrain sinks just under it (it fills any gap) and the overlays get their own pass, so buildings and trees never hide them
     this.city.onVisibleChange = (visible) => {
@@ -90,6 +94,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.fleet.group,
       this.roads.mesh,
       this.assets.group,
       this.water.group,
@@ -110,12 +115,12 @@ export class World {
   /** What the operator reads the map with: drawn over the 3D city in their own pass (hidden by hills, never by buildings or trees). */
   private get overlays(): THREE.Object3D[] {
     // the flames too: they are the burning trees, so the photographed canopy must not swallow them
-    return [this.roads.mesh, this.assets.group, this.water.group, this.plan.group, this.fire.group, this.units.group, this.flames.mesh];
+    return [this.roads.mesh, this.assets.group, this.water.group, this.plan.group, this.fire.group, this.units.group, this.fleet.group, this.flames.mesh];
   }
 
   /** Objects that react to hover (facilities, places, water points, the plan's actions). */
   get pickables(): Pickable[] {
-    return [...this.units.pickables, ...this.assets.pickables, ...this.water.pickables, ...this.plan.pickables];
+    return [...this.units.pickables, ...this.fleet.pickables, ...this.assets.pickables, ...this.water.pickables, ...this.plan.pickables];
   }
 
   /** Shows or hides the 3D city. Close-up navigation (a nearer camera plane and zoom limit) comes with it. */
@@ -142,6 +147,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.fleet.group,
       this.roads.mesh,
       this.assets.group,
       this.water.group,
@@ -160,6 +166,7 @@ export class World {
     this.engine.setOverlayPass(null);
     this.city.dispose();
     this.flames.dispose();
+    this.fleet.clear();
     this.terrain.dispose();
     this.roads.mesh.geometry.dispose();
     this.smoke.points.geometry.dispose();

@@ -13,8 +13,11 @@ import { createWriter } from '@/usecases/dispatchDemo';
  */
 export function useDemoSync(): void {
   const world = useWorld();
-  const { tracks, stage, dispatchIds, plan, exposures } = useDemoStore();
+  const { tracks, stage, dispatchIds, plan, exposures, assignments } = useDemoStore();
   const organizations = useResourcesStore((s) => s.organizations);
+  const vehicles = useResourcesStore((s) => s.vehicles);
+  const stations = useResourcesStore((s) => s.stations);
+  const loaded = useResourcesStore((s) => s.loaded);
   const t = useAppStore((s) => s.t);
   const writer = useRef(createWriter());
 
@@ -22,8 +25,21 @@ export function useDemoSync(): void {
     if (!world) return;
     const type = (id: string) => organizations.find((o) => o.id === id)?.type ?? 'other';
     const name = (id: string) => organizations.find((o) => o.id === id)?.shortName ?? id;
-    world.units.setTracks(tracks, (id) => ORG_COLOR[type(id)] ?? '#9aa0a8', name, exposures);
-  }, [world, tracks, organizations, exposures]);
+    const targets = new Map(assignments.map((a) => [a.unit.id, { lat: a.target.lat, lon: a.target.lon, label: a.target.label }]));
+    world.units.setTracks(tracks, { colorOf: (id) => ORG_COLOR[type(id)] ?? '#9aa0a8', orgName: name, orgType: type, exposures, targets });
+    // the fleet layer draws every other registered vehicle, so it has to know which ones the replay now owns
+    const { vehicles, stations } = useResourcesStore.getState();
+    world.fleet.setVehicles(vehicles, stations, organizations, world.units.unitIds);
+  }, [world, tracks, organizations, exposures, assignments]);
+
+  // the registered fleet is on the map from the start (parked at the stations), not only once an operation is planned
+  useEffect(() => {
+    if (!loaded) void useResourcesStore.getState().load();
+  }, [loaded]);
+
+  useEffect(() => {
+    if (world) world.fleet.setVehicles(vehicles, stations, organizations, world.units.unitIds);
+  }, [world, vehicles, stations, organizations]);
 
   useEffect(() => {
     writer.current = createWriter();
