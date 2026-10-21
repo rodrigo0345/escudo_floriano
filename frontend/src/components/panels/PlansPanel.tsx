@@ -163,9 +163,12 @@ export function PlansPanel() {
     if (!silent) setLoading(true); // a background refresh must not flash "A carregar…"
     setError(null);
     try {
+      const locationId = useAppStore.getState().locationId;
       const baseline = await simulationsApi.get(baseId);
       const bySim = await plansApi.listForSimulation(baseId);
-      const listed = bySim.length > 0 ? bySim : (baseline.scenarioId ? await plansApi.all({ scenarioId: baseline.scenarioId }) : []);
+      const listed = bySim.length > 0
+        ? bySim
+        : (baseline.scenarioId ? await plansApi.all({ locationId: locationId ?? undefined, scenarioId: baseline.scenarioId }) : []);
       const ordered = [...listed].sort((a, b) => String(a.variant ?? '').localeCompare(String(b.variant ?? '')) || String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
       setBase(baseline);
       setPlans(ordered);

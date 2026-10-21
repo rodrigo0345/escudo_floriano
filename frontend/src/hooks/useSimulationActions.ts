@@ -53,6 +53,12 @@ export function useSimulationActions() {
     async (simulation: Simulation) => {
       const state = useAppStore.getState();
       if (!world || !state.data) return;
+      if (simulation.locationId && state.locationId && simulation.locationId !== state.locationId) {
+        // Location mismatch: the 3D terrain, heightmap, and georef belong to another location.
+        // Navigate to the correct location URL to load the matching terrain and simulation!
+        window.location.search = `?loc=${encodeURIComponent(simulation.locationId)}&sim=${encodeURIComponent(simulation.id as string)}`;
+        return;
+      }
       const run = await loadRunData(simulation);
       const { data } = state;
       world.terrain.setFireData(run.ign, run.gridWidth, run.gridHeight, data.burnMinutes, run.inten);
