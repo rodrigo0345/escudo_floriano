@@ -15,7 +15,7 @@ A unit that cannot arrive is not assigned. The backend uses the ``start`` of eac
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .client import ApiProblem, FiretraceClient
@@ -43,6 +43,13 @@ class Travel:
     last_mile_minutes: float = 0.0
     geometry: dict[str, Any] | None = None
     """The road the backend routed the unit along (GeoJSON LineString): the plan carries it so the unit is shown on the road, not across the terrain."""
+    delay_minutes: float = 0.0
+    """Minutes before the unit can set off from its station: a reinforcement from another district reaches its entry point that long after the call."""
+
+    @property
+    def arrival_minutes(self) -> float | None:
+        """When the unit is on the spot, counted from the decision: the delay, then the drive (``None`` if the drive is unknown)."""
+        return None if self.eta_minutes is None else self.delay_minutes + self.eta_minutes
 
     def describe(self) -> str:
         if not self.reachable:
@@ -50,7 +57,8 @@ class Travel:
         if self.eta_minutes is None:
             return f"chegada desconhecida ({self.reason})"
         extra = f" + {self.last_mile_m:.0f} m ({self.last_mile_minutes:.0f} min) fora da estrada" if self.last_mile_m else ""
-        return f"chega em ~{self.eta_minutes:.0f} min ({self.drive_minutes:.0f} min de estrada{extra})"
+        coming = f"reforço: entra no concelho ~{self.delay_minutes:.0f} min após o pedido, " if self.delay_minutes else ""
+        return f"{coming}chega em ~{self.delay_minutes + self.eta_minutes:.0f} min ({self.drive_minutes:.0f} min de estrada{extra})"
 
 
 def centroid(geometry: dict[str, Any] | None) -> dict[str, float] | None:
@@ -77,10 +85,14 @@ class TravelPlanner:
 
     def __init__(
         self, client: FiretraceClient, *, location_id: str, simulation_id: str, at: str | None, rules: dict[str, Any] | None, cache: dict[Any, Travel] | None = None,
-        avoid_fire: bool = True,
+        avoid_fire: bool = True, origins: dict[str, dict[str, float]] | None = None,
     ) -> None:
-        """``avoid_fire=False`` leaves the predicted fire out of the route: how long the drive takes, for a target that is itself burning."""
+        """``avoid_fire=False`` leaves the predicted fire out of the route: how long the drive takes, for a target that is itself burning.
+
+        ``origins`` says where a unit is when it is not at its station (unit id → ``LatLon``): a crew that has finished a job leaves from there (``from``).
+        """
         self.client, self.location_id, self.at = client, location_id, at
+        self.origins = origins or {}
         self.avoid_fire = avoid_fire
         self.simulation_id = simulation_id if avoid_fire else ""
         movement = (rules or {}).get("movement") or {}
@@ -93,12 +105,18 @@ class TravelPlanner:
         self.unavailable = False  # set once the routing endpoint failed: the cycle goes on without ETAs instead of trying every unit
 
     def eta(self, agent: FirefighterAgent, target: dict[str, Any]) -> Travel:
+        origin = self.origins.get(agent.agent_id)
         station = agent.observation.station_id or self._home_station(agent, target)
-        key = (agent.tier.value, station, agent.observation.vehicle_type, round(float(target["lat"]), 3), round(float(target["lon"]), 3), self.simulation_id, self.at)
+        where = (round(float(origin["lat"]), 4), round(float(origin["lon"]), 4)) if origin else station
+        key = (agent.tier.value, where, agent.observation.vehicle_type, round(float(target["lat"]), 3), round(float(target["lon"]), 3), self.simulation_id, self.at)
         if key not in self._cache:
             if len(self._cache) > CACHE_LIMIT:
                 self._cache.clear()
-            self._cache[key] = self._compute(agent, target, station)
+            travel = self._compute(agent, target, station, origin)
+            mobilization = float(getattr(agent.observation, "mobilization_min", 0.0) or 0.0)
+            if mobilization > 0 and not origin:  # a reinforcement still on its way to the municipality (once out on a job it is here)
+                travel = replace(travel, delay_minutes=mobilization)
+            self._cache[key] = travel
         return self._cache[key]
 
     def _home_station(self, agent: FirefighterAgent, target: dict[str, Any]) -> str | None:
@@ -118,14 +136,19 @@ class TravelPlanner:
         return min(stations, key=lambda s: distance_m(float(target["lat"]), float(target["lon"]), float(s[1]["lat"]), float(s[1]["lon"])))[0]
 
     # -- ways to get there -----------------------------------------------------------
-    def _compute(self, agent: FirefighterAgent, target: dict[str, Any], station: str | None) -> Travel:
-        if not station:
+    def _compute(self, agent: FirefighterAgent, target: dict[str, Any], station: str | None, origin: dict[str, float] | None = None) -> Travel:
+        if not station and not origin:
             return Travel(True, None, "a unidade não tem posto")
         if agent.tier is FirefighterTier.HELICOPTER:
-            return self._fly(station, target)
+            return self._fly(station, target, origin)
         if self.unavailable:
             return Travel(True, None, "encaminhamento indisponível", station)
-        request: dict[str, Any] = {"locationId": self.location_id, "fromStationId": station, "to": {"lat": float(target["lat"]), "lon": float(target["lon"])}}
+        request: dict[str, Any] = {"locationId": self.location_id, "to": {"lat": float(target["lat"]), "lon": float(target["lon"])}}
+        if origin:  # it is out on a job: it leaves from where it is
+            request["from"] = {"lat": float(origin["lat"]), "lon": float(origin["lon"])}
+            station = None
+        else:
+            request["fromStationId"] = station
         if self.avoid_fire:
             request["simulationId"] = self.simulation_id
         if self.at:
@@ -150,8 +173,8 @@ class TravelPlanner:
         walk = gap / 1000.0 / speed * 60.0
         return Travel(True, drive + walk, "estrada", station, drive, gap, walk, geometry=route.get("geometry"))
 
-    def _fly(self, station: str, target: dict[str, Any]) -> Travel:
-        base = self._station_position(station)
+    def _fly(self, station: str | None, target: dict[str, Any], origin: dict[str, float] | None = None) -> Travel:
+        base = origin or (self._station_position(station) if station else None)
         if base is None:
             return Travel(True, None, "posição da base desconhecida", station)
         minutes = distance_m(base["lat"], base["lon"], float(target["lat"]), float(target["lon"])) / 1000.0 / self.helicopter_kmh * 60.0

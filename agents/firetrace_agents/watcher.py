@@ -21,6 +21,8 @@ The API has no event channel (see the contract's description), so this is a poll
     AGENTS_BUILDING_ZONES       patches of houses plan B's engines defend (0 = the default of 10)
     AGENTS_REPLAN_MINUTES       the agents look at the fire again this often and send free units where it is not under control (45; 0 = never)
     AGENTS_MAX_WAVES            most re-plans per plan                 (3)
+    AGENTS_CANDIDATES           candidates judged per plan, the best kept (1 = no comparison; 2 = better plans, several minutes more)
+    AGENTS_REVISE_SELECTED      when the operator selects or edits a plan, the agents check it again and send a revision (1; 0 = off)
     AGENTS_SKIP_LABEL_PREFIX   baselines whose label starts with this are left alone ([lab]: the experiments of the scripts)
     AGENTS_MAX_ATTEMPTS         tries per baseline before giving up    (3)
     AGENTS_SIMULATE_TIMEOUT     seconds to follow a what-if run        (900)
@@ -40,6 +42,7 @@ from typing import Any, Callable
 from .alternatives import HOUSE_ZONES_FOR_B, build_alternatives
 from .client import ApiProblem, FiretraceClient, NotReady
 from .orchestrator import OrchestratorAgent
+from .revision import Reviser
 
 log = logging.getLogger("firetrace.watcher")
 
@@ -58,6 +61,8 @@ class WatcherSettings:
     building_zones: int = 0
     replan_minutes: int = 45
     max_waves: int = 3
+    candidates: int = 1  # 2 judges a second candidate per plan: better plans, but each costs a few backend validations (~75 s each, measured)
+    revise_selected: bool = True
     skip_label_prefix: str = "[lab]"
     max_attempts: int = 3
     simulate_timeout_seconds: float = 900.0
@@ -76,6 +81,8 @@ class WatcherSettings:
             building_zones=int(e.get("AGENTS_BUILDING_ZONES", d.building_zones)),
             replan_minutes=int(e.get("AGENTS_REPLAN_MINUTES", d.replan_minutes)),
             max_waves=int(e.get("AGENTS_MAX_WAVES", d.max_waves)),
+            candidates=int(e.get("AGENTS_CANDIDATES", d.candidates)),
+            revise_selected=str(e.get("AGENTS_REVISE_SELECTED", "1" if d.revise_selected else "0")).strip().lower() not in ("0", "false", "no"),
             skip_label_prefix=e.get("AGENTS_SKIP_LABEL_PREFIX", d.skip_label_prefix),
             max_attempts=int(e.get("AGENTS_MAX_ATTEMPTS", d.max_attempts)),
             simulate_timeout_seconds=float(e.get("AGENTS_SIMULATE_TIMEOUT", d.simulate_timeout_seconds)),
@@ -101,11 +108,17 @@ class Watcher:
         self.since: datetime = now() - timedelta(minutes=self.settings.lookback_minutes)
         self.handled: set[str] = set()  # baselines done, skipped for good, or given up on
         self.attempts: dict[str, int] = {}
+        self.retry: dict[str, dict[str, Any]] = {}  # baselines that failed and will be tried again (the `updatedAfter` window has moved past them)
+        s = self.settings
+        self.reviser = Reviser(client, orchestrator, replan_minutes=s.replan_minutes, max_waves=s.max_waves, horizon_minutes=s.horizon_minutes,
+                               stage_minutes=s.stage_minutes, concentration=s.concentration or None) if s.revise_selected else None
 
     # -- one look ----------------------------------------------------------------
     def poll_once(self) -> list[str]:
         """Plan every new finished baseline; returns the ids it published plans for."""
         found = self.client.list_simulations(kind="baseline", status="succeeded", updated_after=self.since.isoformat())
+        found_ids = {str(s["id"]) for s in found}
+        found = [*found, *(s for sim_id, s in self.retry.items() if sim_id not in found_ids)]
         planned: list[str] = []
         newest = self.since
         for simulation in sorted(found, key=lambda s: s.get("updatedAt") or ""):
@@ -121,13 +134,19 @@ class Watcher:
                 if self.plan_for(simulation):
                     planned.append(sim_id)
                 self.handled.add(sim_id)
+                self.retry.pop(sim_id, None)
             except Exception as error:  # noqa: BLE001 — one bad baseline must not stop the service
                 tries = self.attempts[sim_id] = self.attempts.get(sim_id, 0) + 1
                 log.error("baseline %s: attempt %d/%d failed: %s: %s", sim_id, tries, self.settings.max_attempts, type(error).__name__, error)
                 if tries >= self.settings.max_attempts:
                     log.error("baseline %s: giving up", sim_id)
                     self.handled.add(sim_id)
+                    self.retry.pop(sim_id, None)
+                else:
+                    self.retry[sim_id] = simulation  # the next poll tries it again, though `since` moves past it
         self.since = newest - timedelta(seconds=1)  # a second of overlap; `handled` keeps it from planning twice
+        if self.reviser is not None:
+            self.reviser.poll()  # the plans the operator chose: checked again when they change
         return planned
 
     # -- one baseline ------------------------------------------------------------
@@ -148,7 +167,7 @@ class Watcher:
             self.orchestrator, self.client, sim_id, publish=True, house_zones=self.settings.building_zones or HOUSE_ZONES_FOR_B,
             horizon_minutes=self.settings.horizon_minutes, location_id=location_id, title_prefix="Plano", at_minute=at_minute,
             stage_minutes=self.settings.stage_minutes, concentration=self.settings.concentration or None,
-            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves,
+            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves, candidates=self.settings.candidates,
         )
         for cycle in (result.cycle_a, result.cycle_b):
             for issue in (cycle.issues if cycle else []):

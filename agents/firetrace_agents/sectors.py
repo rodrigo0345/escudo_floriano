@@ -77,6 +77,9 @@ class Assignment:
     offset_m: float = 0.0  # where along the barrier its segment sits, from the sector's centre (laid end to end with the others)
     reserve: bool = False  # in an initial attack, a unit the fire's outline has no room for: it keeps to the usual tactic (blocks ahead)
     fuel_strip: Any = None  # a ``fuelbreak.Strip`` this crew can open before the fire arrives: it clears fuel ahead of the fire instead of building a handline
+    site: dict[str, float] | None = None  # where the crew stands (``placement.py``): inside the burned area for an attack from the black; None = the sector's front
+    stay_minutes: int | None = None  # how long it may work there without the fire reaching it (None = the tactic's default; 0 = no safe spot: not sent)
+    start_after: float | None = None  # minutes after the decision before which its effect does not start (an aircraft cooling the ground just before a crew goes in)
 
 
 def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12) -> list[Sector]:

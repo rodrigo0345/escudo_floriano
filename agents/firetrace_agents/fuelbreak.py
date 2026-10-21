@@ -96,11 +96,12 @@ def plan_strip(
         center = {"lat": lat, "lon": lon}
         route = travel(center)
         if route.reachable and route.eta_minutes is not None:
-            ready = int(round(decided_at + route.eta_minutes + BUILD_MINUTES + MARGIN_MIN))
+            arrives = route.eta_minutes + float(getattr(route, "delay_minutes", 0.0) or 0.0)  # a reinforcement first has to reach the municipality
+            ready = int(round(decided_at + arrives + BUILD_MINUTES + MARGIN_MIN))
             perimeters = perimeters_at(ready)
             polygon = strip_polygon(lat, lon, sector.bearing_deg, length)
             corners = polygon["coordinates"][0][:-1]
             if not burning_in(perimeters, lat, lon) and not any(burning_in(perimeters, c[1], c[0]) for c in corners):
-                return Strip(polygon, center, round(length), BUILD_MINUTES, float(route.eta_minutes), ahead, getattr(route, "geometry", None), getattr(route, "from_station", None))
+                return Strip(polygon, center, round(length), BUILD_MINUTES, float(arrives), ahead, getattr(route, "geometry", None), getattr(route, "from_station", None))
         ahead += STEP_AHEAD_M
     return None

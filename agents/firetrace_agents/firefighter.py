@@ -222,6 +222,8 @@ class ActionProposal:
     from_station: str | None = None
     route: dict[str, Any] | None = None
     """The road (GeoJSON LineString) the backend routed this unit along; written into ``resources[].route`` of a crew on foot, whose route the backend does not compute."""
+    delay_minutes: float = 0.0
+    """Minutes before the unit can set off (a reinforcement still on its way to the municipality): the action is triggered then, and it arrives ``eta`` later."""
 
     def __post_init__(self) -> None:
         if self.action_type not in {"fire_attack", "evacuation", "structure_protection"}:
@@ -275,6 +277,10 @@ class Observation:
     """A vehicle that can leave the road for the last stretch; everyone else walks it."""
     profile: dict[str, Any] | None = None
     """What limits the roads a vehicle can use (``VehicleProfile``: height, width, weight, speed, slope): sent with every route request."""
+    pump_lpm: float = 0.0
+    """The vehicle's pump flow (``pumpFlowLpm``): with its tank, how long it works before going to refill (``duty.py``)."""
+    mobilization_min: float = 0.0
+    """A reinforcement from another district: minutes after the call before it reaches its entry point (``metadata["agents.mobilizationMinutes"]``)."""
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +322,8 @@ class FirefighterAgent:
                     **({"offRoad": True} if vehicle.get("offRoad") else {}),
                     **({"speedKmh": vehicle["cruiseSpeedKmh"]} if vehicle.get("cruiseSpeedKmh") is not None else {}),
                 },
+                pump_lpm=float(vehicle.get("pumpFlowLpm") or 0.0),
+                mobilization_min=float((vehicle.get("metadata") or {}).get("agents.mobilizationMinutes") or 0.0),
             )
         )
 
@@ -369,6 +377,12 @@ class FirefighterAgent:
             if proposal.action_type == "fire_attack":  # LCES: the backend warns `missing_safety` without it
                 for key, value in self._lces(situation, proposal.intervention.get("geometry")).items():
                     proposal.extra_action_fields.setdefault(key, value)
+                self._keep_safe(proposal)
+            elif self._assignment.place is not None and self._assignment.stay_minutes:
+                # defending houses or evacuating: the crew prepares the place and leaves before the fire reaches it (the backend counts it there for this long)
+                proposal.extra_action_fields["expectedDurationMinutes"] = int(self._assignment.stay_minutes)
+                if proposal.intervention.get("type") == "crew_deployment" and proposal.intervention.get("durationMinutes"):
+                    proposal.intervention["durationMinutes"] = int(min(int(proposal.intervention["durationMinutes"]), self._assignment.stay_minutes))
         return DecisionMessage(
             agent_id=self.agent_id,
             tier=self.tier,
@@ -378,6 +392,20 @@ class FirefighterAgent:
             proposals=proposals,
             confidence=confidence,
         )
+
+    def _keep_safe(self, proposal: ActionProposal) -> None:
+        """Where the orchestrator found a safe spot (``placement.py``), the crew works from there and only as long as it is safe: the backend counts a crew as
+        caught by where its action is anchored and for how long it stays (``expectedDurationMinutes``)."""
+        if self._assignment.site is not None and proposal.target is None:
+            proposal.target = dict(self._assignment.site)
+        if self._assignment.start_after is not None:
+            begin = int((proposal.intervention.get("start") or {}).get("offsetMinutes") or 0)
+            proposal.intervention["start"] = {"offsetMinutes": max(begin, int(self._assignment.start_after))}
+        stay = self._assignment.stay_minutes
+        if stay:
+            if proposal.intervention.get("type") == "crew_deployment":
+                proposal.intervention["durationMinutes"] = int(min(int(proposal.intervention.get("durationMinutes") or stay), stay))
+            proposal.extra_action_fields["expectedDurationMinutes"] = int(stay)
 
     def _lces(self, situation: Situation, geometry: dict[str, Any] | None) -> dict[str, Any]:
         """Lookouts, Communications, Escape routes, Safety zones: an escape line and a safety zone *away* from
@@ -407,7 +435,10 @@ class FirefighterAgent:
         return line_across(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, half, self._assignment.slot)
 
     def _zone(self, situation: Situation, factor: float = 1.0) -> dict[str, Any]:
-        """The ground one crew works around its sector (``Rules.suppression.zoneRadiusM``), beside its neighbours."""
+        """The ground one crew works around its sector (``Rules.suppression.zoneRadiusM``), beside its neighbours; around its own safe spot when it has one."""
+        if self._assignment.site is not None:
+            at = self._assignment.site
+            return zone_around(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, situation.zone_radius_m * factor, 0)
         at = situation.anchor
         return zone_around(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, situation.zone_radius_m * factor, self._assignment.slot)
 

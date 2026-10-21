@@ -11,16 +11,32 @@ simulation, decide what to do with a stated reason, publish plans **A** (life fi
 
 | Module | Role |
 |---|---|
-| `contracts.py` | Loads the contract; `validate_against_spec` checks every payload before it leaves. `UNSAFE_ON_WIRE`: interventions the spec lists but the live backend rejects (today `fuel_removal`). |
+| `contracts.py` | Loads the contract; `validate_against_spec` checks every payload before it leaves. `UNSAFE_ON_WIRE`: interventions the spec lists but the live backend rejects (empty: `fuel_removal` is sent with the backend's extra `removal` field). |
 | `client.py` | `FiretraceClient`: typed wrapper over the API. Base URL **includes `/api/v1`**. Errors come as `ApiProblem` with the stable `code`. A failed simulation is *returned*, not raised. |
 | `tiers.py` | The tier matrix: who may perform which intervention (a squad or a truck never performs `aerial_drop`). |
 | `firefighter.py` | One agent per unit. Perceives `threatened` + `summary` (+ `/rules`), decides with a quantified `reason`. Works the sector it was given. |
 | `sectors.py` | Turns the backend's predicted spread vectors into ranked **sectors** of the fire front and assigns units to them (or lays their lines end to end as one barrier). |
 | `capacity.py` | How many metres of line a unit builds in a stage. **Only one rate is the backend's** (`FireLineRateMPerHourPerPerson`, 30 m/h per person); the rest are assumptions, marked in the file. |
 | `life.py` | **Lives**: for each place in the fire's way, evacuate in time or shelter in place; vulnerable first. A model, not a backend measure (see limits). |
-| `gnr.py` | **GNR**: closes the roads `GET /simulations/{id}/road-status` says the fire cuts (or has cut), joins touching segments into one closure and puts a patrol at each end (`traffic_control_point`), the nearest unit that arrives before the fire does. Closures carry `exemptions: [emergency_vehicles]` (the backend's routing lets those through) unless the fire is above the rules' `noEffectFromKwm`. |
+| `gnr.py` | **GNR**: closes the roads `GET /simulations/{id}/road-status` says the fire cuts (or has cut), joining touching segments into one closure. **A road is closed only with a patrol at every end, and from the moment the last one gets there** (a closure nobody enforces is one no driver knows about); otherwise it is not closed, and the plan says so. Emergency vehicles always pass (`exemptions: [emergency_vehicles]`). A GNR vehicle fighting the fire is not also sent to a road. |
+| `placement.py` | **Safe placement.** With the forecast's ignition grid: a crew on the outline works from the burned side of the edge (the black does not burn again), at the minute it arrives; a crew working ahead of the fire leaves 10 min before it gets there; a crew with no safe spot is not sent (it stays free for later). |
+| `duty.py` | **Water and fatigue** (F5): the backend's `CrewWorkSchedule` (tank ÷ pump, refill trips, fatigue, rest) gives the share of its strength a crew really delivers over its window (an engine with 3000 L works ~51% of 4 h, a crew on foot ~76%); its effect carries that effectiveness. One effect per crew: splitting them doubled the backend's validation time. |
+| `support.py` | **Proteção Civil** (F3): shelter, route and people for every evacuation, ambulances for those who need help to move, public alerts (a second one `on_fire_arrival` for the places that shelter), the command post. **INEM** (F4): two ambulances on standby behind the crews where the fire never gets, the nearest hospitals on alert. |
+| `revision.py` | **Revisions** (F9): when the operator selects or edits a plan, the agents check it again (safety, then re-plans) and revise it with `PATCH /plans/{id}`. |
+| `firestate.py` | **The goal is to put the fire out**, not to hold it: when (and whether) the fire stops burning in a plan's what-if. The re-plans stop only once the plan puts it out, and the candidates are compared on it (after lives and houses). |
+
+**How the firefighters read the fire.** Every plan starts with an assessment: the fire's intensity when the units get there. Weak enough for direct attack → **attack to put it
+out** (crews from the burned side, as they arrive). Too strong → **contain it first** (people, then houses, then blocking ahead only where the crews leave before the fire comes) and
+attack it when it weakens: each re-plan reads the fire again and says which it does.
+
+**Plan B's reserve waits forward**: a quarter of its units at a safe point near the fire (`stage_resources`), not at their stations, so the next re-plan (or a new outbreak) has
+them in minutes. It is held **only when the fire must be contained**: while it can still be put out, B too sends every unit that gets there in time (on Penha, holding back
+two engines meant for the head let the fire escape: 9 ha with them, 612 ha without). A combat unit that would arrive with under 20 min of the run left is not sent. **Reinforcements from the neighbouring districts** (`scripts/seed_reinforcements.py`: GRIF Porto, Viana do Castelo and Vila Real, and the district of Braga) enter the
+municipality by its main roads `agents.mobilizationMinutes` after the call (30–90 min, example numbers to check with the CDOS); their actions are triggered then, and they show on the
+map in orange. **Each plan carries the other organizations' numbers** (`metadata["agents.metrics"]`, shown in the plans panel): people evacuated in time (the agents' own model: the
+backend does not count evacuations), roads closed and left open for lack of a patrol, ambulances on standby, units in reserve or without a safe spot, and whether the fire goes out.
 | `orchestrator.py` | Builds the team from the live fleet, collects decisions, guards them (tier matrix, `/capabilities`, resource conflicts), validates with `POST /plans/validate`, publishes plans A and B. |
-| `alternatives.py` | Plans A (offensive: every unit that can work safely, plus fuel breaks ahead of the fire) and B (defensive: only what is needed, the reserve kept back, houses defended) as two real alternatives, each judged by the engine (area, buildings, units, wrong wind). |
+| `alternatives.py` | Plans A and B, both with the same priorities (**1. lives: crews and the people evacuated, 2. houses, 3. burned area**) and two ways to meet them: **A offensive** (every unit that can work safely attacks, aircraft prepare the ground just before the crews go in, fuel breaks ahead where there is time, the houses the fire reaches first defended) and **B defensive** (people and houses first, attack only where it is safe, aircraft timed with the crews as in A, no fuel breaks, a quarter of the units kept back as a reserve when the fire must be contained). Each is the best of a few candidates (F6), judged by the engine in that order of priorities. |
 | `judge.py` | **The safety rule: a plan that predicts a crew casualty is never published, A or B.** Each plan is judged on the forecast and on two runs with the wind wrong by 30° either way; the crews caught have their stay cut short or are not sent. |
 | `fuelbreak.py` | Squads that are not on the fire's outline clear a fuel strip ahead of the fire (`fuel_removal`), only where they can get there, finish (15 m/h per person, the backend's rate) and be gone 20 min before the fire arrives. The engine applies a strip from minute 0, so this feasibility check is the plan's only realism guard. |
 | `adaptation.py` | **Re-planning along the fire.** Every `AGENTS_REPLAN_MINUTES` (45) the agents read the plan's what-if run: if the fire is not under control they decide again with the units that are free (the reserve, those waiting at a staging point, those whose work ended, those still on the road) on the fire as the plan left it; a wave is kept only if the engine says it helps and keeps zero casualties, first trying to attack the fire, then to defend what is in its way. |
@@ -32,6 +48,7 @@ Start the backend first (`docker compose up -d --build backend`; the first start
 
 ```powershell
 python agents\scripts\seed_fleet.py                         # demo fleet for Guimarães (idempotent; the backend also seeds its own)
+python agents\scripts\seed_reinforcements.py                # reinforcement groups from the neighbouring districts (--dry-run, --remove)
 python agents\scripts\compare_plans.py --scenario sc-penha --at-minute 60    # plans A/B with the full fleet, then without helicopters/trucks/squads
 python agents\scripts\robustness.py --scenario sc-penha --at-minute 60       # the same plans on a wrong wind forecast
 python agents\scripts\run_campaign.py --scenario sc-penha --start 60         # decide every 30 min; compares with the chained control
@@ -62,10 +79,10 @@ backend stored and simulated, and the playback clock moves them; a helicopter or
 (the agents do not model them yet) in that fallback. The map reads the backend's own unit simulator first (`GET /simulations/{id}/units` and `/units/{unitId}/track`: route, arrival,
 water, refills, rest, return) and only falls back to the plan on a server without it.
 
-**Units arrive in waves (off by default: `OrchestratorAgent.arrival_waves`).** Measured: it helped Penha plan B (4.3 → 3.6 ha) and hurt Falperra (A 254 → 301 ha, B 340 → 424 ha), so the
-single lead stays until the placement is per unit on arrival. The fire grows while the slower units drive, so the units are split by arrival time (before the median and after) and each wave is placed on the fire
-where it will be when it gets there; a wave that arrives after the fire passed the intensity direct attack stops working at blocks ahead of the fire instead. A crew registered to
-its organization and not to a station (the generic pool) leaves from the organization's station nearest the target.
+**Units are placed as they arrive.** They are grouped every 15 min of arrival and each group is given ground on the fire as it will be when that group gets there; a stretch
+too intense to attack head-on gets its crews working ahead of it instead, while that is safe (`placement.py`). (The earlier two-wave split, without safe placement, hurt Falperra:
+A 254 → 301 ha, B 340 → 424 ha.) A crew registered to its organization and not to a station (the generic pool) leaves from the organization's station nearest the target, and in a
+re-plan a crew that has finished a job leaves from where it is (`RouteRequest.from`).
 
 ## How a plan is made
 

@@ -1,0 +1,84 @@
+"""Where a crew can stand without being caught: the placement is safe from the start, instead of trimming crews once the engine finds them in the fire.
+
+The backend's own rule (``CrewSafety``) is the one to satisfy: a crew is caught if the cell it works from (the action's ``anchorPoint``) is burning while it is
+there, from the minute the fire reaches the cell until the cell has burned out (``FuelCatalog.BurnMinutes``, at most 18 min in this landscape). Ground that has
+already burned out is safe, and so is ground the fire does not reach until the crew has left. So, with the forecast's own ignition grid:
+
+* **attack from the black** (initial attack): the crew stands just inside the burned area, behind the active edge, at the minute it arrives, close enough
+  (within its work zone) to work the edge. It can stay as long as a crew can work: the black does not burn again;
+* **work ahead of the fire** (lines, blocking): the crew stays only until ``MARGIN_MIN`` minutes before the fire reaches its spot; if that leaves less than
+  ``MIN_STAY_MIN`` of useful work, the crew is not sent there at all.
+
+The ignition grid is the baseline's (no response): with the plan the fire is slower, so a spot reached later in reality is reached no sooner than here.
+The plan's what-if (``judge.py``) still has the last word.
+"""
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from .sectors import Sector, destination
+
+BURNED_OUT_MIN = 25  # a cell this long after the fire reached it has burned out (backend BurnMinutes ≤ 18, plus margin)
+MARGIN_MIN = 10  # a crew working ahead of the fire leaves this long before it arrives
+MIN_STAY_MIN = 15  # less useful work than this and the crew is not sent
+STEP_M = 30.0  # search step inside the burned area (about a cell)
+
+
+@dataclass(frozen=True)
+class FireClock:
+    """When the forecast fire reaches each cell of the simulation grid."""
+
+    grid: dict[str, Any]  # the location's grid: width, height, lonWest, latNorth, dLon, dLat (row 0 = north)
+    ignition: Sequence[int]  # minute the fire reaches each cell, -1 = never
+
+    def reached(self, lat: float, lon: float) -> int | None:
+        """Minute the fire reaches the point; ``None`` if never (or outside the grid)."""
+        width, height = int(self.grid["width"]), int(self.grid["height"])
+        col = int((lon - float(self.grid["lonWest"])) / float(self.grid["dLon"]))
+        row = int((float(self.grid["latNorth"]) - lat) / float(self.grid["dLat"]))
+        if not (0 <= col < width and 0 <= row < height):
+            return None
+        minute = int(self.ignition[row * width + col])
+        return None if minute < 0 else minute
+
+    def safe(self, lat: float, lon: float, start: float, end: float) -> bool:
+        """Is the point free of fire from ``start`` to ``end`` (burned out before, or reached after)?"""
+        reached = self.reached(lat, lon)
+        return reached is None or reached + BURNED_OUT_MIN <= start or reached > end
+
+
+def black_site(clock: FireClock, sector: Sector, arrive: float, stay: float, reach_m: float) -> dict[str, float] | None:
+    """A spot inside the burned area, behind ``sector``'s front, from which a crew arriving at ``arrive`` reaches the edge and is safe for ``stay`` minutes.
+
+    The search goes from the front back towards where the fire came from (against its heading), at most ``reach_m`` (the crew's work zone), and also a step
+    to either side; the first spot that has burned out by the time the crew arrives is it. ``None`` if the black is not there yet (the fire is too young or
+    the edge too intense to have burned out) or is beyond the crew's reach.
+    """
+    back = (sector.bearing_deg + 180.0) % 360.0
+    distance = STEP_M
+    while distance <= reach_m:
+        for side in (0.0, -STEP_M * 2, STEP_M * 2):
+            lat, lon = destination(sector.lat, sector.lon, back, distance)
+            if side:
+                lat, lon = destination(lat, lon, (sector.bearing_deg + 90.0) % 360.0, side)
+            reached = clock.reached(lat, lon)
+            if reached is not None and reached + BURNED_OUT_MIN <= arrive and clock.safe(lat, lon, arrive, arrive + stay):
+                return {"lat": lat, "lon": lon}
+        distance += STEP_M
+    return None
+
+
+def stay_ahead(clock: FireClock, position: dict[str, float], arrive: float, wanted: float) -> int:
+    """How long a crew arriving at ``arrive`` can work at ``position`` ahead of the fire: up to ``wanted``, ending ``MARGIN_MIN`` before the fire gets there.
+
+    0 when that is less than ``MIN_STAY_MIN`` (the crew is not sent), or when the spot is already burning.
+    """
+    reached = clock.reached(float(position["lat"]), float(position["lon"]))
+    if reached is None:
+        return int(wanted)
+    if reached + BURNED_OUT_MIN <= arrive:
+        return int(wanted)  # already burned out: nothing left to burn there
+    room = reached - MARGIN_MIN - arrive
+    return int(min(wanted, room)) if room >= MIN_STAY_MIN else 0

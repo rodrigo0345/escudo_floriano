@@ -39,16 +39,25 @@ from .client import ApiProblem, FiretraceClient
 from .contracts import UNSAFE_ON_WIRE, validate_against_spec
 from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
 from .buildings import DEFENDERS_PER_ZONE, BuildingZone, building_cells, ignition_minutes, zones_to_defend
+from .duty import duty_factor
 from .fuelbreak import plan_strip
 from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, LEAD_MINUTES, GnrPlan, closure_action, control_point_action, intensity_lookup, nearest_units, plan_closures, unit_stub
 from .capacity import line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
-from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, plan_sectors, zone_around
+from .placement import FireClock, black_site, stay_ahead
+from .support import SupportAgents, SupportPlan
+from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, plan_sectors, slot_shift, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 from .travel import TravelPlanner, centroid
 
 
 STAGING_DISTANCES_M = (800.0, 1600.0, 3200.0, 6400.0)  # how far from the fire a unit that cannot reach it waits, nearest first
+ARRIVAL_STEP_MIN = 15  # units arriving within this of each other are placed on the same picture of the fire
+AHEAD_STAY_MIN = 60  # how long a crew working ahead of the fire stays, at most (it leaves sooner if the fire comes sooner)
+AIR_LEAD_MIN = 10  # an aircraft drops this long before the crews it supports arrive
+AIR_SPACING_M = 180.0  # two aircraft do not prepare the same stretch (about one work zone apart)
+MIN_USEFUL_WORK_MIN = 20  # a unit that would work less than this before the run ends is not sent (it stays free)
+COMBAT_EFFECTS = frozenset({"crew_deployment", "fire_line", "aerial_drop", "structure_protection", "fuel_removal"})
 
 
 @dataclass
@@ -81,6 +90,20 @@ class CycleResult:
     attack_zones: int = 0  # how many work zones the fire's outline has room for at that minute
     attack_crews: int = 0  # crews put on those zones (the rest are in reserve and block ahead)
     fuel_strips: int = 0  # squads sent to clear a fuel break ahead of the fire (plan A)
+    unsafe_units: list[str] = field(default_factory=list)  # units with no spot they could work from before the fire reaches it: not sent
+    held: list[str] = field(default_factory=list)  # units kept at their stations as a tactical reserve (plan B)
+    support: Any = None  # what Proteção Civil and INEM added (``support.SupportPlan``)
+    arrival_intensity: float | None = None  # the fire's intensity (kW/m) when the units get there: attack it, or contain it first
+
+    def assessment(self, rules: dict[str, Any] | None) -> str:
+        """The firefighters' reading of the fire, in one sentence: attack to put it out, or contain it first (lives, then houses) and attack when it weakens."""
+        limit = float((((rules or {}).get("suppression") or {}).get("noEffectFromKwm")) or DEFAULT_NO_EFFECT_KWM)
+        intensity = f"{self.arrival_intensity:.0f} kW/m" if self.arrival_intensity is not None else "desconhecida"
+        if self.initial_attack:
+            return (f"Intensidade quando os meios chegam: {intensity} (o ataque direto deixa de resultar a {limit:.0f} kW/m). **Atacar para apagar**: as equipas entram pelo lado já "
+                    "ardido do perímetro à medida que chegam; os troços fortes demais são contidos à frente, em segurança.")
+        return (f"Intensidade quando os meios chegam: {intensity}, acima do que o ataque direto aguenta ({limit:.0f} kW/m). **Conter primeiro**: proteger as pessoas e as casas, "
+                "bloquear à frente do fogo só onde as equipas saem antes de ele chegar, e atacar para o apagar quando enfraquecer (as reavaliações fazem-no).")
 
     def reasons_log(self) -> list[str]:
         """The reasons every firefighter gave, in reporting order."""
@@ -119,7 +142,11 @@ class OrchestratorAgent:
         self._roads: dict[str, dict[str, dict[str, Any]]] = {}  # location → road id → GeoJSON feature: static, fetched once
         self._gnr_org: str | None = None
         self._arrival: dict[str, float] = {}  # unit → minutes it needs to reach the fire (last `_initial_attack`)
-        self.arrival_waves = False  # place the units in two waves by arrival time (see `_arrival_waves`); off: one lead for all. Measured: Penha B 4.3 → 3.6 ha, but Falperra A 254 → 301 ha and B 340 → 424 ha
+        self._grids: dict[str, dict[str, Any]] = {}  # location → simulation grid (static, fetched once)
+        self.origins: dict[str, dict[str, float]] = {}  # unit → where it is when it is not at its station (set by the re-plans: a crew leaves from its last job)
+        self._clocks: dict[str, FireClock | None] = {}  # simulation → when its fire reaches each cell
+        self._run_minutes = 0  # length of the run being planned (last `run_cycle`)
+        self._facilities: dict[str, list[dict[str, Any]]] = {}  # location → facilities (static, fetched once)
 
     # -- team --------------------------------------------------------------------
     @property
@@ -166,6 +193,9 @@ class OrchestratorAgent:
         traffic: bool = True,
         lean: bool = False,
         fuel_breaks: bool = False,
+        air_support: bool = False,
+        reserve_share: float = 0.0,
+        validate: bool = True,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
 
@@ -181,9 +211,16 @@ class OrchestratorAgent:
         closures and traffic-control points (see ``gnr.py``) to both plans. ``lean`` commits only what an initial attack has room for: the
         units left in reserve stay at their stations instead of blocking ahead of the fire (no effect when there is no initial attack).
         ``fuel_breaks`` sends the squads that are not on the fire's outline to clear a strip of fuel ahead of it, where they can finish before it arrives (see ``fuelbreak.py``).
+        ``air_support`` (implied by ``fuel_breaks``) times the aircraft with the crews: each drops on the stretch the next crews go in to (see ``_air_support``).
+        ``reserve_share`` keeps that share of the combat units at their stations as a tactical reserve (the farthest ones): free for the re-plans along the fire.
+        ``lean`` and ``reserve_share`` only apply when the fire must be contained: while it can be put out (``initial_attack``) every unit that arrives in time attacks.
+        A combat unit that would arrive with under ``MIN_USEFUL_WORK_MIN`` of the run left is not sent.
+        Every crew is placed where it is safe (``placement.py``): an initial attack works from the burned side of the edge at the minute the crew arrives, and a
+        crew working ahead of the fire leaves before it gets there; a crew with no safe spot is not sent (it stays free for later).
         """
         simulation = self._simulation(simulation_id)
         ignitions = ((simulation or {}).get("scenarioSnapshot") or {}).get("ignitions") or []
+        self._run_minutes = int(((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes") or 0)
         situation = situation_from_simulation(
             simulation_id,
             threatened=self.client.get_threatened(simulation_id, horizon_minutes=max(horizon_minutes, life_horizon_minutes), t_min=at_minute),
@@ -201,32 +238,55 @@ class OrchestratorAgent:
 
         result = CycleResult(simulation_id=simulation_id)
         situation, result.attack_lead, result.initial_attack = self._initial_attack(situation, location_id, travel)
+        decided = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
+        result.arrival_intensity = intensity_lookup(situation.summary)(decided + (result.attack_lead or 0.0))  # what the crews find when they get there
         # The engines that defend houses are set aside first: taken out of a barrier already laid they would leave a gap in it.
         result.zones, reserved = self._plan_buildings(situation, location_id, building_zones, stage_minutes, result)
-        waves = self._arrival_waves(situation, [a.agent_id for a in self.agents if a.agent_id not in reserved]) if result.initial_attack and self.arrival_waves else []
-        if waves:
+        groups = self._arrival_groups(situation, [a.agent_id for a in self.agents if a.agent_id not in reserved]) if result.initial_attack else []
+        if groups:
             everyone = {a.agent_id for a in self.agents}
             result.assignments = {}
-            for ids, lead, allowed in waves:  # each wave is placed on the fire where it will be when that wave arrives
-                result.assignments.update(self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=(everyone - ids) | set(reserved), lead=lead if allowed else None))
+            for ids, lead in groups:  # the units that arrive together are placed on the fire where it will be when they get there
+                result.assignments.update(self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=(everyone - ids) | set(reserved), lead=lead))
         else:
             result.assignments = self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=set(reserved), lead=result.attack_lead if result.initial_attack else None)
         result.life = self._plan_life(situation, location_id, result.assignments, exclude=set(reserved))
         result.assignments.update({agent_id: Assignment(place=asset) for agent_id, asset in reserved.items()})
         if result.initial_attack:
-            result.attack_zones, result.attack_crews = self._fit_on_outline(situation, result, waves)
+            result.attack_zones, result.attack_crews = self._fit_on_outline(situation, result, groups)
         if fuel_breaks and travel:
             result.fuel_strips = self._fuel_breaks(situation, location_id, result, ((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes"))
+        if travel:
+            result.unsafe_units = self._place_safely(situation, location_id, result)
+        if (fuel_breaks or air_support) and result.initial_attack:
+            self._air_support(result)
+        # A reserve only makes sense when the fire must be contained: while it can still be put out, every unit that gets there in time attacks
+        # (B too; on Penha, holding back two engines meant for the head let the fire escape: 9 ha with them, 612 ha without).
+        holding = not result.initial_attack
+        result.held = self._hold_reserve(result, reserve_share) if reserve_share > 0 and holding else []
         for agent in self.agents:
             assignment = result.assignments.get(agent.agent_id)
-            if lean and assignment is not None and assignment.reserve:
+            if lean and holding and assignment is not None and assignment.reserve:
                 continue  # a lean plan commits only the units the outline has room for; the reserve stays at its stations
+            if agent.agent_id in result.held or (assignment is not None and assignment.stay_minutes == 0):
+                continue  # tactical reserve, or no spot it could work from without the fire reaching it: it stays free for the next decision
             message = agent.decide(situation, assignment)
             result.decisions.append(message)
+        for agent_id in result.unsafe_units:
+            result.issues.append(AgentIssue(agent_id, "posição", "not sent: no spot it could work from before the fire reaches it (it stays free for the next decision)."))
 
         guarded = self._guard_decisions(result)
         if travel:
             guarded = self._apply_travel(guarded, situation, location_id, result)
+            if result.held:  # plan B's reserve waits close to the fire, not at the stations
+                try:
+                    anchor = situation.anchor
+                except ValueError:
+                    anchor = None
+                if anchor is not None:
+                    agents = {a.agent_id: a for a in self.agents}
+                    held = {i: (agents[i], "reserva", anchor) for i in result.held if i in agents}
+                    result.staging = [*result.staging, *self._stage(held, situation, location_id, result, reserve=True)]
         if traffic:
             result.traffic = self._plan_traffic(
                 situation, location_id, result, travel=travel, duration=((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes"),
@@ -234,8 +294,19 @@ class OrchestratorAgent:
         plan_a = self._compose_plan(guarded, result, situation, variant="A", location_id=location_id, title_prefix=title_prefix)
         plan_b = self._compose_plan(guarded, result, situation, variant="B", location_id=location_id, title_prefix=title_prefix)
         result.plan_a, result.plan_b = plan_a, plan_b
+        if traffic:  # the organizations' part (with the GNR's): once per plan, not again in every re-plan
+            run_minutes = int(((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes") or situation.life_horizon_minutes)
+            support, agents = self._support(situation, location_id, result, run_minutes)
+            people = {d.item.id: (d.item.people, d.item.vulnerable, str((d.item.asset.get("details") or {}).get("kind") or d.item.asset.get("kind") or "")) for d in (result.life.decisions if result.life else ())}
+            for plan in (plan_a, plan_b):
+                plan["actions"].extend(copy.deepcopy(support.actions))
+                if agents is not None:
+                    for message in agents.enrich_evacuations(plan, people, support.ambulances_left):
+                        result.issues.append(AgentIssue("proteção civil", "evacuação", message))
+            result.support = support
 
-        self._validate_plans(result)
+        if validate or publish:  # the callers that judge the plans themselves (alternatives, re-plans) validate later, once
+            self._validate_plans(result)
         if publish:
             for variant, plan in (("A", plan_a), ("B", plan_b)):
                 if result.validation.get(variant, {}).get("valid") is False:
@@ -268,8 +339,8 @@ class OrchestratorAgent:
             except ValueError:  # no fire position at all: nothing to attack yet
                 return situation, None, False
             # the drive alone, without the predicted fire: the target is the fire, and every road to it "burns" before anyone could arrive
-            planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=False)
-            self._arrival = {a.agent_id: float(r.eta_minutes) for a in self.agents if a.tier is not FirefighterTier.HELICOPTER and (r := planner.eta(a, target)).reachable and r.eta_minutes is not None}
+            planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=False, origins=self.origins)
+            self._arrival = {a.agent_id: float(r.arrival_minutes) for a in self.agents if a.tier is not FirefighterTier.HELICOPTER and (r := planner.eta(a, target)).reachable and r.arrival_minutes is not None}
             etas = list(self._arrival.values())
             lead = float(statistics.quantiles(etas, n=100, method="inclusive")[max(0, min(98, round(self.lead_quantile * 100) - 1))]) if len(etas) > 1 else (float(etas[0]) if etas else None)
         if lead is None:
@@ -277,8 +348,8 @@ class OrchestratorAgent:
         lead = min(lead, float(situation.horizon_minutes))
         rules = situation.rules or {}
         limit = float(((rules.get("suppression") or {}).get("noEffectFromKwm")) or DEFAULT_NO_EFFECT_KWM)
-        # the units do not arrive together (see `_arrival_waves`): the attack is on if the first of them can still work when it gets there
-        first = [e for e in self._arrival.values() if e <= lead] if self.arrival_waves else []
+        # the units do not arrive together (see `_arrival_groups`): the attack is on if the first of them can still work when they get there
+        first = [e for e in self._arrival.values() if e <= lead]
         first_lead = min(float(statistics.median(first)), lead) if first else lead
         if intensity_lookup(situation.summary)(decided_at + first_lead) >= limit:
             return situation, lead, False
@@ -288,7 +359,7 @@ class OrchestratorAgent:
     def _fuel_breaks(self, situation: Situation, location_id: str, result: CycleResult, duration: int | None) -> int:
         """Squads that are not on the fire's outline clear a strip of fuel ahead of it, when they can finish before it gets there. Returns how many."""
         decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
-        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=True)
+        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=True, origins=self.origins)
         seen: dict[int, dict[str, Any]] = {}
 
         def perimeters_at(minute: int) -> dict[str, Any]:
@@ -313,54 +384,169 @@ class OrchestratorAgent:
                 count += 1
         return count
 
-    def _arrival_waves(self, situation: Situation, unit_ids: list[str]) -> list[tuple[set[str], float, bool]]:
-        """Split the units by when they reach the fire: (units, minutes until they are there, whether they can still fight it head-on then).
+    def _arrival_groups(self, situation: Situation, unit_ids: list[str]) -> list[tuple[set[str], float]]:
+        """The units grouped by when they reach the fire (every ``ARRIVAL_STEP_MIN``): (units, minutes until they are there).
 
-        The fire grows while the slower units drive: a crew that arrives at minute 15 and one that arrives at minute 55 do not stand on the same
-        outline, nor can the second fight a fire that has gone past the intensity direct attack stops working at. Two waves, the units that get
-        there before the median and the rest, each placed on the fire at its own median arrival; the rest of the units (aircraft, no route time)
-        go with the first. A wave that arrives too late for direct attack is returned with ``False``: its crews block ahead of the fire instead.
+        This is how a commander receives them: each unit is given ground on the fire as it is when that unit arrives, not where the fire was when the call came
+        nor where it will be when the last unit arrives. Aircraft and units with no route time go with the first group.
         """
         etas = {i: self._arrival[i] for i in unit_ids if i in self._arrival}
-        if len(etas) < 4:
+        if not etas:
+            return []
+        buckets: dict[int, set[str]] = {}
+        for unit, eta in etas.items():
+            buckets.setdefault(int(eta // ARRIVAL_STEP_MIN), set()).add(unit)
+        groups: list[tuple[set[str], float]] = []
+        for index, key in enumerate(sorted(buckets)):
+            members = buckets[key]
+            lead = min(float(statistics.median(etas[i] for i in members)), float(situation.horizon_minutes))
+            groups.append((members | (set(unit_ids) - set(etas) if index == 0 else set()), lead))
+        return groups
+
+    def _place_safely(self, situation: Situation, location_id: str, result: CycleResult) -> list[str]:
+        """Give every crew a spot it can work from without the fire reaching it (``placement.py``). Returns the units that have none (they are not sent).
+
+        A crew on the outline works from the burned side of the edge, at the minute it arrives (a step along the edge per slot, so crews on the same stretch do
+        not stand on one spot); with no burned ground within its reach yet it works ahead of the fire instead, like a crew in reserve, and leaves before the
+        fire gets there.
+        """
+        clock = self._fire_clock(situation, location_id, result)
+        if clock is None:
             return []
         decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
-        limit = float((((situation.rules or {}).get("suppression") or {}).get("noEffectFromKwm")) or DEFAULT_NO_EFFECT_KWM)
-        intensity_at = intensity_lookup(situation.summary)
-        split = float(statistics.median(etas.values()))
-        early = {i for i, e in etas.items() if e <= split}
-        late = set(etas) - early
-        waves: list[tuple[set[str], float, bool]] = []
-        for index, members in enumerate((early, late)):
-            if not members:
+        unsafe: list[str] = []
+        for agent in self.agents:
+            assignment = result.assignments.get(agent.agent_id)
+            eta = self._arrival.get(agent.agent_id)
+            if agent.tier is FirefighterTier.HELICOPTER or assignment is None or eta is None:
                 continue
-            lead = min(float(statistics.median(etas[i] for i in members)), float(situation.horizon_minutes))
-            ids = set(members) | (set(unit_ids) - set(etas) if index == 0 else set())
-            waves.append((ids, lead, intensity_at(decided_at + lead) < limit))
-        return waves
+            arrive = decided_at + eta
+            if assignment.place is not None and assignment.place.get("position"):
+                # defending houses or evacuating a place: the crew prepares it and leaves before the fire gets there (a crew that would arrive too late is not sent)
+                stay = stay_ahead(clock, assignment.place["position"], arrive, situation.work_minutes if situation.initial_attack else AHEAD_STAY_MIN * 2)
+                result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay)
+                if stay == 0:
+                    unsafe.append(agent.agent_id)
+                continue
+            if assignment.sector is None or assignment.place is not None or assignment.fuel_strip is not None:
+                continue
+            if situation.initial_attack and not assignment.reserve:
+                along = (assignment.sector.bearing_deg + 90.0) % 360.0
+                lat, lon = destination(assignment.sector.lat, assignment.sector.lon, along, slot_shift(assignment.slot, 2.0 * situation.zone_radius_m))
+                site = black_site(clock, replace(assignment.sector, lat=lat, lon=lon), arrive, situation.work_minutes, situation.zone_radius_m)
+                if site is not None:
+                    result.assignments[agent.agent_id] = replace(assignment, site=site, stay_minutes=situation.work_minutes)
+                    continue
+                assignment = replace(assignment, reserve=True)  # no burned ground within its reach yet: it works ahead of the fire, while that is safe
+            stay = stay_ahead(clock, assignment.sector.position, arrive, AHEAD_STAY_MIN)
+            result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay)
+            if stay == 0:
+                unsafe.append(agent.agent_id)
+        return unsafe
 
-    def _fit_on_outline(self, situation: Situation, result: CycleResult, waves: list[tuple[set[str], float, bool]] | None = None) -> tuple[int, int]:
+    def _fire_clock(self, situation: Situation, location_id: str, result: CycleResult) -> FireClock | None:
+        """When the forecast fire reaches each cell (the simulation's ignition grid), cached per simulation; ``None`` (and an issue) if the server has no grid."""
+        if situation.simulation_id in self._clocks:
+            return self._clocks[situation.simulation_id]
+        try:
+            if location_id not in self._grids:
+                self._grids[location_id] = self.client.get_location(location_id)["grid"]
+            clock: FireClock | None = FireClock(self._grids[location_id], ignition_minutes(self.client.get_ignition_grid(situation.simulation_id)))
+        except (ApiProblem, KeyError) as error:
+            result.issues.append(AgentIssue("orchestrator", "safe placement", f"not checked [{getattr(error, 'code', 'no_grid')}]: {error}"))
+            clock = None
+        if len(self._clocks) > 8:
+            self._clocks.clear()
+        self._clocks[situation.simulation_id] = clock
+        return clock
+
+    def _support(self, situation: Situation, location_id: str, result: CycleResult, run_minutes: int) -> tuple[SupportPlan, SupportAgents | None]:
+        """Proteção Civil and INEM (``support.py``): medical standby behind the crews, the command post and the public alerts; the evacuations are completed later."""
+        try:
+            if location_id not in self._facilities:
+                self._facilities[location_id] = self.client.list_facilities(location_id)
+            ambulances = [v for v in self.client.list_vehicles(capability="evacuation_transport", status="available") if v.get("type") == "ambulance"]
+            medical = self.client.list_organizations("inem")
+        except ApiProblem as error:
+            result.issues.append(AgentIssue("support", "Proteção Civil / INEM", f"not planned [{error.code}]: {error}"))
+            return SupportPlan(), None
+        decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
+        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes)
+        agents = SupportAgents(
+            self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, clock=self._fire_clock(situation, location_id, result),
+            run_minutes=run_minutes, civil_org=self._command_organization(), medical_org=str(medical[0]["id"]) if medical else (str(ambulances[0].get("organizationId")) if ambulances else "org-inem"),
+            facilities=self._facilities[location_id], ambulances=ambulances, station_position=planner.station_position, route=lambda vehicle, point: planner.eta(unit_stub(vehicle), point),
+        )
+        sites = [a.site for a in result.assignments.values() if a.site is not None] or [a.sector.position for a in result.assignments.values() if a.sector is not None and a.place is None][:6]
+        plan = agents.medical_standby(sites, situation.head_bearing_deg, decided_at)
+        try:
+            post = agents.command_post(situation.anchor)
+        except ValueError:
+            post = None
+        if post is not None:
+            plan.actions.append(post)
+        plan.actions.extend(agents.public_alerts(list(result.life.decisions) if result.life else [], decided_at))
+        for message in plan.issues:
+            result.issues.append(AgentIssue("support", "Proteção Civil / INEM", message))
+        return plan, agents
+
+    def _air_support(self, result: CycleResult) -> None:
+        """The aircraft (A and B) prepare the ground for the crews: each drops on the stretch where the next crews go in, ``AIR_LEAD_MIN`` before they get there.
+
+        The drop cools the edge the crew is about to work from (its effect is temporary), instead of every aircraft hitting the head on its own.
+        """
+        crews = sorted(
+            ((self._arrival[a.agent_id], result.assignments[a.agent_id]) for a in self.agents
+             if a.agent_id in self._arrival and (s := result.assignments.get(a.agent_id)) is not None and s.site is not None and s.sector is not None),
+            key=lambda pair: pair[0],
+        )
+        aircraft = [a for a in self.agents if a.tier is FirefighterTier.HELICOPTER and a.agent_id in result.assignments and result.assignments[a.agent_id].place is None]
+        targets: list[tuple[float, Sector]] = []
+        for eta, assignment in crews:  # one stretch per aircraft, in the order the crews arrive
+            if all(distance_m(assignment.sector.lat, assignment.sector.lon, s.lat, s.lon) > 2 * AIR_SPACING_M for _e, s in targets):
+                targets.append((eta, assignment.sector))
+        for agent, (eta, sector) in zip(aircraft, targets):
+            result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], sector=sector, start_after=max(eta - AIR_LEAD_MIN, 0.0))
+
+    def _hold_reserve(self, result: CycleResult, share: float) -> list[str]:
+        """Keep ``share`` of the combat units at their stations as a tactical reserve: the ones that would arrive last (a commander sends the nearest first).
+
+        They are in no action, so the re-plans along the fire can send them where the fire goes (see ``adaptation.py``).
+        """
+        combat = [
+            a for a in self.agents
+            if a.tier is not FirefighterTier.HELICOPTER and a.agent_id not in result.unsafe_units
+            and (assignment := result.assignments.get(a.agent_id)) is not None and assignment.place is None
+        ]
+        count = int(round(share * len(combat)))
+        # never at the expense of the attack: when the fire can be attacked, only the units the outline has no room for are held back
+        spare = [a for a in combat if result.assignments[a.agent_id].reserve] if result.initial_attack else combat
+        spare.sort(key=lambda a: self._arrival.get(a.agent_id, float("inf")), reverse=True)
+        return [a.agent_id for a in spare[:count]]
+
+    def _fit_on_outline(self, situation: Situation, result: CycleResult, groups: list[tuple[set[str], float]] | None = None) -> tuple[int, int]:
         """Put the crews on the fire's outline, as many as it has room for, and no more than the rules let one piece of ground use.
 
         The backend multiplies the effect of every crew on the same ground without limit, but its own rules cap what a crew can do at
         ``maxEffectiveness``: a planner should not count on more than that from one zone. So crews fill a zone until together they reach
         that cap, then the next zone along the outline; the outline has ``perimeter / (2 × zone radius)`` zones. Crews left over are in
         reserve (``Assignment.reserve``): they block ahead of the fire as they would without an initial attack.
+        A stretch of front burning past ``noEffectFromKwm`` when its crews arrive cannot be attacked head-on: those crews are in reserve too.
         Returns (zones available, crews put on them).
         """
         rules = situation.rules or {}
         cap = float(((rules.get("suppression") or {}).get("maxEffectiveness")) or 0.85)
+        limit = float(((rules.get("suppression") or {}).get("noEffectFromKwm")) or DEFAULT_NO_EFFECT_KWM)
         decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
         total_zones = on_outline = 0
-        for ids, lead, allowed in waves or [(None, result.attack_lead or 0.0, True)]:
+        for ids, lead in groups or [(None, result.attack_lead or 0.0)]:
             crews = [
                 a for a in self.agents
                 if a.tier is not FirefighterTier.HELICOPTER and a.agent_id in result.assignments and result.assignments[a.agent_id].place is None and (ids is None or a.agent_id in ids)
             ]
-            if not allowed:  # this wave gets there after direct attack stopped working: it blocks ahead of the fire
-                for agent in crews:
-                    result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], reserve=True)
-                continue
+            for agent in [a for a in crews if (s := result.assignments[a.agent_id].sector) is not None and s.intensity_kwm >= limit]:
+                result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], reserve=True)  # too intense to attack head-on: it works ahead
+                crews.remove(agent)
             zones = self._outline_zones(situation, int(round(decided_at + lead)))
             total_zones += zones
             by_sector: dict[Any, list[FirefighterAgent]] = {}
@@ -514,8 +700,12 @@ class OrchestratorAgent:
             return [], {}
         decided_at = situation.at_minute if situation.at_minute is not None else int(situation.latest_milestone.get("tMin") or 0)
         cells = building_cells(grid, features)
+        # A fire that can be attacked is best put out: putting it out is what protects the houses, so only the ones it reaches before the crews can stop it are
+        # defended. A fire too strong to attack has to be contained, and containing it is mostly defending what is in its way: every patch of houses it reaches
+        # while there is still time to prepare it (the engines prepare and leave before the fire arrives, see `_place_safely`).
+        window = (stage_minutes or situation.horizon_minutes) if situation.initial_attack else max(stage_minutes or situation.horizon_minutes, situation.life_horizon_minutes)
         zones = zones_to_defend(
-            cells, ignition, after_min=decided_at, until_min=decided_at + (stage_minutes or situation.horizon_minutes), radius_m=situation.zone_radius_m,
+            cells, ignition, after_min=decided_at, until_min=decided_at + window, radius_m=situation.zone_radius_m,
             max_zones=min(max_zones, max(1, len(engines) // DEFENDERS_PER_ZONE)),
         )
         reserved: dict[str, dict[str, Any]] = {}
@@ -714,19 +904,23 @@ class OrchestratorAgent:
         plan.closures = plan_closures(
             statuses, self._roads[location_id], decided_at=decided_at, horizon=horizon, intensity_at=intensity_lookup(situation.summary), no_effect_kwm=no_effect,
         )
+        # a vehicle already fighting the fire (the GNR's all-terrain patrols also attack it) is not sent to a road as well
+        fighting = {str(r.get("resourceId")) for message in result.decisions for proposal in message.proposals for r in proposal.resources}
+        units = [u for u in units if str(u["id"]) not in fighting]
         planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes)
         stations = {u["stationId"]: planner.station_position(u["stationId"]) for u in units if u.get("stationId")}
         stations = {sid: pos for sid, pos in stations.items() if pos}
         taken: set[str] = set()
-        for index, closure in enumerate(plan.closures):
-            checkpoints: list[dict[str, Any]] = []
-            points: list[dict[str, Any]] = []
+        kept: list[Any] = []
+        for closure in plan.closures:
+            # a patrol is worth sending only if it is there before the fire cuts the road (or, if the fire has cut it, while it stays cut)
+            deadline = (closure.reopen_p50 - decided_at - LEAD_MINUTES) if closure.already_cut(decided_at) else (closure.cut_p10 - decided_at)
+            patrols: list[tuple[dict[str, Any], Any]] = []
+            missing: str | None = None
             for end_index, end in enumerate(closure.ends):
                 chosen: tuple[dict[str, Any], Any] | None = None
                 late = False
-                # a patrol is worth sending only if it is there before the fire cuts the road (or, if the fire has cut it, while it stays cut)
-                deadline = (closure.reopen_p50 - decided_at - LEAD_MINUTES) if closure.already_cut(decided_at) else (closure.cut_p10 - decided_at)
-                for vehicle in nearest_units(units, stations, end, taken):
+                for vehicle in nearest_units(units, stations, end, taken | {str(v["id"]) for v, _r in patrols}):
                     route = planner.eta(unit_stub(vehicle), end) if travel else None
                     if route is not None and not route.reachable:
                         continue
@@ -736,18 +930,34 @@ class OrchestratorAgent:
                     chosen = (vehicle, route)
                     break
                 if chosen is None:
-                    plan.issues.append(f"{closure.name}: {'no GNR unit gets to' if late else 'no GNR unit can reach'} end {end_index + 1} in time")
-                    continue
-                vehicle, route = chosen
-                taken.add(str(vehicle["id"]))
+                    missing = f"{'no GNR unit gets to' if late else 'no GNR unit can reach'} end {end_index + 1} in time"
+                    break
+                patrols.append(chosen)
+            if missing is not None:
+                # drivers only know a road is closed if someone stands at each way in: without a patrol at every end the road is not closed at all
+                plan.issues.append(f"{closure.name}: not closed: {missing} (a closure needs a patrol at every end)")
+                continue
+            index = len(kept)
+            kept.append(closure)
+            taken.update(str(v["id"]) for v, _r in patrols)
+            # the road is closed from the moment the last patrol is there (never before), and not later than planned
+            arrivals = [float(r.eta_minutes) for _v, r in patrols if r is not None and r.eta_minutes is not None]
+            planned = 0.0 if closure.already_cut(decided_at) else max(closure.cut_p10 - decided_at - LEAD_MINUTES, 0.0)
+            opens = max([planned, *arrivals])
+            checkpoints: list[dict[str, Any]] = []
+            points: list[dict[str, Any]] = []
+            for end_index, (vehicle, route) in enumerate(patrols):
+                end = closure.ends[end_index]
                 resource: dict[str, Any] = {"resourceType": "vehicle", "resourceId": vehicle["id"], "personnel": int(vehicle.get("crewCapacity") or CHECKPOINT_PERSONNEL), "responsibility": "traffic_control"}
+                eta = float(route.eta_minutes) if route is not None and route.eta_minutes is not None else 0.0
                 if route is not None and route.eta_minutes is not None:
-                    resource["etaMinutes"] = round(route.eta_minutes, 1)
+                    resource["etaMinutes"] = round(eta, 1)
                     resource["fromStationId"] = route.from_station
                 checkpoints.append({"position": end, "label": f"{closure.name} · ponta {end_index + 1}", "organizationId": organization, "personnel": resource["personnel"], "vehicles": 1})
-                points.append(control_point_action(closure, index, end_index, organization, decided_at, resource))
-            plan.actions.append(closure_action(closure, index, organization, decided_at, checkpoints))
+                points.append(control_point_action(closure, index, end_index, organization, decided_at, resource, leaves=max(opens - eta, 0.0)))
+            plan.actions.append(closure_action(closure, index, organization, decided_at, checkpoints, opens=opens))
             plan.actions.extend(points)
+        plan.closures = kept
         for message in plan.issues:
             result.issues.append(AgentIssue("gnr", "traffic control", message))
         return plan
@@ -764,8 +974,10 @@ class OrchestratorAgent:
         # predicted fire (the crews come in from the unburned side; the intensity gate in `_initial_attack` already checked they can still work).
         planner = TravelPlanner(
             self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=not situation.initial_attack,
+            origins=self.origins,
         )
         agents = {agent.agent_id: agent for agent in self.agents}
+        decided_at = float(situation.at_minute or 0)
         lost: dict[str, tuple[FirefighterAgent, str, dict[str, Any]]] = {}  # unit → why it cannot reach its target, and the target
         for agent_id, pairs in kept.items():
             agent = agents.get(agent_id)
@@ -790,6 +1002,13 @@ class OrchestratorAgent:
                     lost.setdefault(agent_id, (agent, route.reason, target))
                     continue
                 proposal.eta_minutes, proposal.from_station, proposal.route = route.eta_minutes, route.from_station, route.geometry
+                proposal.delay_minutes = route.delay_minutes
+                arrives = decided_at + route.delay_minutes + (route.eta_minutes or 0.0)
+                if self._run_minutes and proposal.intervention.get("type") in COMBAT_EFFECTS and arrives > self._run_minutes - MIN_USEFUL_WORK_MIN:
+                    # a reinforcement that gets there when the run is all but over does nothing in it: it stays free instead of filling the plan
+                    result.issues.append(AgentIssue(agent_id, proposal.title, f"not sent: it would arrive at T+{arrives:.0f}, with under {MIN_USEFUL_WORK_MIN} min of the run left to work."))
+                    dropped.add(proposal.proposal_id)
+                    continue
                 if route.eta_minutes is not None and not told:
                     message.reason += f" Viagem: {route.describe()} (encaminhamento do servidor, sem fogo previsto nem cortes pelo caminho)."
                     told = True
@@ -804,15 +1023,18 @@ class OrchestratorAgent:
         result.staging = self._stage({k: v for k, v in lost.items() if not kept.get(k)}, situation, location_id, result)
         return kept
 
-    def _stage(self, lost: dict[str, tuple[FirefighterAgent, str, dict[str, Any]]], situation: Situation, location_id: str, result: CycleResult) -> list[dict[str, Any]]:
+    def _stage(self, lost: dict[str, tuple[FirefighterAgent, str, dict[str, Any]]], situation: Situation, location_id: str, result: CycleResult, *, reserve: bool = False) -> list[dict[str, Any]]:
         """Units that cannot reach the fire do not vanish: they go as near as is safe and wait there (a ``stage_resources`` action per organization).
 
         The point is on the line from the fire to the unit's station, as near to the fire as the routing says the unit can get while avoiding the predicted
-        fire (800 m, then 1.6, 3.2 and 6.4 km out). The unit does nothing there: the plan says so, and why.
+        fire (800 m, then 1.6, 3.2 and 6.4 km out), and where the forecast fire never gets during the run. The unit does nothing there: the plan says so, and why.
+        ``reserve``: these are plan B's forward reserve, held close to the fire to go in at the next decision (or to a new outbreak) within minutes.
         """
         if not lost:
             return []
-        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=True)
+        clock = self._clocks.get(situation.simulation_id)
+        run_minutes = self._run_minutes or situation.life_horizon_minutes + int(situation.at_minute or 0)
+        planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=True, origins=self.origins)
         by_org: dict[str, list[tuple[FirefighterAgent, str, dict[str, Any]]]] = {}
         for agent, reason, target in lost.values():
             by_org.setdefault(agent.observation.organization_id, []).append((agent, reason, target))
@@ -829,7 +1051,7 @@ class OrchestratorAgent:
                     {"lat": lat, "lon": lon}
                     for d in STAGING_DISTANCES_M
                     for lat, lon in [destination(float(anchor["lat"]), float(anchor["lon"]), heading, min(d, away))]
-                    if planner.eta(first, {"lat": lat, "lon": lon}).reachable
+                    if (clock is None or clock.safe(lat, lon, 0, run_minutes)) and planner.eta(first, {"lat": lat, "lon": lon}).reachable
                 ),
                 None,
             )
@@ -837,8 +1059,10 @@ class OrchestratorAgent:
                 result.issues.append(AgentIssue("orchestrator", "staging", f"no safe waiting point found for {len(group)} unit(s) of {organization}."))
                 continue
             resources: list[dict[str, Any]] = []
+            delays: list[float] = []
             for agent, _r, _t in group:
                 travel = planner.eta(agent, spot)
+                delays.append(travel.delay_minutes)
                 if not travel.reachable or travel.eta_minutes is None:
                     continue
                 resource: dict[str, Any] = {"resourceType": "vehicle" if agent.observation.vehicle_id else "personnel_pool", "resourceId": agent.observation.vehicle_id or agent.agent_id,
@@ -851,16 +1075,24 @@ class OrchestratorAgent:
             if not resources:
                 continue
             reasons = sorted({reason.split("(")[-1].rstrip(") ") for _a, reason, _t in group})
+            km = distance_m(float(anchor["lat"]), float(anchor["lon"]), spot["lat"], spot["lon"]) / 1000
             actions.append({
-                "id": f"stage-{index}",
+                "id": f"{'reserve' if reserve else 'stage'}-{index}",
                 "type": "stage_resources",
-                "title": f"Pré-posicionar {len(resources)} meios a {distance_m(float(anchor['lat']), float(anchor['lon']), spot['lat'], spot['lon']) / 1000:.1f} km do fogo",
+                "title": f"{'Reserva avançada' if reserve else 'Pré-posicionar'}: {len(resources)} meios a {km:.1f} km do fogo",
                 "organizationId": organization,
                 "priority": "high",
-                "rationale": f"Estas unidades não chegam ao fogo ({', '.join(reasons)}): vão até ao ponto mais próximo a que chegam com segurança e esperam aí, prontas a avançar.",
-                "stagingArea": {"position": spot, "label": "Ponto de espera"},
+                "rationale": (
+                    f"Reserva avançada: {len(resources)} meios esperam a {km:.1f} km do fogo, num ponto que o fogo previsto não atinge, prontos a entrar em minutos na "
+                    "próxima reavaliação, onde o fogo mudar, ou num novo foco."
+                    if reserve else
+                    f"Estas unidades não chegam ao fogo ({', '.join(reasons)}): vão até ao ponto mais próximo a que chegam com segurança e esperam aí, prontas a avançar."
+                ),
+                "stagingArea": {"position": spot, "label": "Reserva avançada" if reserve else "Ponto de espera"},
                 "readiness": "engine_running",
                 "resources": resources,
+                # reinforcements set off once they reach the municipality
+                **({"trigger": {"kind": "at_time", "at": {"offsetMinutes": int(math.ceil(min(delays)))}}} if delays and min(delays) > 0 else {}),
             })
         return actions
 
@@ -877,6 +1109,7 @@ class OrchestratorAgent:
     ) -> dict[str, Any]:
         ordered = _sequenced(proposals_by_agent, life_first=(variant == "A"))
         life_first = variant == "A"
+        agents_by_id = {agent.agent_id: agent for agent in self.agents}
         by_id = {proposal.proposal_id: proposal for _message, proposal in ordered}
         parallel: set[int] = set()  # plan B: proposals that no longer wait for a life action
         if not life_first:
@@ -935,7 +1168,10 @@ class OrchestratorAgent:
             if proposal.eta_minutes is not None and isinstance(intervention.get("start"), dict):
                 # nothing works before the unit is there: the backend applies the effect from its `start`, and a missing ETA would put crews on the fire at once
                 begin = intervention["start"].get("offsetMinutes") or 0
-                intervention["start"] = {**intervention["start"], "offsetMinutes": max(begin, math.ceil(proposal.eta_minutes))}
+                intervention["start"] = {**intervention["start"], "offsetMinutes": max(begin, math.ceil(proposal.delay_minutes + proposal.eta_minutes))}
+            if proposal.delay_minutes and "trigger" not in action:
+                # a reinforcement sets off from its entry point when it gets there: the backend times its departure (and its track on the map) from the trigger
+                action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": int(math.ceil(proposal.delay_minutes))}}
             decided_at = int(situation.at_minute or 0)
             if decided_at:
                 # the backend honours `start`: offsets count from the scenario start, so a decision taken at T+N begins at N (+ its own delay)
@@ -945,6 +1181,13 @@ class OrchestratorAgent:
                         intervention[key] = {**spec, "offsetMinutes": spec["offsetMinutes"] + decided_at}
             action["simulationEffects"] = [intervention]
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
+            unit = agents_by_id.get(message.agent_id)
+            if unit is not None and intervention.get("type") == "crew_deployment" and intervention.get("responsibility") == "firefighting" and intervention.get("durationMinutes"):
+                # water, refills, fatigue and rest, as the backend counts them (`duty.py`): the crew's strength averaged over its window
+                action.setdefault("expectedDurationMinutes", int(intervention["durationMinutes"]))
+                strength = float(intervention.get("effectiveness") or situation.suppression_effectiveness(int(intervention.get("personnel") or unit.observation.crew_onboard), float(intervention.get("waterL") or 0.0)))
+                factor = duty_factor(float(intervention["durationMinutes"]), unit.observation.water_capacity_l, unit.observation.pump_lpm, situation.rules)
+                intervention["effectiveness"] = round(max(0.01, min(1.0, strength * factor)), 2)
             if proposal.action_type == "fire_attack" and "line" not in action and "anchorPoint" not in action:
                 # where the action works, in the fields the backend reads it from (``line`` / ``anchorPoint``): without them it cannot check that the
                 # units can get there, nor compute and store their routes. The effect on the fire still comes from ``simulationEffects``.

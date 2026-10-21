@@ -18,6 +18,7 @@ stable ``code`` so callers branch on ``code``, not on the human message.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -208,6 +209,21 @@ class FiretraceClient:
     def get_station(self, station_id: str) -> dict[str, Any]:
         """``GET /stations/{id}``: where a unit is based (``position``)."""
         return self._request("GET", self._fill("/stations/{stationId}", stationId=station_id))
+
+    def list_facilities(self, location_id: str) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/facilities``: schools, shelters, hospitals, stations... (``id``, ``name``, ``kind``, ``position``, ``vulnerable``)."""
+        return list(self._request("GET", self._fill("/locations/{locationId}/facilities", locationId=location_id), params={"limit": 2000}).get("items", []))
+
+    def patch_plan(self, plan_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """``PATCH /plans/{id}`` with ``application/merge-patch+json``: only the fields sent change (``actions`` is replaced as a whole)."""
+        response = self._http.patch(self._fill("/plans/{planId}", planId=plan_id), content=json.dumps(patch), headers={"Content-Type": "application/merge-patch+json"})
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
+        return dict(response.json())
+
+    def get_plan(self, plan_id: str) -> dict[str, Any]:
+        return self._request("GET", self._fill("/plans/{planId}", planId=plan_id))
 
     def list_stations(self, organization_id: str) -> list[dict[str, Any]]:
         """``GET /stations?organizationId=``: the stations of one organization (``id``, ``position``)."""

@@ -4,12 +4,14 @@ Bombeiros fight the fire; the GNR keeps people out of its way. From ``GET /simul
 
 1. picks the roads the fire cuts within the horizon, or has cut already, that are not reopened yet (not tracks, paths or driveways);
 2. joins segments that touch into one closure (a road, not 40 pieces of it);
-3. closes each as a ``road_closure`` action with the reason (fire already on it, or predicted), the reopening time and a ``checkpoint`` at each end;
-4. adds a ``traffic_control_point`` action at each end, with the nearest GNR unit that can get there (the arrival comes from the routing, see ``travel.py``).
+3. finds a GNR unit for **every end** of the closure, one that gets there in time (the routing, see ``travel.py``). **A road is closed only when, and from
+   the moment, a patrol stands at each way in**: a closure nobody enforces is a closure no driver knows about. Without a patrol for every end the road is
+   not closed (the plan says so);
+4. closes it as a ``road_closure`` action with the reason (fire already on it, or predicted), the reopening time and a ``checkpoint`` at each end, triggered
+   when the last patrol arrives; each patrol is a ``traffic_control_point`` action triggered so that it leaves in time to be there then.
 
-**Emergency vehicles pass.** A closure normally carries ``exemptions: [emergency_vehicles]``: the backend's routing lets those through, so the firefighters' routes
-are not cut by the very closures that protect people. It carries none when the fire is too intense for anyone to cross (the rules' ``noEffectFromKwm``): then the
-road is shut to everybody. The intensity used is the fire's maximum at that minute, a conservative stand-in: the contract has no intensity per road.
+**Emergency vehicles always pass** (``exemptions: [emergency_vehicles]``): the firefighters may use a closed road. Keeping crews away from fronts too intense to
+work is the attack's job (where it sends them and the routes, which avoid the predicted fire), not the closure's.
 """
 from __future__ import annotations
 
@@ -192,7 +194,7 @@ def _closure(ids: list[str], statuses: dict[str, dict[str, Any]], roads: dict[st
         end_roads=[at_end[pair[0]], at_end[pair[1]]] if pair[0] != pair[1] else [at_end[pair[0]]],
         length_m=sum(float(roads[i]["properties"].get("lengthM") or 0) for i in ids),
         max_intensity_kwm=intensity,
-        exempt_emergency=intensity < no_effect_kwm,
+        exempt_emergency=True,  # the firefighters may always use a closed road (see the module notes); the intensity is kept for the reason text
     )
 
 
@@ -223,17 +225,15 @@ class GnrPlan:
     issues: list[str] = field(default_factory=list)
 
 
-def closure_reason(closure: Closure, decided_at: float) -> str:
+def closure_reason(closure: Closure, decided_at: float, opens: float | None = None) -> str:
     when = f"já cortada pelo fogo desde ~T+{closure.cut_p50:.0f} min" if closure.already_cut(decided_at) else f"o fogo previsto corta-a em ~T+{closure.cut_p50:.0f} min (p10 T+{closure.cut_p10:.0f})"
     reopen = f", reabre em ~T+{closure.reopen_p50:.0f} min" if math.isfinite(closure.reopen_p50) else ""
-    if closure.exempt_emergency:
-        who = "fechada ao público; os veículos de emergência passam (isenção), para os bombeiros chegarem"
-    else:
-        who = f"fechada a todos: o fogo ({closure.max_intensity_kwm:.0f} kW/m) passa o limite em que nem os meios de emergência atravessam"
-    return f"{closure.name} ({closure.road_class}, {closure.length_m:.0f} m): {when}{reopen}. {who}."
+    start = f" Fecha às T+{decided_at + opens:.0f} min, quando há uma patrulha em cada entrada." if opens is not None else ""
+    who = "Fechada ao público; os veículos de emergência passam (isenção), para os bombeiros chegarem"
+    return f"{closure.name} ({closure.road_class}, {closure.length_m:.0f} m): {when}{reopen}.{start} {who}."
 
 
-def closure_action(closure: Closure, index: int, organization: str, decided_at: float, checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
+def closure_action(closure: Closure, index: int, organization: str, decided_at: float, checkpoints: list[dict[str, Any]], opens: float | None = None) -> dict[str, Any]:
     cut_soon = closure.already_cut(decided_at)
     action: dict[str, Any] = {
         "id": f"gnr-closure-{index}",
@@ -241,36 +241,41 @@ def closure_action(closure: Closure, index: int, organization: str, decided_at: 
         "title": f"Cortar {closure.name}" + (f" ({len(closure.road_ids)} troços)" if len(closure.road_ids) > 1 else ""),
         "organizationId": organization,
         "priority": "critical" if cut_soon else "high",
-        "rationale": closure_reason(closure, decided_at),
+        "rationale": closure_reason(closure, decided_at, opens),
         "roadIds": closure.road_ids,
         "kind": "full",
         "reason": "fire_active" if cut_soon else "fire_predicted",
-        "exemptions": ["emergency_vehicles"] if closure.exempt_emergency else [],
+        "exemptions": ["emergency_vehicles"],
         "checkpoints": checkpoints,
     }
     if math.isfinite(closure.reopen_p90):
         action["until"] = {"offsetMinutes": max(int(math.ceil(closure.reopen_p90 - decided_at)), 30)}
-    if not cut_soon:  # shut it ahead of the fire, not the moment it arrives
-        action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": max(int(closure.cut_p10 - decided_at - LEAD_MINUTES), 0)}}
+    if opens is not None:  # when the patrols are at every end (never before)
+        start = int(math.ceil(opens))
+    else:  # shut it ahead of the fire, not the moment it arrives
+        start = 0 if cut_soon else max(int(closure.cut_p10 - decided_at - LEAD_MINUTES), 0)
+    if start > 0:
+        action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": start}}
     return action
 
 
-def control_point_action(closure: Closure, closure_index: int, end_index: int, organization: str, decided_at: float, unit: dict[str, Any] | None) -> dict[str, Any]:
+def control_point_action(closure: Closure, closure_index: int, end_index: int, organization: str, decided_at: float, unit: dict[str, Any] | None, leaves: float = 0.0) -> dict[str, Any]:
+    """The patrol at one end. ``leaves`` is when it sets off (minutes after the decision) to be there when the road closes; the closure waits for it, not the other way."""
     end = closure.ends[end_index]
-    exempt = closure.exempt_emergency
     action: dict[str, Any] = {
         "id": f"gnr-point-{closure_index}-{end_index}",
         "type": "traffic_control_point",
         "title": f"Controlo de trânsito em {closure.name} ({'ponta' if len(closure.ends) > 1 else 'ponto'} {end_index + 1})",
         "organizationId": organization,
         "priority": "critical" if closure.already_cut(decided_at) else "high",
-        "rationale": f"Impede o acesso ao troço cortado de {closure.name}; " + ("deixa passar os veículos de emergência." if exempt else "ninguém passa enquanto o fogo estiver nesta intensidade."),
+        "rationale": f"Impede o acesso ao troço cortado de {closure.name}: o corte só existe com um agente em cada entrada. Deixa passar os veículos de emergência.",
         "position": end,
         "roadId": closure.end_roads[end_index],
         "mode": "stop",
-        "instructions": ("Parar o trânsito do público; veículos de emergência passam com identificação." if exempt else "Parar todo o trânsito; sem exceções enquanto durar o corte."),
-        "dependsOn": [f"gnr-closure-{closure_index}"],
+        "instructions": "Parar o trânsito do público; veículos de emergência passam com identificação.",
     }
+    if leaves > 0:
+        action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": int(leaves)}}
     if unit is not None:
         action["resources"] = [unit]
     return action

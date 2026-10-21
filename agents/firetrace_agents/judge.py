@@ -106,12 +106,12 @@ class Judge:
         if not safe or not wrong_wind:
             return verdict, shortened, removed
         full = self.verdict(plan)
-        for _ in range(2):  # what the wrong-wind runs add: cut it, make sure the forecast is still safe, look again
+        for round_ in range(3):  # what the wrong-wind runs add: first the crews leave earlier (the fire comes sooner there), then the ones still caught are not sent
             if full is None or full.casualties == 0:
                 break
-            cut, gone = withdraw(plan, full.exposures(), decided_at, remove_all=True)
+            cut, gone = withdraw(plan, full.exposures(), decided_at, remove_all=round_ >= 1)
             shortened, removed = shortened + cut, removed + gone
-            log.info("baseline %s: wrong-wind: %d casualties -> %d removed", self.baseline_id, full.casualties, gone)
+            log.info("baseline %s: wrong-wind round %d: %d casualties -> %d shortened, %d removed", self.baseline_id, round_ + 1, full.casualties, cut, gone)
             if not cut and not gone:
                 break
             full = self.verdict(plan)
