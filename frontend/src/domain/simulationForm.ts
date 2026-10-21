@@ -466,7 +466,7 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
       events.push({
         type: 'wind_scale',
         enabled: true,
-        applyToGusts: ce.applyToGusts ?? true,
+        applyToGusts: ce.applyToGusts ?? false,
         window: win,
         factor: ce.windFactor ?? 1.7,
       });

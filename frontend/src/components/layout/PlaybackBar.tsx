@@ -78,7 +78,7 @@ export function PlaybackBar() {
   const [popoverWindFactor, setPopoverWindFactor] = useState(1.7);
   const [popoverTempDelta, setPopoverTempDelta] = useState(6);
   const [popoverHumDelta, setPopoverHumDelta] = useState(-20);
-  const [popoverApplyToGusts, setPopoverApplyToGusts] = useState(true);
+  const [popoverApplyToGusts, setPopoverApplyToGusts] = useState(false);
   const [popoverBuildupMin, setPopoverBuildupMin] = useState(20);
   const [popoverDissipationMin, setPopoverDissipationMin] = useState(20);
 
@@ -568,13 +568,13 @@ export function PlaybackBar() {
                     onChange={(e) => setPopoverWindFactor(+e.target.value)}
                   />
                 </label>
-                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={popoverApplyToGusts}
                     onChange={(e) => setPopoverApplyToGusts(e.target.checked)}
                   />
-                  <span style={{ fontSize: '0.85em' }}>Aplicar também às rajadas (vento contínuo + rajadas)</span>
+                  <span>Incluir rajadas</span>
                 </label>
               </>
             )}

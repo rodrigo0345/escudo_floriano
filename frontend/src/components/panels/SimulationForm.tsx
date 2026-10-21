@@ -732,13 +732,13 @@ export function SimulationForm() {
                                   onChange={(e) => updateCustomRangeEvent(ev.id, { windFactor: +e.target.value })}
                                 />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, fontSize: '0.82em', cursor: 'pointer', marginTop: 4 }}>
+                              <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer', marginTop: 4 }}>
                                 <input
                                   type="checkbox"
-                                  checked={ev.applyToGusts ?? true}
+                                  checked={ev.applyToGusts ?? false}
                                   onChange={(e) => updateCustomRangeEvent(ev.id, { applyToGusts: e.target.checked })}
                                 />
-                                <span>Aplicar também às rajadas (vento contínuo + rajadas)</span>
+                                <span>Incluir rajadas</span>
                               </label>
                             </>
                           )}
