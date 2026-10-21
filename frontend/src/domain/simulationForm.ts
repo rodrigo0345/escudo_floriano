@@ -448,13 +448,18 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
         },
       );
     } else if (ce.type === 'wind_shift') {
-      const dirDelta = bearingDelta(ce.windFromDeg ?? 270, base?.dirDeg ?? 335);
+      const dur = Math.max(5, ce.endMinute - ce.startMinute);
+      const ramp = Math.min(15, Math.max(3, Math.round(dur * 0.2)));
+      const hold = Math.max(1, dur - ramp);
       events.push({
         type: 'wind_shift',
         enabled: true,
         start: { offsetMinutes: ce.startMinute },
-        deltaDeg: dirDelta,
-        rampMinutes: Math.min(30, dur),
+        toDeg: ce.windFromDeg != null ? normalizeDeg(ce.windFromDeg) : undefined,
+        deltaDeg: ce.windFromDeg == null ? 90 : undefined,
+        rampMinutes: ramp,
+        holdMinutes: hold,
+        returnRampMinutes: ramp,
       });
     } else if (ce.type === 'wind_scale') {
       events.push({
@@ -558,14 +563,17 @@ export function extractTimelineEventsFromSnapshot(
       const start = 'start' in e && typeof e.start === 'object' && 'offsetMinutes' in e.start ? e.start.offsetMinutes ?? 0 : 0;
       if (start < -10) continue;
       const safeStart = Math.max(0, start);
+      const hold = 'holdMinutes' in e && typeof (e as { holdMinutes?: number }).holdMinutes === 'number' ? (e as { holdMinutes: number }).holdMinutes : 30;
+      const ramp = 'rampMinutes' in e && typeof (e as { rampMinutes?: number }).rampMinutes === 'number' ? (e as { rampMinutes: number }).rampMinutes : 15;
+      const targetDeg = 'toDeg' in e && typeof (e as { toDeg?: number }).toDeg === 'number' ? (e as { toDeg: number }).toDeg : 270;
       result.push({
         id: `ev_wind_${idx++}`,
         type: 'wind_shift',
         label: `Rotação Vento (T+${safeStart})`,
         enabled: true,
         startMinute: safeStart,
-        endMinute: Math.min(duration, safeStart + 30),
-        windFromDeg: 270,
+        endMinute: Math.min(duration, safeStart + hold + ramp),
+        windFromDeg: targetDeg,
       });
     } else if (e.type === 'wind_scale') {
       const win = 'window' in e ? e.window : null;
