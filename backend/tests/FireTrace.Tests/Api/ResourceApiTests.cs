@@ -71,7 +71,8 @@ public class ResourceApiTests : IClassFixture<ApiFactory>
 
         Assert.Equal("bad_request", Str(await Send(HttpMethod.Post, "/organizations", "{not json", HttpStatusCode.BadRequest), "code"));
         Assert.Equal("not_found", Str(await Send(HttpMethod.Get, "/vehicles/veh-nope", expect: HttpStatusCode.NotFound), "code"));
-        Assert.Equal("unsupported_capability", Str(await Send(HttpMethod.Get, "/simulations/sim-x/units", expect: HttpStatusCode.NotImplemented), "code"));
+        Assert.Equal("validation_failed", Str(await Send(HttpMethod.Get, "/simulations/sim-x/units", expect: HttpStatusCode.UnprocessableEntity), "code"));
+        Assert.Equal("not_found", Str(await Send(HttpMethod.Get, "/simulations/sim-x/units?tMin=0", expect: HttpStatusCode.NotFound), "code"));
     }
 
     [Fact]

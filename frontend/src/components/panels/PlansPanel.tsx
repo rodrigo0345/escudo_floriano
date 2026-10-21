@@ -1,14 +1,42 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { plansApi, simulationsApi, type Plan, type PlanSummary, type Simulation } from '@/api';
+import { plansApi, simulationsApi, type Plan, type PlanSummary, type PlanStatus, type Simulation } from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
+import { useResourcesStore } from '@/store/resourcesStore';
 
 import styles from './panels.module.css';
 
 const nf = (n: number) => n.toLocaleString('pt-PT');
 const ACTIONS_SHOWN = 40;
+
+const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
+  proposed: 'Proposto',
+  selected: 'Selecionado',
+  active: 'Ativo',
+  completed: 'Concluído',
+  discarded: 'Descartado',
+  cancelled: 'Cancelado',
+};
+
+const PLAN_STATUS_KIND: Record<PlanStatus, 'ok' | 'warn' | 'bad'> = {
+  proposed: 'warn',
+  selected: 'warn',
+  active: 'ok',
+  completed: 'ok',
+  discarded: 'bad',
+  cancelled: 'bad',
+};
+
+const ACTION_STATUS_LABEL: Record<string, string> = {
+  planned: 'Planeada',
+  acknowledged: 'Reconhecida',
+  in_progress: 'Em curso',
+  completed: 'Concluída',
+  blocked: 'Bloqueada',
+  cancelled: 'Cancelada',
+};
 
 type Stats = NonNullable<Simulation['stats']>;
 const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed'; label: string; unit: string }[] = [
@@ -23,6 +51,67 @@ function Delta({ value, base }: { value?: number; base?: number }) {
   if (value == null || !base) return null;
   const pct = ((value - base) / base) * 100;
   return <Tag kind={pct <= 0 ? 'ok' : 'bad'}>{`${pct > 0 ? '+' : ''}${pct.toFixed(0)}%`}</Tag>;
+}
+
+type CompareRow = { label: string; unit?: string; value: (sim?: Simulation) => number | undefined };
+
+const COMPARE_ROWS: CompareRow[] = [
+  { label: 'Área ardida', unit: ' ha', value: (s) => s?.stats?.burnedHa },
+  { label: 'Fogo de copas', unit: ' ha', value: (s) => s?.stats?.crownFireHa },
+  { label: 'Edifícios atingidos', value: (s) => s?.stats?.buildingsAffected },
+  { label: 'População exposta', value: (s) => s?.stats?.populationExposed },
+  { label: 'Pessoal em zona de fogo', value: (s) => s?.crewExposures?.reduce((sum, e) => sum + e.personnel, 0) },
+  { label: 'Baixas de pessoal', value: (s) => s?.stats?.crewCasualties },
+  { label: 'Estradas cortadas', value: (s) => s?.stats?.roadsCut },
+];
+
+/** One screen for the decision: base/A/B final metrics side by side, each plan against the baseline. */
+function CompareTable({ base, plans, runs }: { base?: Simulation; plans: PlanSummary[]; runs: Map<string, Simulation> }) {
+  const columns = plans.filter((p) => runs.has(p.id as string));
+  if (columns.length === 0) return null;
+  return (
+    <div className={styles.compareCard}>
+      <h3>Comparação</h3>
+      <p className="note">Mesma base e o mesmo minuto final. Verde = melhor do que a base.</p>
+      <div className={styles.compareScroll}>
+        <table className={styles.compareTable}>
+          <thead>
+            <tr>
+              <th>Indicador</th>
+              <th>Base</th>
+              {columns.map((p) => (
+                <th key={p.id as string} title={p.title}>
+                  {p.variant ?? 'Plano'}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {COMPARE_ROWS.map((row) => {
+              const baseline = row.value(base);
+              return (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td>
+                    <b>{baseline == null ? '—' : `${nf(baseline)}${row.unit ?? ''}`}</b>
+                  </td>
+                  {columns.map((p) => {
+                    const value = row.value(runs.get(p.id as string));
+                    return (
+                      <td key={p.id as string}>
+                        <b>{value == null ? '—' : `${nf(value)}${row.unit ?? ''}`}</b>
+                        <Delta value={value} base={baseline} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function StatsRows({ stats, base }: { stats?: Stats; base?: Stats }) {
@@ -48,6 +137,9 @@ export function PlansPanel() {
   const run = useAppStore((s) => s.run);
   const showBanner = useAppStore((s) => s.showBanner);
   const { showSimulationById } = useSimulationActions();
+  const organizations = useResourcesStore((s) => s.organizations);
+  const resourcesLoaded = useResourcesStore((s) => s.loaded);
+  const loadResources = useResourcesStore((s) => s.load);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +148,15 @@ export function PlansPanel() {
   const [runs, setRuns] = useState<Map<string, Simulation>>(new Map());
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<Plan | null>(null);
+
+  useEffect(() => {
+    if (!resourcesLoaded) void loadResources();
+  }, [resourcesLoaded, loadResources]);
+
+  const orgName = useCallback(
+    (organizationId: string) => organizations.find((o) => o.id === organizationId)?.name ?? organizationId,
+    [organizations],
+  );
 
   const refresh = useCallback(async (silent = false) => {
     if (!baseId) return;
@@ -95,12 +196,32 @@ export function PlansPanel() {
 
   const simulate = async (plan: PlanSummary) => {
     if (!baseId) return;
-    setBusy(plan.id as string);
+    setBusy(`sim:${plan.id as string}`);
     try {
       const sim = await plansApi.simulateAndWait(plan.id as string, baseId);
       setRuns((previous) => new Map(previous).set(plan.id as string, sim));
     } catch (e) {
       showBanner(`Simulação do plano: ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** The operator's approval path: proposed → selected → active → completed. */
+  const transition = async (plan: PlanSummary, next: 'select' | 'activate' | 'complete') => {
+    const id = plan.id as string;
+    setBusy(`${next}:${id}`);
+    try {
+      const updated =
+        next === 'select'
+          ? await plansApi.select(id)
+          : next === 'activate'
+            ? await plansApi.activate(id)
+            : await plansApi.patch(id, { status: 'completed' });
+      setOpen((current) => (current?.id === id ? updated : current));
+      await refresh(true);
+    } catch (e) {
+      showBanner(`Plano ${plan.variant ?? plan.title}: ${(e as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -137,6 +258,8 @@ export function PlansPanel() {
         </button>
       ) : null}
 
+      <CompareTable base={base ?? undefined} plans={plans} runs={runs} />
+
       {loading ? <p className="note">A carregar planos…</p> : null}
       {error ? <p className="note">Erro: {error}</p> : null}
       {!loading && !error && !plans.length ? (
@@ -149,10 +272,21 @@ export function PlansPanel() {
       {plans.map((plan) => {
         const id = plan.id as string;
         const sim = runs.get(id);
+        const status = (plan.status ?? 'proposed') as PlanStatus;
+        const statusKind = PLAN_STATUS_KIND[status] ?? 'warn';
+        const shownActions = open?.id === id ? open.actions.slice(0, ACTIONS_SHOWN) : [];
+        const groups = new Map<string, typeof shownActions>();
+        for (const action of shownActions) {
+          const organizationId = action.organizationId ?? '—';
+          const list = groups.get(organizationId);
+          if (list) list.push(action);
+          else groups.set(organizationId, [action]);
+        }
         return (
           <div key={id} className={`${styles.group} ${styles.spaced}`}>
             <div>
-              <b>{plan.title}</b> {plan.variant ? <Tag kind="warn">{plan.variant}</Tag> : null}
+              <b>{plan.title}</b> {plan.variant ? <Tag kind="warn">{plan.variant}</Tag> : null}{' '}
+              <Tag kind={statusKind}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>
               <br />
               <small className="note">
                 {plan.strategy} · {plan.actionCounts?.total ?? '?'} ações · {plan.alertLevel ?? '—'}
@@ -166,23 +300,54 @@ export function PlansPanel() {
                   {showing?.id === sim.id ? 'No mapa' : 'Ver no mapa'}
                 </button>
               ) : (
-                <button disabled={busy === id} onClick={() => void simulate(plan)}>
-                  {busy === id ? 'A simular…' : 'Simular o plano'}
+                <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)}>
+                  {busy === `sim:${id}` ? 'A simular…' : 'Simular o plano'}
                 </button>
               )}
               <button onClick={() => void toggleActions(plan)}>{open?.id === id ? 'Esconder ações' : 'Ver ações'}</button>
+              {status === 'proposed' ? (
+                <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
+                  {busy === `select:${id}` ? 'A selecionar…' : 'Selecionar'}
+                </button>
+              ) : null}
+              {status === 'selected' ? (
+                <button disabled={busy === `activate:${id}`} onClick={() => void transition(plan, 'activate')}>
+                  {busy === `activate:${id}` ? 'A ativar…' : 'Ativar'}
+                </button>
+              ) : null}
+              {status === 'active' ? (
+                <button disabled={busy === `complete:${id}`} onClick={() => void transition(plan, 'complete')}>
+                  {busy === `complete:${id}` ? 'A encerrar…' : 'Encerrar'}
+                </button>
+              ) : null}
             </div>
             {open?.id === id ? (
-              <div>
-                {open.actions.slice(0, ACTIONS_SHOWN).map((a) => (
-                  <Row key={a.id}>
-                    <span title={a.rationale ?? ''}>
-                      {a.title}
-                      <br />
-                      <small className="note">{a.type} · {a.organizationId}</small>
-                    </span>
-                    <Tag kind={a.priority === 'critical' ? 'bad' : 'ok'}>{a.priority ?? 'normal'}</Tag>
-                  </Row>
+              <div className={styles.actionGroups}>
+                {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
+                  <div key={organizationId} className={styles.actionGroup}>
+                    <div className={styles.orgHead}>
+                      <b>{orgName(organizationId)}</b>
+                      <small className="note">{actions.length} ação(ões)</small>
+                    </div>
+                    {actions.map((a) => (
+                      <Row key={a.id}>
+                        <span className={styles.actionText}>
+                          <b>{a.title}</b>
+                          {a.rationale ? <small className={styles.rationale}>{a.rationale}</small> : null}
+                          <small className="note">
+                            {a.type} · {orgName(a.organizationId ?? organizationId)}
+                            {a.supportingOrganizationIds?.length ? ` · apoia: ${a.supportingOrganizationIds.map(orgName).join(', ')}` : ''}
+                          </small>
+                        </span>
+                        <span className={styles.actionTags}>
+                          <Tag kind={a.priority === 'critical' ? 'bad' : 'ok'}>{a.priority ?? 'normal'}</Tag>
+                          <Tag kind={a.status === 'completed' ? 'ok' : a.status === 'blocked' ? 'bad' : 'warn'}>
+                            {ACTION_STATUS_LABEL[a.status ?? 'planned'] ?? a.status ?? 'planeada'}
+                          </Tag>
+                        </span>
+                      </Row>
+                    ))}
+                  </div>
                 ))}
                 {open.actions.length > ACTIONS_SHOWN ? <small className="note">… e mais {open.actions.length - ACTIONS_SHOWN} ações (a razão de cada uma está na dica ao passar o rato).</small> : null}
               </div>

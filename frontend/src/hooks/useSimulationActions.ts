@@ -119,7 +119,7 @@ export function useSimulationActions() {
       const currentTab = useAppStore.getState().tab;
       const comparing = currentTab === 'plans' && state.run !== null;
       state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
-      if (!comparing && currentTab !== 'plans' && currentTab !== 'demo' && currentTab !== 'resources') state.setTab('incident');
+      if (!comparing && currentTab !== 'plans' && currentTab !== 'resources') state.setTab('incident');
     },
     [world, loadImpact],
   );
