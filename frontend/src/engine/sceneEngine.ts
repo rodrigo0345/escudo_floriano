@@ -154,40 +154,6 @@ export class SceneEngine {
     this.rafId = requestAnimationFrame(loop);
   }
 
-  setOverlayPass(pass: OverlayPass | null): void {
-    this.overlayPass = pass;
-  }
-
-  /**
-   * Two passes: the world without the overlays, then (depth cleared) the terrain's depth only plus the overlays. Roads, icons, perimeter, plan and units are then occluded
-   * by the relief, as on the plain map, but never buried in the city's buildings and trees, whose height the overlays know nothing about.
-   */
-  private renderWithOverlays({ overlays, depthProxy }: OverlayPass): void {
-    const shown = overlays.map((o) => o.visible);
-    overlays.forEach((o) => (o.visible = false));
-    this.renderer.render(this.scene, this.camera);
-
-    const hidden: THREE.Object3D[] = [];
-    for (const child of this.scene.children) {
-      if (child.visible && !overlays.includes(child) && child !== depthProxy) {
-        child.visible = false;
-        hidden.push(child);
-      }
-    }
-    overlays.forEach((o, i) => (o.visible = shown[i]));
-    depthProxy.visible = true;
-    const autoClear = this.renderer.autoClear;
-    const background = this.scene.background;
-    this.renderer.autoClear = false;
-    this.scene.background = null;
-    this.renderer.clearDepth();
-    this.renderer.render(this.scene, this.camera);
-    this.renderer.autoClear = autoClear;
-    this.scene.background = background;
-    depthProxy.visible = false;
-    hidden.forEach((o) => (o.visible = true));
-  }
-
   /** The 3D city is meant to be seen from street level: bring the near plane and the zoom limit in (and back out when it is off). */
   setCloseUp(on: boolean): void {
     this.camera.near = on ? 0.4 : 1;

@@ -95,6 +95,8 @@ export class CloudLayer {
   private readonly dummy = new THREE.Object3D();
   private active = false;
   private enabled = true;
+  private renderedCloudCover = 0;
+  private renderedOpacity = 0;
 
   constructor() {
     this.texture = createCloudTexture();
@@ -161,7 +163,21 @@ export class CloudLayer {
     spot?: CloudSpatialSpot | null,
     camera?: THREE.Camera,
   ): void {
-    if (!this.enabled || cloudCoverPct <= 1) {
+    if (!this.enabled) {
+      if (this.active) {
+        this.group.visible = false;
+        this.active = false;
+        this.renderedCloudCover = 0;
+        this.renderedOpacity = 0;
+      }
+      return;
+    }
+
+    // Continuous smooth interpolation between frames (avoids any pop visual on rapid scrubbing)
+    const lerpRate = Math.min(1, dt * 10);
+    this.renderedCloudCover = THREE.MathUtils.lerp(this.renderedCloudCover, cloudCoverPct, lerpRate);
+
+    if (this.renderedCloudCover <= 0.5 && cloudCoverPct <= 0.5) {
       if (this.active) {
         this.group.visible = false;
         this.active = false;
@@ -174,13 +190,14 @@ export class CloudLayer {
       this.active = true;
     }
 
-    // Instance count proportional to cloud cover
-    const activeCount = Math.max(1, Math.min(MAX_CLOUDS, Math.round((cloudCoverPct / 100) * MAX_CLOUDS)));
+    const effectiveCover = Math.max(0, this.renderedCloudCover);
+    const activeCount = Math.max(1, Math.min(MAX_CLOUDS, Math.round((effectiveCover / 100) * MAX_CLOUDS)));
     this.mesh.count = activeCount;
 
-    // Atmospheric soft opacity (0.38 to 0.65) - never solid black wall
-    const baseOpacity = 0.38 + (cloudCoverPct / 100) * 0.26;
-    this.material.opacity = Math.min(0.65, baseOpacity);
+    // Atmospheric soft opacity (0.0 to 0.65) smoothly scaling with effectiveCover
+    const targetOpacity = effectiveCover > 1 ? 0.38 + (effectiveCover / 100) * 0.26 : 0;
+    this.renderedOpacity = THREE.MathUtils.lerp(this.renderedOpacity, targetOpacity, lerpRate);
+    this.material.opacity = Math.min(0.65, Math.max(0.01, this.renderedOpacity));
 
     // Weather-dependent cloud tinting:
     if (precipMmH >= 3.0) {
@@ -239,7 +256,8 @@ export class CloudLayer {
 
       // If localized spot, scale puff size appropriately
       const sizeMult = spot ? Math.min(1.0, Math.max(0.4, spot.radiusUnits / 320)) : 1.0;
-      this.dummy.scale.set(this.scaleX[i] * sizeMult, this.scaleY[i] * sizeMult, 1);
+      const fadeFactor = activeCount > 6 && i >= activeCount - 6 ? (activeCount - i) / 6 : 1.0;
+      this.dummy.scale.set(this.scaleX[i] * sizeMult * fadeFactor, this.scaleY[i] * sizeMult * fadeFactor, 1);
       this.dummy.updateMatrix();
 
       this.mesh.setMatrixAt(i, this.dummy.matrix);

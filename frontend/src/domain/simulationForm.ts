@@ -36,12 +36,16 @@ export interface TimelineRangeEvent {
   centerLat?: number;
   centerLon?: number;
   radiusKm?: number;          // radius in km (default 4 km)
+  // Parâmetros de ciclo de vida atmosférico (construção prévia e dissipação posterior)
+  buildupMinutes?: number;      // Antecedência de formação das nuvens antes de startMinute (default: 20-30 min)
+  dissipationMinutes?: number;  // Tempo de dissipação das nuvens após endMinute (default: 20-25 min)
   // Specific parameters
   intensityMmH?: number;     // for rain (default 6.0 mm/h)
   cloudCoverPct?: number;    // for clouds / fog (default 80%)
   windKmh?: number;          // for wind shift / storm (default 38 km/h)
   windFromDeg?: number;      // for wind shift (default 270°)
   windFactor?: number;       // for wind scale (default 1.7)
+  applyToGusts?: boolean;    // for wind scale (default true: scale gusts together with mean wind)
   tempDeltaC?: number;       // for temperature shift (-10 to +10 °C)
   humidityDeltaPct?: number; // for humidity shift (-30 to +30 %)
 }
@@ -98,6 +102,8 @@ export function createTimelineRangeEvent(
         startMinute: safeStart,
         endMinute: safeEnd,
         intensityMmH: 6.0,
+        buildupMinutes: 20,
+        dissipationMinutes: 20,
       };
     case 'storm':
       return {
@@ -111,6 +117,8 @@ export function createTimelineRangeEvent(
         windKmh: 42,
         windFromDeg: 240,
         tempDeltaC: -5,
+        buildupMinutes: 30,
+        dissipationMinutes: 25,
       };
     case 'clouds':
       return {
@@ -123,6 +131,8 @@ export function createTimelineRangeEvent(
         cloudCoverPct: 85,
         humidityDeltaPct: 25,
         tempDeltaC: -3,
+        buildupMinutes: 15,
+        dissipationMinutes: 20,
       };
     case 'wind_shift':
       return {
@@ -391,21 +401,23 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
     };
 
     if (ce.type === 'rain') {
+      const rainRamp = Math.min(8, Math.max(2, Math.round(dur * 0.15)));
       events.push({
         type: 'precipitation',
         enabled: true,
         window: win,
         intensityMmH: ce.intensityMmH ?? 6.0,
-        rampMinutes: Math.min(10, Math.round(dur * 0.2)),
+        rampMinutes: rainRamp,
       });
     } else if (ce.type === 'storm') {
+      const rainRamp = Math.min(10, Math.max(3, Math.round(dur * 0.15)));
       events.push(
         {
           type: 'precipitation',
           enabled: true,
           window: win,
           intensityMmH: ce.intensityMmH ?? 15.0,
-          rampMinutes: 5,
+          rampMinutes: rainRamp,
         },
         {
           type: 'wind_scale',
@@ -437,19 +449,24 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
         },
       );
     } else if (ce.type === 'wind_shift') {
-      const dirDelta = bearingDelta(ce.windFromDeg ?? 270, base?.dirDeg ?? 335);
+      const dur = Math.max(5, ce.endMinute - ce.startMinute);
+      const ramp = Math.min(15, Math.max(3, Math.round(dur * 0.2)));
+      const hold = Math.max(1, dur - ramp);
       events.push({
         type: 'wind_shift',
         enabled: true,
         start: { offsetMinutes: ce.startMinute },
-        deltaDeg: dirDelta,
-        rampMinutes: Math.min(30, dur),
+        toDeg: ce.windFromDeg != null ? normalizeDeg(ce.windFromDeg) : undefined,
+        deltaDeg: ce.windFromDeg == null ? 90 : undefined,
+        rampMinutes: ramp,
+        holdMinutes: hold,
+        returnRampMinutes: ramp,
       });
     } else if (ce.type === 'wind_scale') {
       events.push({
         type: 'wind_scale',
         enabled: true,
-        applyToGusts: true,
+        applyToGusts: ce.applyToGusts ?? false,
         window: win,
         factor: ce.windFactor ?? 1.7,
       });
@@ -547,14 +564,17 @@ export function extractTimelineEventsFromSnapshot(
       const start = 'start' in e && typeof e.start === 'object' && 'offsetMinutes' in e.start ? e.start.offsetMinutes ?? 0 : 0;
       if (start < -10) continue;
       const safeStart = Math.max(0, start);
+      const hold = 'holdMinutes' in e && typeof (e as { holdMinutes?: number }).holdMinutes === 'number' ? (e as { holdMinutes: number }).holdMinutes : 30;
+      const ramp = 'rampMinutes' in e && typeof (e as { rampMinutes?: number }).rampMinutes === 'number' ? (e as { rampMinutes: number }).rampMinutes : 15;
+      const targetDeg = 'toDeg' in e && typeof (e as { toDeg?: number }).toDeg === 'number' ? (e as { toDeg: number }).toDeg : 270;
       result.push({
         id: `ev_wind_${idx++}`,
         type: 'wind_shift',
         label: `Rotação Vento (T+${safeStart})`,
         enabled: true,
         startMinute: safeStart,
-        endMinute: Math.min(duration, safeStart + 30),
-        windFromDeg: 270,
+        endMinute: Math.min(duration, safeStart + hold + ramp),
+        windFromDeg: targetDeg,
       });
     } else if (e.type === 'wind_scale') {
       const win = 'window' in e ? e.window : null;
@@ -573,6 +593,7 @@ export function extractTimelineEventsFromSnapshot(
         startMinute: safeStart,
         endMinute: safeEnd,
         windFactor: e.factor ?? 1.7,
+        applyToGusts: (e as { applyToGusts?: boolean }).applyToGusts ?? true,
       });
     } else if (e.type === 'front_passage') {
       const at = 'at' in e && typeof e.at === 'object' && 'offsetMinutes' in e.at ? e.at.offsetMinutes ?? 0 : 0;

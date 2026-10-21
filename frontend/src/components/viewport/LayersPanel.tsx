@@ -59,7 +59,7 @@ export function LayersPanel() {
           Camadas {open ? '▴' : '▾'}
         </button>
       </div>
-      <div className={styles.layerPanel} hidden={!open}>
+      <div className={styles.layerPanel}>
         <CityBox />
         <WaterBox />
         <OverlayBox />

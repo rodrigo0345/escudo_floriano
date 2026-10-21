@@ -4,8 +4,6 @@ import type { Georef } from '@/domain/georef';
 
 import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
-import { burnStyles, burnStyleTexture } from './burnShader';
-import { FlameLayer } from './layers/flameLayer';
 import { PhotorealLayer, type CitySource } from './layers/photorealLayer';
 import { PlanLayer } from './layers/planLayer';
 import { UnitLayer } from './layers/unitLayer';
@@ -50,8 +48,6 @@ export class World {
   readonly smoke: SmokeSystem;
   /** The photoreal 3D city from local tiles (off by default; see `PhotorealLayer`). */
   readonly city: PhotorealLayer;
-  /** The flames, in 3D, where the fire is burning at the minute shown. */
-  readonly flames: FlameLayer;
   readonly rain: RainLayer;
   readonly clouds: CloudLayer;
 
@@ -71,16 +67,9 @@ export class World {
     this.fire = new FireLayer(geo);
     this.units = new UnitLayer(geo);
     this.smoke = new SmokeSystem(geo);
-    const styles = burnStyles(landcover, vegetation.classes);
-    this.terrain.setBurnStyle(burnStyleTexture(styles, geo.gridWidth, geo.gridHeight));
-    this.city = new PhotorealLayer(geo, location.id as string, this.terrain.burn);
-    this.flames = new FlameLayer(geo);
-    this.flames.setStyles(styles);
-    // while the city draws, the terrain sinks just under it (it fills any gap) and the overlays get their own pass, so buildings and trees never hide them
-    this.city.onVisibleChange = (visible) => {
-      this.terrain.setCityMode(visible);
-      this.engine.setOverlayPass(visible ? { overlays: this.overlays, depthProxy: this.terrain.depthProxy } : null);
-    };
+    this.city = new PhotorealLayer(geo, location.id as string);
+    // while the city draws, the terrain's imagery steps aside and only the fire stays on top of it
+    this.city.onVisibleChange = (visible) => this.terrain.setOverlay(visible);
     this.rain = new RainLayer();
     this.clouds = new CloudLayer();
 
@@ -157,9 +146,7 @@ export class World {
     this.wind.dispose();
     this.clouds.dispose();
     this.units.clear();
-    this.engine.setOverlayPass(null);
     this.city.dispose();
-    this.flames.dispose();
     this.terrain.dispose();
     this.roads.mesh.geometry.dispose();
     this.smoke.points.geometry.dispose();
