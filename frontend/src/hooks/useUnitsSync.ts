@@ -15,6 +15,9 @@ export function useUnitsSync(): void {
   const world = useWorld();
   const run = useAppStore((s) => s.run);
   const organizations = useResourcesStore((s) => s.organizations);
+  const vehicles = useResourcesStore((s) => s.vehicles);
+  const stations = useResourcesStore((s) => s.stations);
+  const loaded = useResourcesStore((s) => s.loaded);
   const [units, setUnits] = useState<MapUnit[]>([]);
 
   const simulationId = run?.simulation.kind === 'what_if' ? run.simulation.id : null;
@@ -47,10 +50,22 @@ export function useUnitsSync(): void {
     };
   }, [simulationId]);
 
+  // the registered fleet is on the map from the start (parked at the stations), not only once a plan's what-if is shown
+  useEffect(() => {
+    if (!loaded) void useResourcesStore.getState().load();
+  }, [loaded]);
+
   useEffect(() => {
     if (!world) return;
     const type = (id: string) => organizations.find((o) => o.id === id)?.type ?? 'other';
     const name = (id: string) => organizations.find((o) => o.id === id)?.shortName ?? id;
-    world.units.setUnits(units, (id) => ORG_COLOR[type(id)] ?? '#9aa0a8', name);
-  }, [world, units, organizations]);
+    world.units.setUnits(units, {
+      colorOf: (id) => ORG_COLOR[type(id)] ?? '#9aa0a8',
+      orgName: name,
+      orgType: type,
+      vehicleOf: (unitId) => vehicles.find((v) => v.id === unitId),
+    });
+    // every other registered vehicle: the plan's units are drawn by the unit layer, so the fleet leaves them out
+    world.fleet.setVehicles(vehicles, stations, organizations, world.units.unitIds);
+  }, [world, units, organizations, vehicles, stations]);
 }

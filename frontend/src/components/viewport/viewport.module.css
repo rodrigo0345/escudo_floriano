@@ -671,3 +671,17 @@
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 4px;
 }
+
+.panelToggle {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.layerPanel[hidden] {
+  display: none;
+}

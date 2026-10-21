@@ -5,6 +5,8 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
 import type { Georef } from '@/domain/georef';
 
+import { BURN_GLSL, type BurnUniforms } from '../burnShader';
+
 /** What `tools/fetch_tiles3d.py` writes next to the tiles: where they came from, when, and the credit the provider requires on screen. */
 export interface CityManifest {
   source: string;
@@ -86,6 +88,7 @@ export class PhotorealLayer {
   constructor(
     private readonly geo: Georef,
     private readonly locationId: string,
+    private readonly burn: BurnUniforms,
   ) {
     this.base = `/tiles3d/${locationId}`;
     this.group.visible = false;
@@ -183,13 +186,13 @@ export class PhotorealLayer {
     this.applyAlignment(tiles);
     this.group.add(tiles.group);
 
-    // photographic textures already carry their lighting: an unlit material shows them true and is cheaper than a lit one
+    // photographic textures already carry their lighting: an unlit material shows them true and is cheaper than a lit one; it also chars where the fire burned
     tiles.addEventListener('load-model', (event) => {
       (event as unknown as { scene: THREE.Object3D }).scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
         const material = mesh.material as THREE.MeshStandardMaterial | undefined;
         if (!mesh.isMesh || !material?.isMeshStandardMaterial) return;
-        mesh.material = new THREE.MeshBasicMaterial({ map: material.map, side: THREE.FrontSide });
+        mesh.material = this.burnableMaterial(material.map);
         material.dispose(); // the texture stays: the new material owns it now
       });
     });
@@ -203,6 +206,28 @@ export class PhotorealLayer {
     });
     draco.preload();
     return tiles;
+  }
+
+  /**
+   * The tile's photo, charred where the simulation burned (same shader and same uniforms as the terrain): trees, roofs and fields in the city turn to charcoal, soot or
+   * ash by land-cover type as the fire passes, and the ground glows under the flames. The grid position comes from the fragment's world position.
+   */
+  private burnableMaterial(map: THREE.Texture | null): THREE.MeshBasicMaterial {
+    const material = new THREE.MeshBasicMaterial({ map, side: THREE.FrontSide });
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, this.burn);
+      shader.vertexShader = `varying vec3 vBurnWorld;\n${shader.vertexShader.replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\n vBurnWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      )}`;
+      shader.fragmentShader = `varying vec3 vBurnWorld;\n${BURN_GLSL}\n${shader.fragmentShader}`
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>\n diffuseColor.rgb = burnSurface(diffuseColor.rgb, vec2(vBurnWorld.x / burnSize.x + 0.5, vBurnWorld.z / burnSize.y + 0.5));`,
+        )
+        .replace('#include <opaque_fragment>', `outgoingLight += burnGlow * 0.9;\n#include <opaque_fragment>`);
+    };
+    return material;
   }
 
   /** Google's credit for the tiles in view (live): the providers named in the tiles themselves, which Google requires on screen. */
