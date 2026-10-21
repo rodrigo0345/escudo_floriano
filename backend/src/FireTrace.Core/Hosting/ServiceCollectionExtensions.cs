@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Threading.RateLimiting;
 using FireTrace.Core.Common;
 using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Dispatches;
@@ -8,9 +11,11 @@ using FireTrace.Core.Domain.RoadClosures;
 using FireTrace.Core.Domain.Rules;
 using FireTrace.Core.Domain.Scenarios;
 using FireTrace.Core.Domain.Simulations;
+using FireTrace.Core.Models.Errors;
 using FireTrace.Core.Models.Fire;
 using FireTrace.Core.Models.Meta;
 using FireTrace.Core.Repositories;
+using FireTrace.Core.Serialization;
 using FireTrace.Core.Services.Crud;
 using FireTrace.Core.Services.Fire;
 using FireTrace.Core.Services.Map;
@@ -25,6 +30,7 @@ using FireTrace.Engine;
 using FireTrace.ExternalData.Configuration;
 using FireTrace.ExternalData;
 using FireTrace.ExternalData.Ingest;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace FireTrace.Core.Hosting;
 
@@ -43,6 +49,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<TimeProvider>(TimeProvider.System).AddSingleton<IIdGenerator, ShortGuidIdGenerator>().AddSingleton<Readiness>().AddSingleton<IIngestLog, ConsoleIngestLog>();
         return services
             .AddFireTraceSettings(settings)
+            .AddRateLimiting(settings.Limits)
             .AddExternalData(config, paths)
             .AddFireEngine(settings.Engine, settings.NativeEngine, settings.FuelMoisture, settings.Convection, settings.RunStore, EnginePathsFor(config, settings, paths))
             .AddRepositories(SpecPath(config, resolver))
@@ -91,4 +98,48 @@ public static class ServiceCollectionExtensions
             .AddSingleton<OperationSimulator>();
         return services.AddSingleton<ScenarioSeeder>().AddSingleton<ResourceSeeder>().AddSingleton<RoadCutsCache>().AddSingleton<SimulationQueue>().AddSingleton<SimulationService>().AddSingleton<FireResults>();
     }
+
+    static IServiceCollection AddRateLimiting(this IServiceCollection services, LimitsSettings limits) =>
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = async (context, token) =>
+            {
+                context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.HttpContext.Response.ContentType = "application/problem+json";
+                if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+                    context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Max(1, Math.Ceiling(retryAfter.TotalSeconds))).ToString(CultureInfo.InvariantCulture);
+                else
+                    context.HttpContext.Response.Headers.RetryAfter = limits.RateLimitWindowSeconds.ToString(CultureInfo.InvariantCulture);
+
+                var problem = new Problem(
+                    "Demasiados pedidos: por favor aguarde antes de tentar novamente.",
+                    StatusCodes.Status429TooManyRequests,
+                    "rate_limited",
+                    context.HttpContext.Request.Path,
+                    null,
+                    context.HttpContext.TraceIdentifier);
+                await JsonSerializer.SerializeAsync(context.HttpContext.Response.Body, problem, ApiJson.Options, token);
+            };
+
+            options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+            {
+                var forwarded = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+                var clientIp = ctx.Connection.RemoteIpAddress?.ToString() ?? forwarded?.Split(',')[0].Trim() ?? "client";
+                return RateLimitPartition.GetFixedWindowLimiter(clientIp, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = limits.RateLimitPermitLimit,
+                    Window = TimeSpan.FromSeconds(limits.RateLimitWindowSeconds),
+                    QueueLimit = 0,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                });
+            });
+
+            options.AddConcurrencyLimiter("planning", o =>
+            {
+                o.PermitLimit = 1;
+                o.QueueLimit = limits.PlanningQueueLimit;
+                o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+            });
+        });
 }

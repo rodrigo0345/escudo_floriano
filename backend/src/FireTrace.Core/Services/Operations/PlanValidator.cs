@@ -24,75 +24,85 @@ namespace FireTrace.Core.Services.Operations;
 public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> organizations, IDocumentStore<Vehicle> vehicles, IDocumentStore<PersonnelPool> pools,
     IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets, ArrivalEstimator arrival)
 {
+    readonly SemaphoreSlim _gate = new(1, 1);
+
     public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default)
     {
-        var issues = new List<ValidationIssue>();
-        void Add(string severity, string code, string message, string pointer, string? actionId = null, string? resourceId = null) => issues.Add(new(severity, code, message, pointer, actionId, resourceId));
-
-        if (map.Locations.Find(plan.LocationId) is null) Add("error", "unknown_location", $"Local '{plan.LocationId}' desconhecido.", "/locationId");
-        if (plan.Variant is { } variant && !Regex.IsMatch(variant, "^[A-Z]$")) Add("error", "invalid_variant", "`variant` é uma letra maiúscula (A, B…).", "/variant");
-        if (plan.Actions.Count > limits.MaxActionsPerPlan) Add("error", "too_many_actions", $"Um plano tem no máximo {limits.MaxActionsPerPlan} ações.", "/actions");
-        if (plan.Basis?.ScenarioId is { } sc)
+        await _gate.WaitAsync(ct);
+        try
         {
-            if (await scenarios.GetAsync(sc, ct) is not { } scenario) Add("error", "unknown_scenario", $"Cenário '{sc}' desconhecido.", "/basis/scenarioId");
-            else if (scenario.LocationId != plan.LocationId) Add("error", "location_mismatch", $"O cenário '{sc}' é do local '{scenario.LocationId}', não de '{plan.LocationId}'.", "/basis/scenarioId");
-        }
-        if (plan.Basis?.SimulationId is { } sim && await simulations.GetAsync(sim, ct) is null) Add("error", "unknown_simulation", $"Simulação '{sim}' desconhecida.", "/basis/simulationId");
+            var issues = new List<ValidationIssue>();
+            void Add(string severity, string code, string message, string pointer, string? actionId = null, string? resourceId = null) => issues.Add(new(severity, code, message, pointer, actionId, resourceId));
 
-        var knownOrgs = (await organizations.ListAsync(ct)).Select(o => o.Id).ToHashSet();
-        var ids = new HashSet<string>();
-        foreach (var (a, i) in plan.Actions.Select((a, i) => (a, i)))
-            if (string.IsNullOrWhiteSpace(a.Id) || !ids.Add(a.Id)) Add("error", "duplicate_action_id", $"O id de ação '{a.Id}' está vazio ou repetido.", $"/actions/{i}/id", a.Id);
-
-        var network = plan.Actions.OfType<RoadClosureAction>().Any() && map.Locations.Find(plan.LocationId) is not null ? await map.GetRoadsAsync(plan.LocationId, ct) : null;
-        var knownRoads = network?.Edges.Select(e => e.Id).ToHashSet();
-
-        for (int i = 0; i < plan.Actions.Count; i++)
-        {
-            var a = plan.Actions[i]; string at = $"/actions/{i}";
-            if (!knownOrgs.Contains(a.OrganizationId)) Add("error", "unknown_organization", $"Organização '{a.OrganizationId}' desconhecida.", $"{at}/organizationId", a.Id);
-            foreach (var org in (a.SupportingOrganizationIds ?? new()).Where(o => !knownOrgs.Contains(o))) Add("error", "unknown_organization", $"Organização '{org}' desconhecida.", $"{at}/supportingOrganizationIds", a.Id);
-            foreach (var dep in (a.DependsOn ?? new()).Where(d => d == a.Id || !ids.Contains(d))) Add("error", "unknown_dependency", $"A ação depende de '{dep}', que não existe neste plano.", $"{at}/dependsOn", a.Id);
-
-            foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, ct);
-
-            switch (a)
+            if (map.Locations.Find(plan.LocationId) is null) Add("error", "unknown_location", $"Local '{plan.LocationId}' desconhecido.", "/locationId");
+            if (plan.Variant is { } variant && !Regex.IsMatch(variant, "^[A-Z]$")) Add("error", "invalid_variant", "`variant` é uma letra maiúscula (A, B…).", "/variant");
+            if (plan.Actions.Count > limits.MaxActionsPerPlan) Add("error", "too_many_actions", $"Um plano tem no máximo {limits.MaxActionsPerPlan} ações.", "/actions");
+            if (plan.Basis?.ScenarioId is { } sc)
             {
-                case RoadClosureAction c when knownRoads is not null:
-                    if (c.Geometry is null && c.ClosureId is null)
-                    {
-                        foreach (var road in c.RoadIds.Where(r => MapIds.RoadNumber(r) is not { } n || !knownRoads.Contains(n)))
-                            Add("error", "unknown_road", $"Troço '{road}' desconhecido.", $"{at}/roadIds", a.Id);
-                    }
-                    break;
-                case FireAttackAction f when f.EscapeRoutes is not { Count: > 0 } || f.SafetyZones is not { Count: > 0 }:
-                    Add("warning", "missing_safety", "Ataque ao fogo sem vias de fuga ou zonas de segurança indicadas.", at, a.Id);
-                    break;
-                case FuelBreakAction b:
-                    if (b.EscapeRoutes is not { Count: > 0 } || b.SafetyZones is not { Count: > 0 }) Add("warning", "missing_safety", "Corte de combustível sem vias de fuga ou zonas de segurança indicadas.", at, a.Id);
-                    if (map.Locations.Find(plan.LocationId) is { } loc && b.Line.Coordinates.Any(c => loc.Spec.CellAt(c.Y, c.X) < 0)) Add("error", "outside_location", "A faixa de corte sai da área do local.", $"{at}/line", a.Id);
-                    await CheckFuelBreakCrew(b, at, Add, ct);
-                    break;
+                if (await scenarios.GetAsync(sc, ct) is not { } scenario) Add("error", "unknown_scenario", $"Cenário '{sc}' desconhecido.", "/basis/scenarioId");
+                else if (scenario.LocationId != plan.LocationId) Add("error", "location_mismatch", $"O cenário '{sc}' é do local '{scenario.LocationId}', não de '{plan.LocationId}'.", "/basis/scenarioId");
             }
-        }
+            if (plan.Basis?.SimulationId is { } sim && await simulations.GetAsync(sim, ct) is null) Add("error", "unknown_simulation", $"Simulação '{sim}' desconhecida.", "/basis/simulationId");
 
-        if (plan.Basis?.SimulationId is { } basisSimulation)
-        {
-            await CheckSmokeAsync(plan, basisSimulation, Add, ct);
-            await CheckCrewExposureAsync(plan, basisSimulation, Add, ct);
-        }
+            var knownOrgs = (await organizations.ListAsync(ct)).Select(o => o.Id).ToHashSet();
+            var ids = new HashSet<string>();
+            foreach (var (a, i) in plan.Actions.Select((a, i) => (a, i)))
+                if (string.IsNullOrWhiteSpace(a.Id) || !ids.Add(a.Id)) Add("error", "duplicate_action_id", $"O id de ação '{a.Id}' está vazio ou repetido.", $"/actions/{i}/id", a.Id);
 
-        var reach = Dependencies(plan);
-        if (reach.Any(kv => kv.Value.Contains(kv.Key))) Add("error", "dependency_cycle", "As dependências entre ações têm um ciclo.", "/actions");
-        foreach (var group in plan.Actions.SelectMany(a => (a.Resources ?? new()).Select(r => (Key: (r.ResourceType, r.ResourceId), Action: a))).GroupBy(x => x.Key))
-        {
-            var actions = group.Select(x => x.Action).Distinct().ToList();
-            for (int x = 0; x < actions.Count; x++)
-                for (int y = x + 1; y < actions.Count; y++)
-                    if (!reach[actions[x].Id].Contains(actions[y].Id) && !reach[actions[y].Id].Contains(actions[x].Id))
-                        Add("warning", "resource_conflict", $"O meio {group.Key.ResourceId} está em duas ações que podem decorrer ao mesmo tempo ({actions[x].Id}, {actions[y].Id}).", "/actions", resourceId: group.Key.ResourceId);
+            var network = plan.Actions.OfType<RoadClosureAction>().Any() && map.Locations.Find(plan.LocationId) is not null ? await map.GetRoadsAsync(plan.LocationId, ct) : null;
+            var knownRoads = network?.Edges.Select(e => e.Id).ToHashSet();
+
+            for (int i = 0; i < plan.Actions.Count; i++)
+            {
+                var a = plan.Actions[i]; string at = $"/actions/{i}";
+                if (!knownOrgs.Contains(a.OrganizationId)) Add("error", "unknown_organization", $"Organização '{a.OrganizationId}' desconhecida.", $"{at}/organizationId", a.Id);
+                foreach (var org in (a.SupportingOrganizationIds ?? new()).Where(o => !knownOrgs.Contains(o))) Add("error", "unknown_organization", $"Organização '{org}' desconhecida.", $"{at}/supportingOrganizationIds", a.Id);
+                foreach (var dep in (a.DependsOn ?? new()).Where(d => d == a.Id || !ids.Contains(d))) Add("error", "unknown_dependency", $"A ação depende de '{dep}', que não existe neste plano.", $"{at}/dependsOn", a.Id);
+
+                foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, ct);
+
+                switch (a)
+                {
+                    case RoadClosureAction c when knownRoads is not null:
+                        if (c.Geometry is null && c.ClosureId is null)
+                        {
+                            foreach (var road in c.RoadIds.Where(r => MapIds.RoadNumber(r) is not { } n || !knownRoads.Contains(n)))
+                                Add("error", "unknown_road", $"Troço '{road}' desconhecido.", $"{at}/roadIds", a.Id);
+                        }
+                        break;
+                    case FireAttackAction f when f.EscapeRoutes is not { Count: > 0 } || f.SafetyZones is not { Count: > 0 }:
+                        Add("warning", "missing_safety", "Ataque ao fogo sem vias de fuga ou zonas de segurança indicadas.", at, a.Id);
+                        break;
+                    case FuelBreakAction b:
+                        if (b.EscapeRoutes is not { Count: > 0 } || b.SafetyZones is not { Count: > 0 }) Add("warning", "missing_safety", "Corte de combustível sem vias de fuga ou zonas de segurança indicadas.", at, a.Id);
+                        if (map.Locations.Find(plan.LocationId) is { } loc && b.Line.Coordinates.Any(c => loc.Spec.CellAt(c.Y, c.X) < 0)) Add("error", "outside_location", "A faixa de corte sai da área do local.", $"{at}/line", a.Id);
+                        await CheckFuelBreakCrew(b, at, Add, ct);
+                        break;
+                }
+            }
+
+            if (plan.Basis?.SimulationId is { } basisSimulation)
+            {
+                await CheckSmokeAsync(plan, basisSimulation, Add, ct);
+                await CheckCrewExposureAsync(plan, basisSimulation, Add, ct);
+            }
+
+            var reach = Dependencies(plan);
+            if (reach.Any(kv => kv.Value.Contains(kv.Key))) Add("error", "dependency_cycle", "As dependências entre ações têm um ciclo.", "/actions");
+            foreach (var group in plan.Actions.SelectMany(a => (a.Resources ?? new()).Select(r => (Key: (r.ResourceType, r.ResourceId), Action: a))).GroupBy(x => x.Key))
+            {
+                var actions = group.Select(x => x.Action).Distinct().ToList();
+                for (int x = 0; x < actions.Count; x++)
+                    for (int y = x + 1; y < actions.Count; y++)
+                        if (!reach[actions[x].Id].Contains(actions[y].Id) && !reach[actions[y].Id].Contains(actions[x].Id))
+                            Add("warning", "resource_conflict", $"O meio {group.Key.ResourceId} está em duas ações que podem decorrer ao mesmo tempo ({actions[x].Id}, {actions[y].Id}).", "/actions", resourceId: group.Key.ResourceId);
+            }
+            return new PlanValidation(issues.All(i => i.Severity != "error"), clock.GetUtcNow(), issues);
         }
-        return new PlanValidation(issues.All(i => i.Severity != "error"), clock.GetUtcNow(), issues);
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     /// <summary>

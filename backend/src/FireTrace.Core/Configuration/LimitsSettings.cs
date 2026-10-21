@@ -5,4 +5,5 @@ namespace FireTrace.Core.Configuration;
 
 public sealed record LimitsSettings(int MinDurationMinutes, int MaxDurationMinutes, int MinIgnitions, int MaxIgnitions, int MaxEnsembleMembers, int MaxKeyframes, int MaxActionsPerPlan,
     int MaxPageSize, int MaxWeatherDays, int MaxWaitSeconds, int MaxStepMinutes, int DefaultActionWindowMinutes, int ActionSmokeStepMinutes,
-    int PlanRequestStaleMinutes, int MaxPlanRequestNoteLength);
+    int PlanRequestStaleMinutes, int MaxPlanRequestNoteLength,
+    int RateLimitPermitLimit, int RateLimitWindowSeconds, int PlanningQueueLimit);

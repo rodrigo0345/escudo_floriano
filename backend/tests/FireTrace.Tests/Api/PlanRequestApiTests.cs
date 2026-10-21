@@ -83,6 +83,36 @@ public class PlanRequestApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Only_one_plan_request_can_be_processed_at_a_time()
+    {
+        var sim1 = await Baseline();
+        var sim2 = await Baseline();
+
+        var (_, created1) = await Send(HttpMethod.Post, $"/simulations/{sim1}/plan-requests");
+        var (_, created2) = await Send(HttpMethod.Post, $"/simulations/{sim2}/plan-requests");
+        var id1 = created1!["id"]!.GetValue<string>();
+        var id2 = created2!["id"]!.GetValue<string>();
+
+        // Claim first request -> succeeds
+        var (claim1Status, _) = await Send(HttpMethod.Post, $"/plan-requests/{id1}/claim", new { agent = "agents@1" });
+        Assert.Equal(HttpStatusCode.OK, claim1Status);
+
+        // Attempt to claim second request while first is active in planning -> rejected with 409 Conflict
+        var (claim2Status, claim2Error) = await Send(HttpMethod.Post, $"/plan-requests/{id2}/claim", new { agent = "agents@2" });
+        Assert.Equal(HttpStatusCode.Conflict, claim2Status);
+        Assert.Equal("plan_request_claimed", claim2Error!["code"]!.GetValue<string>());
+
+        // Complete the first request
+        var (doneStatus, _) = await Send(HttpMethod.Patch, $"/plan-requests/{id1}", new { status = "done", planIds = new[] { "pla-1" } });
+        Assert.Equal(HttpStatusCode.OK, doneStatus);
+
+        // Now claiming second request succeeds
+        var (claim2AgainStatus, claimed2) = await Send(HttpMethod.Post, $"/plan-requests/{id2}/claim", new { agent = "agents@2" });
+        Assert.Equal(HttpStatusCode.OK, claim2AgainStatus);
+        Assert.Equal("planning", claimed2!["status"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Only_a_finished_baseline_can_be_planned()
     {
         Assert.Equal(HttpStatusCode.NotFound, (await Send(HttpMethod.Post, "/simulations/sim-nope/plan-requests")).Status);
