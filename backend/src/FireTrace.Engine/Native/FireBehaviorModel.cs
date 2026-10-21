@@ -1,110 +1,113 @@
 using FireTrace.Engine.Configuration;
 using FireTrace.Engine.Contracts;
+using FireTrace.Engine.Weather;
 
 namespace FireTrace.Engine.Native;
 
 /// <summary>
-/// The fire physics of the native engine, as pure functions of the landscape bands: a light Rothermel rate of spread (fuel x wind x slope x moisture),
-/// the elliptical spread shape, Byram fireline intensity and a Van Wagner style crown-fire test. Nothing here reads or writes state.
+/// The fire physics of the native engine, as pure functions of the landscape bands and the weather of the minute: Rothermel's surface spread with
+/// the fuel model of the cell, the midflame wind (canopy shelter, gusts), the slope and the aspect's drying, Van Wagner's crown-fire initiation and
+/// active-crowning test, and the damping of rain. Nothing here reads or writes state.
 /// </summary>
 public sealed class FireBehaviorModel(NativeEngineSettings settings, FuelMoistureSettings moisture)
 {
-    public double ReferenceRosMPerMin => settings.ReferenceRosMPerMin;
+    /// <summary>1 km/h at 10 m is about 0.93 × the 20-ft wind Rothermel's wind factor expects; 1 km/h = 54.68 ft/min.</summary>
+    const double KmhToTwentyFootFtPerMin = 54.68 * 0.93;
+    const double DegreesToRadians = Math.PI / 180.0;
 
-    /// <summary>Velocidade de referência (fator, 1 = a de referência) por combustível: Scott &amp; Burgan grosso modo, da classe não combustível à folhada mais grossa.
-    /// A diferenciação fina por espécie já vem em <c>job.Adjustment</c> (SpreadFactor); isto só separa "não arde" / "arde pouco" / "arde bem".</summary>
-    static double FuelFactor(int fbfm40) => fbfm40 switch
+    /// <summary>How many minutes share one computed cell behaviour (the weather and moisture are interpolated, not static).</summary>
+    public int BehaviorBucketMinutes => settings.BehaviorBucketMinutes;
+
+    /// <summary>Foliar moisture (%) used when the scenario does not fix one; drives Van Wagner's crown initiation threshold.</summary>
+    public double DefaultFoliarMoisturePct => settings.DefaultFoliarMoisturePct;
+
+    /// <summary>What the fire does in cell `c` with this minute's fuel moisture and this wind, before the per-cell local adjustment.</summary>
+    public CellBehavior Of(short[] bands, int n, int c, DeadFuelMoisture.Row row, double windKmh, double windFromDeg, double gustKmh, double precipMmH, double foliarPct)
     {
-        < 100 => 0.0,                 // NB: não combustível (água, rocha, urbano)
-        >= 100 and < 120 => 0.6,      // GR: pasto
-        >= 140 and < 160 => 1.0,      // SH: mato
-        >= 160 and < 180 => 0.8,      // TU: floresta com sub-bosque
-        >= 180 and < 190 => 0.55,     // TL: folhada
-        _ => 0.7,
-    };
+        var fuel = FuelModelCatalog.For(LandscapeBands.At(bands, n, LandscapeBands.Fuel, c));
+        if (!fuel.Burnable) return CellBehavior.None;
 
-    public double BaseRos(short[] bands, int n, int c) => FuelFactor(LandscapeBands.At(bands, n, LandscapeBands.Fuel, c));
-
-    /// <summary>
-    /// Humidade do combustível fino na célula, corrigida pela face da encosta: uma encosta virada a sul (no hemisfério norte) apanha mais sol,
-    /// seca mais depressa — menos humidade, mais fogo; uma virada a norte fica mais húmida. Acima do limite de extinção não sustenta chama.
-    /// </summary>
-    public double MoistureFactor(double m1Pct, short[] bands, int n, int c)
-    {
         double slopeDeg = LandscapeBands.At(bands, n, LandscapeBands.Slope, c);
+        double aspect = LandscapeBands.At(bands, n, LandscapeBands.Aspect, c);
+
+        // Dead fine fuel on a south/west-facing slope is drier: the aspect swings the 1 h moisture by a few percent, never below the floor.
+        double m1 = row.M1 / 100.0;
         if (slopeDeg >= 0.5 && settings.AspectMoistureSwingPct > 0)
         {
-            double aspect = LandscapeBands.At(bands, n, LandscapeBands.Aspect, c);
-            double southness = -Math.Cos(aspect * Math.PI / 180); // +1 virada a sul (seca), -1 virada a norte (húmida)
-            m1Pct = Math.Max(0, m1Pct - settings.AspectMoistureSwingPct * southness);
+            double southness = -Math.Cos(aspect * DegreesToRadians); // +1 south-facing (drier), −1 north-facing (wetter)
+            m1 -= settings.AspectMoistureSwingPct / 100.0 * southness;
         }
-        return m1Pct >= moisture.MinDeadMoisturePct * 10 ? 0.05 : Math.Exp(-settings.MoistureDampingK * m1Pct);
+        m1 = Math.Clamp(m1, moisture.MinDeadMoisturePct / 100.0, 0.60);
+        double m10 = Math.Clamp(row.M10 / 100.0, moisture.MinDeadMoisturePct / 100.0, 0.60);
+        double m100 = Math.Clamp(row.M100 / 100.0, moisture.MinDeadMoisturePct / 100.0, 0.60);
+        double liveHerb = Math.Clamp(row.Lh / 100.0, 0, 3.0), liveWoody = Math.Clamp(row.Lw / 100.0, 0, 3.0);
+
+        // The 10-m wind first becomes a 20-ft wind, then the wind adjustment factor takes it to the fuel bed (canopy, fuel depth).
+        double wind = gustKmh > windKmh ? windKmh + settings.GustFactor * (gustKmh - windKmh) : windKmh;
+        double canopyCover = Math.Clamp(LandscapeBands.At(bands, n, LandscapeBands.CanopyCover, c) / 100.0, 0, 1);
+        double canopyHeightFt = Math.Max(0, LandscapeBands.At(bands, n, LandscapeBands.CanopyHeight, c) / 10.0) * 3.28084;
+        double waf = WindAdjustmentFactor.Of(fuel.DepthFt, canopyHeightFt, canopyCover, settings.MinWindAdjustmentFactor);
+        double midflameFtMin = Math.Max(0, wind) * KmhToTwentyFootFtPerMin * waf;
+
+        double slopeTan = slopeDeg >= 0.5 ? Math.Tan(Math.Min(slopeDeg, 80) * DegreesToRadians) : 0;
+        var surface = RothermelSurfaceFire.Compute(fuel, m1, m10, m100, liveHerb, liveWoody, midflameFtMin, slopeTan,
+            Angles.Normalize(windFromDeg + 180), Angles.Normalize(aspect + 180), settings.MaxLengthToWidthRatio);
+
+        double rain = RainFactor(precipMmH, surface.IntensityKwm);
+        double ros = surface.MaxRosMPerMin * settings.SpreadCalibration * rain;
+        double intensity = surface.IntensityKwm * settings.SpreadCalibration * rain;
+        if (ros <= 1e-9 || intensity <= 0) return CellBehavior.None;
+
+        // ---------------------------------------------------------------- crown fire: Van Wagner (1977) initiation and (1993) active-crowning test
+        bool crown = false, active = false;
+        double canopyCoverPct = canopyCover * 100;
+        double canopyHeightM = canopyHeightFt / 3.28084;
+        double canopyBaseM = LandscapeBands.At(bands, n, LandscapeBands.CanopyBase, c) / 10.0;
+        double canopyBulk = LandscapeBands.At(bands, n, LandscapeBands.CanopyBulkDensity, c) / 100.0;
+        if (canopyCoverPct >= settings.MinCrownCoverPct && canopyBaseM > 0.1 && canopyBulk > 0.01 && canopyHeightM > canopyBaseM)
+        {
+            double foliar = foliarPct > 0 ? foliarPct : settings.DefaultFoliarMoisturePct;
+            double initiation = Math.Pow(0.010 * canopyBaseM * (460 + 25.9 * foliar), 1.5); // kW/m
+            if (intensity >= initiation)
+            {
+                crown = true;
+                double activeRos = settings.CrownFireRosFactor * ros;
+                double criticalRos = settings.CriticalCrownRosFactor / canopyBulk;
+                active = activeRos >= criticalRos;
+                if (active) ros = Math.Max(ros, activeRos);
+                double crownLoad = canopyBulk * (canopyHeightM - canopyBaseM); // kg/m²
+                double crownIntensity = settings.CrownHeatContentKjKg * crownLoad * (active ? 1.0 : settings.PassiveCrownFuelFraction) * ros / 60;
+                intensity += Math.Max(0, crownIntensity);
+            }
+        }
+
+        return new CellBehavior(ros, surface.DirectionDeg, surface.LengthToWidth, intensity, crown, active);
     }
 
-    /// <summary>Coeficiente de vento de Rothermel, forma simplificada U^b: o vento acelera a frente, mais depressa a baixas velocidades.</summary>
-    public double WindFactor(double windKmh) => 1 + settings.WindCoefficientA * Math.Pow(Math.Max(windKmh, 0), settings.WindCoefficientB);
-
     /// <summary>
-    /// O vento que chega ao combustível de superfície, descontado o abrigo do dossel: um copado fechado (alto CanopyCoverPct) trava o vento
-    /// antes de chegar ao chão — sub-bosque mais calmo, frente mais lenta; terreno aberto sem copado dá o vento quase todo à superfície.
+    /// How much of the spread survives the rain: none above the extinction rate, all of it below the start rate, linear in between.
+    /// Grounded in Byram (1959) and Albini (1979): higher fireline intensity vaporizes incoming rain, raising the effective extinction threshold.
     /// </summary>
-    public double WindAtSurface(short[] bands, int n, int c, double ambientWindFactor)
+    public double RainFactor(double precipMmH, double intensityKwm = 0)
     {
-        double cover = LandscapeBands.At(bands, n, LandscapeBands.CanopyCover, c) / 100.0;
-        double shelter = 1 - settings.CanopyWindShelterFactor * cover;
-        return 1 + (ambientWindFactor - 1) * Math.Max(0.1, shelter);
+        if (precipMmH <= settings.RainStartMmH) return 1;
+        double intensityMultiplier = intensityKwm > 500.0
+            ? 1.0 + Math.Min(2.0, Math.Log10(intensityKwm / 500.0))
+            : 1.0;
+        double effectiveExtinction = settings.RainExtinctionMmH * intensityMultiplier;
+        if (precipMmH >= effectiveExtinction) return 0;
+        return 1 - (precipMmH - settings.RainStartMmH) / (effectiveExtinction - settings.RainStartMmH);
     }
 
     /// <summary>
-    /// Quanto mais depressa o fogo de copas avança, vindo de uma célula já em copas: um dossel mais denso e contínuo (CanopyBulkDensity)
-    /// sustenta uma corrida de copas mais forte — o combustível fino do dossel está exposto ao vento pleno, sem o abrigo da superfície.
+    /// Huygens' ellipse: the fraction of the maximum spread rate in a direction `bearingDeg`, for an ellipse elongated along `maxDirectionDeg`
+    /// with length-to-width `lb` (the standard FARSITE/FlamMap formula, 1 along the major axis and (1−e)/(1+e) at the back).
     /// </summary>
-    public double CrownFireBoost(short[] bands, int n, int c)
+    public static double EllipseFactor(double bearingDeg, double maxDirectionDeg, double lb)
     {
-        double bulk = LandscapeBands.At(bands, n, LandscapeBands.CanopyBulkDensity, c) / 100.0; // kg/m³
-        return 1 + settings.CrownFireRosBoost * Math.Min(1, bulk / settings.CrownFireReferenceBulkDensity);
-    }
-
-    /// <summary>Razão comprimento/largura da elipse de propagação: cresce com o vento (frentes fracas quase circulares; fortes, muito alongadas).</summary>
-    public double EllipseRatio(double windKmh) => Math.Clamp(1 + (settings.MaxEllipseRatio - 1) * (windKmh / settings.EllipseWindRefKmh), settings.MinEllipseRatio, settings.MaxEllipseRatio);
-
-    /// <summary>
-    /// Forma de Huygens: o fator de velocidade numa direção `bearing` relativo ao vento, para uma elipse de razão `lb` com o foco na ignição
-    /// (fórmula padrão de excentricidade a partir de L/W, usada pelo FARSITE/FlamMap). 1 na direção do vento, menor nos flancos e na retaguarda.
-    /// </summary>
-    public static double EllipseFactor(double bearingDeg, double windFromDeg, double lb)
-    {
-        double toDeg = (windFromDeg + 180) % 360; // para onde o vento sopra
-        double theta = (bearingDeg - toDeg) * Math.PI / 180;
+        if (lb <= 1) return 1;
         double ecc = Math.Sqrt(Math.Max(1 - 1 / (lb * lb), 0));
+        double theta = (bearingDeg - maxDirectionDeg) * DegreesToRadians;
         return (1 - ecc) / (1 - ecc * Math.Cos(theta));
-    }
-
-    /// <summary>Fator de declive de Rothermel (forma simplificada, tan²): sobe a favor da inclinação na direção do passo, desce contra ela.</summary>
-    public double SlopeFactor(short[] bands, int n, int c, double bearingDeg)
-    {
-        double slopeDeg = LandscapeBands.At(bands, n, LandscapeBands.Slope, c), aspect = LandscapeBands.At(bands, n, LandscapeBands.Aspect, c);
-        if (slopeDeg < 0.5) return 1;
-        double tan = Math.Tan(slopeDeg * Math.PI / 180);
-        // aspect = para onde a encosta desce; mover-se nessa direção é descer (mais devagar), no sentido oposto é subir (mais depressa)
-        double along = -Math.Cos((bearingDeg - aspect) * Math.PI / 180); // +1 a direito a subir, -1 a descer
-        return Math.Max(0.15, 1 + settings.SlopeCoefficient * along * tan * tan);
-    }
-
-    /// <summary>Intensidade da frente (kW/m, Byram): proporcional à carga de combustível (copado, como proxy do total) e à velocidade.</summary>
-    public double FirelineIntensity(short[] bands, int n, int c, double rosMPerMin)
-    {
-        double bulk = LandscapeBands.At(bands, n, LandscapeBands.CanopyBulkDensity, c) / 100.0, height = LandscapeBands.At(bands, n, LandscapeBands.CanopyHeight, c) / 10.0;
-        double load = Math.Max(0.3, bulk * height * settings.CrownFuelLoadFactor + 0.3); // kg/m², copado mais um piso de combustível de superfície
-        return settings.FirelineIntensityFactor * load * rosMPerMin / 60; // kW/m
-    }
-
-    /// <summary>Critério de fogo de copas (Van Wagner, simplificado): intensidade acima de um limiar que desce com a base do copado mais baixa.</summary>
-    public bool IsCrownFire(short[] bands, int n, int c, double intensityKwm)
-    {
-        double baseHeight = LandscapeBands.At(bands, n, LandscapeBands.CanopyBase, c) / 10.0, cover = LandscapeBands.At(bands, n, LandscapeBands.CanopyCover, c);
-        if (cover < 10 || baseHeight <= 0) return false;
-        double threshold = settings.CrownFireIntensityThresholdKwm * (0.3 + baseHeight / 10.0);
-        return intensityKwm >= threshold;
     }
 }

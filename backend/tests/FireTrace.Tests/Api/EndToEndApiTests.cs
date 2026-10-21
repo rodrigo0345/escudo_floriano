@@ -264,22 +264,32 @@ public class EndToEndApiTests : IClassFixture<ApiFactory>
     [Fact]
     public async Task Routing_and_weather_endpoints_calculate_correctly()
     {
-        // 1. Weather series query
-        var (weatherStatus, weather) = await Send(HttpMethod.Get, "/weather/series?locationId=guimaraes&from=2026-08-17T00:00:00Z&to=2026-08-17T04:00:00Z");
-        Assert.Equal(HttpStatusCode.OK, weatherStatus);
-        Assert.NotNull(weather?["samples"]);
-
-        // 2. Weather resolve
+        // 1. Weather preview from manual keyframes (the OpenAPI recipe, without Open-Meteo)
         var (resolveStatus, resolved) = await Send(HttpMethod.Post, "/weather/resolve", new
         {
             locationId = "guimaraes",
             start = "2026-08-17T12:00:00Z",
             durationMinutes = 120,
-            weather = new { @base = "provider" },
-            stepMinutes = 30
+            stepMinutes = 30,
+            weather = new
+            {
+                @base = "none",
+                keyframes = new[]
+                {
+                    new { at = new { offsetMinutes = 0 }, windKmh = 35, windFromDeg = 335, gustKmh = 55, tempC = 34, humidityPct = 18, precipitationMmH = 0 },
+                    new { at = new { offsetMinutes = 120 }, windKmh = 35, windFromDeg = 335, gustKmh = 45, tempC = 31, humidityPct = 22, precipitationMmH = 0 },
+                },
+            },
         });
         Assert.Equal(HttpStatusCode.OK, resolveStatus);
-        Assert.NotNull(resolved?["samples"]);
+        var samples = resolved?["samples"]?.AsArray();
+        Assert.NotNull(samples);
+        Assert.Equal(35, samples[0]?["windKmh"]?.GetValue<double>());
+        Assert.Equal(55, samples[0]?["gustKmh"]?.GetValue<double>());
+        Assert.Equal(34, samples[0]?["tempC"]?.GetValue<double>());
+        Assert.Equal(18, samples[0]?["humidityPct"]?.GetValue<double>());
+        Assert.Equal(22, samples[^1]?["humidityPct"]?.GetValue<double>());
+        Assert.Null(samples[0]?["precipitationMmH"]);
 
         // 3. Routing calculation
         var (routeStatus, route) = await Send(HttpMethod.Post, "/routing/route", new
@@ -304,6 +314,41 @@ public class EndToEndApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Manual_custom_series_is_accepted_without_keyframes()
+    {
+        var (status, resolved) = await Send(HttpMethod.Post, "/weather/resolve", new
+        {
+            locationId = "guimaraes",
+            start = "2026-08-17T12:00:00Z",
+            durationMinutes = 60,
+            stepMinutes = 30,
+            weather = new
+            {
+                @base = "none",
+                events = new[]
+                {
+                    new
+                    {
+                        type = "custom_series",
+                        samples = new[]
+                        {
+                            new { time = "2026-08-17T12:00:00Z", windKmh = 15, windFromDeg = 300, gustKmh = 30, tempC = 30, humidityPct = 30, precipitationMmH = 0.0 },
+                            new { time = "2026-08-17T13:00:00Z", windKmh = 25, windFromDeg = 310, gustKmh = 45, tempC = 32, humidityPct = 25, precipitationMmH = 1.2 },
+                        },
+                    },
+                },
+            },
+        });
+        Assert.Equal(HttpStatusCode.OK, status);
+        var samples = resolved?["samples"]?.AsArray();
+        Assert.NotNull(samples);
+        Assert.Equal(15, samples[0]?["windKmh"]?.GetValue<double>());
+        Assert.Equal(20, samples[1]?["windKmh"]?.GetValue<double>());
+        Assert.Equal(37.5, samples[1]?["gustKmh"]?.GetValue<double>());
+        Assert.Equal(0.6, samples[1]?["precipitationMmH"]?.GetValue<double>());
+    }
+
+    [Fact]
     public async Task Scenarios_CRUD_and_query_endpoints()
     {
         // 1. Create custom training scenario
@@ -315,10 +360,23 @@ public class EndToEndApiTests : IClassFixture<ApiFactory>
             purpose = "exercise",
             start = "2026-08-20T14:00:00+01:00",
             durationMinutes = 120,
-            ignitions = new[] { new { position = new { lat = 41.44, lon = -8.29 }, label = "Foco Teste" } }
+            ignitions = new[] { new { position = new { lat = 41.44, lon = -8.29 }, label = "Foco Teste" } },
+            weather = new
+            {
+                @base = "none",
+                keyframes = new[]
+                {
+                    new { at = new { offsetMinutes = 0 }, windKmh = 20, windFromDeg = 335, gustKmh = 40, tempC = 35, humidityPct = 17, precipitationMmH = 0.0 },
+                },
+            },
         });
         Assert.Equal(HttpStatusCode.Created, createStatus);
         var scId = Str(sc, "id");
+        Assert.Equal("none", Str(sc?["weather"], "base"));
+        var keyframe = sc?["weather"]?["keyframes"]?.AsArray();
+        Assert.NotNull(keyframe);
+        Assert.Equal(40, keyframe[0]?["gustKmh"]?.GetValue<double>());
+        Assert.Equal(35, keyframe[0]?["tempC"]?.GetValue<double>());
 
         // 2. List scenarios and verify created scenario is included
         var (listStatus, scenarios) = await Send(HttpMethod.Get, "/scenarios");
@@ -337,6 +395,7 @@ public class EndToEndApiTests : IClassFixture<ApiFactory>
         });
         Assert.Equal(HttpStatusCode.OK, patchStatus);
         Assert.Equal("Descrição atualizada", Str(patchedSc, "description"));
+        Assert.Equal("none", Str(patchedSc?["weather"], "base"));
 
         await Send(HttpMethod.Delete, $"/scenarios/{scId}");
     }

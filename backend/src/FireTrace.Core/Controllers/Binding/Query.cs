@@ -13,7 +13,7 @@ public sealed class Query(HttpRequest request)
     string? Raw(string key) => request.Query.TryGetValue(key, out var v) && v.Count > 0 && v[0] is { Length: > 0 } s ? s : null;
 
     public string? Str(string key) => Raw(key);
-    public int? Int(string key) => int.TryParse(Raw(key), out var v) ? v : null;
+    public int? Int(string key) => int.TryParse(Raw(key), out var v) ? v : (double.TryParse(Raw(key), CultureInfo.InvariantCulture, out var d) ? (int)Math.Round(d) : null);
     public double? Dbl(string key) => double.TryParse(Raw(key), CultureInfo.InvariantCulture, out var v) ? v : null;
     public bool? Bool(string key) => bool.TryParse(Raw(key), out var v) ? v : null;
     public DateTimeOffset? Time(string key) => DateTimeOffset.TryParse(Raw(key), out var v) ? v : null;

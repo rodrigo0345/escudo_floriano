@@ -53,6 +53,12 @@ export function useSimulationActions() {
     async (simulation: Simulation) => {
       const state = useAppStore.getState();
       if (!world || !state.data) return;
+      if (simulation.locationId && state.locationId && simulation.locationId !== state.locationId) {
+        // Location mismatch: the 3D terrain, heightmap, and georef belong to another location.
+        // Navigate to the correct location URL to load the matching terrain and simulation!
+        window.location.search = `?loc=${encodeURIComponent(simulation.locationId)}&sim=${encodeURIComponent(simulation.id as string)}`;
+        return;
+      }
       const run = await loadRunData(simulation);
       const { data } = state;
       world.terrain.setFireData(run.ign, run.gridWidth, run.gridHeight, data.burnMinutes, run.inten);
@@ -120,7 +126,7 @@ export function useSimulationActions() {
       const currentTab = useAppStore.getState().tab;
       const comparing = currentTab === 'plans' && state.run !== null;
       state.setTime(Math.min(comparing ? state.t : 30, run.durationMinutes));
-      if (!comparing && currentTab !== 'plans' && currentTab !== 'demo' && currentTab !== 'resources') state.setTab('incident');
+      if (!comparing && currentTab !== 'plans' && currentTab !== 'resources') state.setTab('incident');
     },
     [world, loadImpact],
   );

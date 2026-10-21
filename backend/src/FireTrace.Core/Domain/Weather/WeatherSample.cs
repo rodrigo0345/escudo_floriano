@@ -11,7 +11,7 @@ public sealed record WeatherSample : WeatherCore
     public required DateTimeOffset Time { get; init; }
     public string? Source { get; init; }
     public double? GustKmh { get; init; }
-    /// <summary>Humidade (%) do combustível morto fino que esta temperatura e humidade relativa dão em equilíbrio (Simard): quanto mais baixa, mais depressa arde.</summary>
+    /// <summary>Humidade (%) do combustível morto fino que alimenta o motor: equilíbrio de Simard, atraso das classes e chuva. Quanto mais baixa, mais depressa arde.</summary>
     public double? FineFuelMoisturePct { get; init; }
     public double? DewPointC { get; init; }
     public double? PressureHpa { get; init; }

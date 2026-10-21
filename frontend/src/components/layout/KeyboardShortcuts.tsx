@@ -6,7 +6,7 @@ import type { PanelTab } from '@/store/types';
 
 import styles from './layout.module.css';
 
-const TABS: PanelTab[] = ['incident', 'plans', 'roads', 'assets', 'weather', 'resources', 'demo'];
+const TABS: PanelTab[] = ['incident', 'plans', 'roads', 'assets', 'weather', 'resources'];
 
 const isTypingTarget = (target: EventTarget | null): boolean => {
   const el = target as HTMLElement | null;
@@ -16,7 +16,7 @@ const isTypingTarget = (target: EventTarget | null): boolean => {
 const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Espaço', action: 'Reproduzir / pausar' },
   { keys: '[  ]', action: 'Recuar / avançar 1 minuto' },
-  { keys: '1 – 7', action: 'Abrir separador Incidente, Planos, Estradas, Meios, Meteo, Recursos ou Operação' },
+  { keys: '1 – 6', action: 'Abrir separador Incidente, Planos, Estradas, Meios, Meteo ou Recursos' },
   { keys: 'V', action: 'Alternar vista 3D / 2D' },
   { keys: 'R ou N', action: 'Norte para cima' },
   { keys: 'M', action: 'Modo probabilístico' },
@@ -68,7 +68,7 @@ export function KeyboardShortcuts() {
         e.preventDefault();
         return;
       }
-      if (/^[1-7]$/.test(e.key)) {
+      if (/^[1-6]$/.test(e.key)) {
         s.setTab(TABS[Number(e.key) - 1]);
         e.preventDefault();
         return;

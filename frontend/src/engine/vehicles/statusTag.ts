@@ -14,6 +14,8 @@ export type Activity =
   | 'filling'
   | 'returning'
   | 'refueling'
+  | 'resting'
+  | 'grounded'
   | 'out_of_service';
 
 const ACTIVITY: Record<Activity, { icon: string; text: string; color: string }> = {
@@ -29,6 +31,8 @@ const ACTIVITY: Record<Activity, { icon: string; text: string; color: string }> 
   filling: { icon: '🚰', text: 'A carregar água', color: '#5ab8ff' },
   returning: { icon: '↩', text: 'A regressar', color: '#9aa4ae' },
   refueling: { icon: '⛽', text: 'A abastecer', color: '#ffd166' },
+  resting: { icon: '😴', text: 'Equipa a descansar', color: '#9aa4ae' },
+  grounded: { icon: '⛔', text: 'Em terra (vento, fumo ou noite)', color: '#ffb347' },
   out_of_service: { icon: '⛔', text: 'Fora de serviço', color: '#7a838c' },
 };
 
