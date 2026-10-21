@@ -13,6 +13,7 @@ namespace FireTrace.Core.Services.Operations;
 /// <summary>
 /// Pedidos de planos aos agentes: o operador pede (`queued`), um agente reclama (`planning`), relata o progresso (`simulating`) e fecha (`done` com os planos,
 /// ou `failed` com a razão). Um agente que deixa de dar notícias perde o pedido ao fim de `PlanRequestStaleMinutes`: outro (ou o mesmo, reiniciado) volta a reclamá-lo.
+/// Apenas um pedido de plano pode ser processado de cada vez em todo o sistema.
 /// </summary>
 public sealed class PlanRequestService(CrudService<PlanRequest> requests, SimulationService simulations, LimitsSettings limits, TimeProvider clock)
 {
@@ -66,6 +67,11 @@ public sealed class PlanRequestService(CrudService<PlanRequest> requests, Simula
                 throw new ConflictException(request.IsOpen
                     ? $"O pedido já está com '{request.ClaimedBy}' ('{EnumText.ToSnake(request.Status)}')."
                     : $"O pedido já terminou ('{EnumText.ToSnake(request.Status)}').", "plan_request_claimed");
+
+            var active = (await requests.ListAsync(r => r.Id != id && r.IsOpen && r.Status != PlanRequestStatus.Queued && now - r.UpdatedAt <= TimeSpan.FromMinutes(limits.PlanRequestStaleMinutes), ct)).FirstOrDefault();
+            if (active is not null)
+                throw new ConflictException($"Já está outro pedido de planeamento em processamento ({active.Id} por '{active.ClaimedBy}'). Apenas um pedido pode ser processado de cada vez.", "plan_request_claimed");
+
             return await requests.SaveAsync(request with
             {
                 Status = PlanRequestStatus.Planning, ClaimedBy = claim.Agent.Trim(), ClaimedAt = now, Error = null,

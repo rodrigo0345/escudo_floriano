@@ -4,7 +4,7 @@
   z-index: 20;
   background: var(--bg);
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 290px 1fr;
   min-height: 0;
 }
 
@@ -12,17 +12,29 @@
   background: var(--panel);
   border-right: 1px solid var(--line);
   overflow: auto;
-  padding: 14px;
+  padding: 16px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
   align-content: start;
 }
 
 .org {
   text-align: left;
-  display: grid;
-  gap: 2px;
-  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel2, rgba(255, 255, 255, 0.02));
+  transition: all 0.15s ease;
+  cursor: pointer;
+  width: 100%;
+}
+
+.org:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .org small {
@@ -30,8 +42,9 @@
 }
 
 .org.on {
-  background: var(--panel2);
-  border-color: var(--acc);
+  background: rgba(59, 130, 246, 0.12);
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6;
 }
 
 .body {
@@ -74,6 +87,166 @@
   color: #fff;
 }
 
+/* Card Grid Layout for Resources (Vehicles, Stations, Personnel, Equipment) */
+.resourceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  background: var(--panel2, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.cardBanner {
+  position: relative;
+  width: 100%;
+  height: 148px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cardBanner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.25s ease;
+}
+
+.card:hover .cardBanner img {
+  transform: scale(1.03);
+}
+
+.cardBannerBadge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+
+.cardBannerType {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  z-index: 2;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardContent {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.cardHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardSubtitle {
+  font-size: 12px;
+  color: var(--muted, #8a94a0);
+}
+
+.cardMetricsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cardMetric {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardMetricLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #8a94a0);
+}
+
+.cardMetricValue {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.cardCapabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.cardCapPill {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--muted, #8a94a0);
+}
+
+.cardFooter {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cardFooter button {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -92,9 +265,13 @@
 }
 
 .table td {
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
+}
+
+.table tr:hover td {
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .table td.num {
@@ -214,6 +391,306 @@
 .chip.estimate {
   border-color: var(--warn);
   color: var(--warn);
+}
+
+/* Modal and Drawer Styles for Vehicle / Resource Editing */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modalCard {
+  width: 100%;
+  max-width: 860px;
+  max-height: 90vh;
+  background: var(--panel, #1a202c);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel2, rgba(255, 255, 255, 0.03));
+}
+
+.modalHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modalHeaderTitle h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted, #8a94a0);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.closeBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg);
+}
+
+.modalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--panel2, rgba(255, 255, 255, 0.03));
+}
+
+.formCard {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.formCardTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted, #8a94a0);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.inputWithUnit {
+  display: flex;
+  align-items: center;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.inputWithUnit:focus-within {
+  border-color: var(--acc, #ff3b3b);
+}
+
+.inputWithUnit input {
+  border: none !important;
+  background: transparent !important;
+  padding: 7px 10px !important;
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.unitBadge {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #8a94a0);
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 1px solid var(--line);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.capSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.capGroupTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted, #8a94a0);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.capPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.capPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 18px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted, #8a94a0);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.capPill:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: var(--fg);
+}
+
+.capPillActive {
+  background: rgba(255, 59, 59, 0.18) !important;
+  border-color: var(--acc, #ff3b3b) !important;
+  color: #fff !important;
+  font-weight: 500;
+  box-shadow: 0 0 8px rgba(255, 59, 59, 0.2);
+}
+
+.capPillActiveEvac {
+  background: rgba(56, 193, 114, 0.18) !important;
+  border-color: #38c172 !important;
+  color: #fff !important;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(56, 193, 114, 0.25);
+}
+
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 220px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: var(--acc, #ff3b3b);
+}
+
+.filterPills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filterPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted, #8a94a0);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filterPill:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg);
+}
+
+.filterPillActive {
+  background: var(--acc, #ff3b3b) !important;
+  border-color: var(--acc, #ff3b3b) !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.badgeSuccess {
+  background: rgba(56, 193, 114, 0.16);
+  color: #38c172;
+  border: 1px solid rgba(56, 193, 114, 0.3);
+}
+
+.badgeWarning {
+  background: rgba(255, 187, 0, 0.16);
+  color: #ffbb00;
+  border: 1px solid rgba(255, 187, 0, 0.3);
+}
+
+.badgeDanger {
+  background: rgba(255, 59, 59, 0.16);
+  color: #ff4d4d;
+  border: 1px solid rgba(255, 59, 59, 0.3);
+}
+
+.badgeInfo {
+  background: rgba(52, 144, 220, 0.16);
+  color: #3490dc;
+  border: 1px solid rgba(52, 144, 220, 0.3);
 }
 
 @media (max-width: 900px) {

@@ -121,6 +121,17 @@ public sealed class ResourceSeeder(
                 Total = 12,
                 Available = 10,
                 Notes = "Socorristas e equipas de emergência pré-hospitalar"
+            },
+            new()
+            {
+                Id = "pool-prociv",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Role = PersonnelRole.CivilProtectionTechnician,
+                Total = 300,
+                Available = 300,
+                Notes = "Força Operacional Conjunta da Proteção Civil / ANEPC (300 operacionais disponíveis para comando, combate, apoio e evacuação)"
             }
         };
 
@@ -175,6 +186,66 @@ public sealed class ResourceSeeder(
                 Label = "Barreiras de corte e sinalização de vias",
                 Quantity = 40,
                 Available = 40
+            },
+            new()
+            {
+                Id = "eq-anepc-shelter",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.ShelterTent,
+                Label = "Tendas de acolhimento e abrigo de emergência para deslocados",
+                Quantity = 20,
+                Available = 20,
+                Notes = "Estruturas de montagem rápida para centros de apoio temporário aos cidadãos evacuados"
+            },
+            new()
+            {
+                Id = "eq-anepc-stretchers",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.Stretcher,
+                Label = "Macas de evacuação e transporte de feridos/acamados",
+                Quantity = 30,
+                Available = 30,
+                Notes = "Macas de campo e colheres de resgate para evacuação de cidadãos com mobilidade reduzida"
+            },
+            new()
+            {
+                Id = "eq-anepc-megaphones",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.Megaphone,
+                Label = "Megafones de aviso sonoro e orientação de evacuação",
+                Quantity = 15,
+                Available = 15,
+                Notes = "Megafones com sirene integrada para aviso porta-a-porta e orientação de evacuação"
+            },
+            new()
+            {
+                Id = "eq-anepc-barriers",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.RoadBarrier,
+                Label = "Barreiras móveis de balizamento e controlo de zona de evacuação",
+                Quantity = 50,
+                Available = 50,
+                Notes = "Delimitação de corredores de segurança e pontos de concentração de evacuados"
+            },
+            new()
+            {
+                Id = "eq-anepc-medical-kit",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.MedicalKit,
+                Label = "Malas de primeiros socorros para postos de acolhimento",
+                Quantity = 25,
+                Available = 25,
+                Notes = "Estojos com material de penso, oxigénio e hidratação para apoio às pessoas evacuadas"
             }
         };
 
@@ -830,13 +901,343 @@ public sealed class ResourceSeeder(
                 Callsign = $"PCO {suffix}",
                 Type = VehicleType.CommandVehicle,
                 TypeCode = "PCO",
-                CrewCapacity = 4,
-                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Communications },
+                CrewCapacity = 6,
+                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Communications, VehicleCapability.Logistics },
                 State = new()
                 {
                     Status = VehicleStatus.Available,
                     Position = st.Position,
                     CrewOnboard = 4,
+                    UpdatedAt = now
+                }
+            });
+
+            // VCOT - Veículo de Comando Operacional Tático 4x4
+            list.Add(new Vehicle
+            {
+                Id = $"v-vcot-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VCOT {suffix}",
+                Type = VehicleType.CommandVehicle,
+                TypeCode = "VCOT",
+                CrewCapacity = 4,
+                OffRoad = true,
+                CruiseSpeedKmh = 130,
+                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Reconnaissance },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    UpdatedAt = now
+                }
+            });
+
+            // VETA - Veículo Especial de Telecomunicações e Apoio
+            list.Add(new Vehicle
+            {
+                Id = $"v-veta-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VETA {suffix}",
+                Type = VehicleType.CommandCommsVehicle,
+                TypeCode = "VETA",
+                CrewCapacity = 4,
+                Capabilities = new() { VehicleCapability.Communications, VehicleCapability.Reconnaissance },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    UpdatedAt = now
+                }
+            });
+
+            // VTTP - Veículo Tático de Transporte de Pessoal
+            list.Add(new Vehicle
+            {
+                Id = $"v-vttp-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VTTP {suffix}",
+                Type = VehicleType.PersonnelTransport,
+                TypeCode = "VTTP",
+                CrewCapacity = 9,
+                PassengerCapacity = 8,
+                OffRoad = true,
+                CruiseSpeedKmh = 110,
+                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 1,
+                    UpdatedAt = now
+                }
+            });
+
+            // AUTOCARRO - Autocarro de Evacuação de Populações
+            list.Add(new Vehicle
+            {
+                Id = $"v-bus-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"AUTOCARRO {suffix}",
+                Type = VehicleType.Bus,
+                TypeCode = "AUTOCARRO",
+                CrewCapacity = 2,
+                MinimumCrew = 1,
+                PassengerCapacity = 55,
+                OffRoad = false,
+                CruiseSpeedKmh = 95,
+                RangeKm = 900,
+                FuelCapacityL = 280,
+                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 1,
+                    FuelPct = 100,
+                    UpdatedAt = now
+                }
+            });
+
+            // ABEV - Ambulância de Evacuação Múltipla / Transporte de Acamados
+            list.Add(new Vehicle
+            {
+                Id = $"v-abev-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"ABEV {suffix}",
+                Type = VehicleType.Ambulance,
+                TypeCode = "ABEV",
+                CrewCapacity = 3,
+                MinimumCrew = 2,
+                StretcherCapacity = 4,
+                PassengerCapacity = 6,
+                OffRoad = false,
+                CruiseSpeedKmh = 110,
+                RangeKm = 750,
+                FuelCapacityL = 85,
+                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.MedicalTransport, VehicleCapability.Rescue },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    FuelPct = 90,
+                    UpdatedAt = now
+                }
+            });
+
+            // DRONE - Reconhecimento Térmico e Apoio à Evacuação
+            list.Add(new Vehicle
+            {
+                Id = $"v-drone-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"DRONE {suffix}",
+                Type = VehicleType.Drone,
+                TypeCode = "DRONE",
+                CrewCapacity = 2,
+                MinimumCrew = 1,
+                OffRoad = true,
+                CruiseSpeedKmh = 80,
+                RangeKm = 30,
+                Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.Reconnaissance },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    FuelPct = 100,
+                    UpdatedAt = now
+                }
+            });
+
+            // AUTOCARRO 02 - Segundo autocarro de evacuação
+            list.Add(new Vehicle
+            {
+                Id = $"v-bus2-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"AUTOCARRO 02",
+                Type = VehicleType.Bus,
+                TypeCode = "AUTOCARRO",
+                CrewCapacity = 2,
+                MinimumCrew = 1,
+                PassengerCapacity = 50,
+                OffRoad = false,
+                CruiseSpeedKmh = 95,
+                RangeKm = 850,
+                FuelCapacityL = 280,
+                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 1,
+                    FuelPct = 95,
+                    UpdatedAt = now
+                }
+            });
+
+            // VLC-PC - Veículo Ligeiro de Coordenação e Reconhecimento 4x4
+            list.Add(new Vehicle
+            {
+                Id = $"v-vlc-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VLC-PC {suffix}",
+                Type = VehicleType.AllTerrainPatrol,
+                TypeCode = "VLC",
+                CrewCapacity = 4,
+                MinimumCrew = 2,
+                PassengerCapacity = 3,
+                OffRoad = true,
+                MaxSlopePercent = 50,
+                CruiseSpeedKmh = 120,
+                RangeKm = 800,
+                FuelCapacityL = 80,
+                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Reconnaissance, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    FuelPct = 100,
+                    UpdatedAt = now
+                }
+            });
+
+            // MR-PC - Máquina de Rasto para abertura de faixas corta-fogo
+            list.Add(new Vehicle
+            {
+                Id = $"v-mr-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"MR-PC {suffix}",
+                Type = VehicleType.Bulldozer,
+                TypeCode = "MR",
+                CrewCapacity = 1,
+                MinimumCrew = 1,
+                OffRoad = true,
+                MaxSlopePercent = 60,
+                CruiseSpeedKmh = 12,
+                RangeKm = 100,
+                FuelCapacityL = 350,
+                Capabilities = new() { VehicleCapability.HeavyEarthmoving, VehicleCapability.FirebreakConstruction },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 1,
+                    FuelPct = 100,
+                    UpdatedAt = now
+                }
+            });
+
+            // VTTG - Veículo Tanque Tático de Grande Capacidade da Proteção Civil (15.000 L)
+            list.Add(new Vehicle
+            {
+                Id = $"v-vttg-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VTTG {suffix}",
+                Type = VehicleType.TankerLarge,
+                TypeCode = "VTTG",
+                CrewCapacity = 2,
+                MinimumCrew = 2,
+                WaterCapacityL = 15000,
+                PumpFlowLpm = 2500,
+                OffRoad = false,
+                CruiseSpeedKmh = 80,
+                RangeKm = 600,
+                FuelCapacityL = 300,
+                Capabilities = new() { VehicleCapability.WaterSupply, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    Water = new WaterStatus(15000, 15000),
+                    FuelPct = 100,
+                    UpdatedAt = now
+                }
+            });
+
+            // VLOG - Veículo de Apoio Logístico e Iluminação
+            list.Add(new Vehicle
+            {
+                Id = $"v-vlog-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"VLOG {suffix}",
+                Type = VehicleType.OperationsVehicle,
+                TypeCode = "VLOG",
+                CrewCapacity = 3,
+                MinimumCrew = 1,
+                OffRoad = true,
+                CruiseSpeedKmh = 100,
+                RangeKm = 700,
+                FuelCapacityL = 90,
+                Capabilities = new() { VehicleCapability.Logistics, VehicleCapability.Lighting },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    FuelPct = 90,
+                    UpdatedAt = now
+                }
+            });
+
+            // DRONE 02 - Reconhecimento Térmico Noturno
+            list.Add(new Vehicle
+            {
+                Id = $"v-drone2-{idPrefix}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"DRONE 02",
+                Type = VehicleType.Drone,
+                TypeCode = "DRONE",
+                CrewCapacity = 2,
+                MinimumCrew = 1,
+                OffRoad = true,
+                CruiseSpeedKmh = 90,
+                Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.Reconnaissance },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    FuelPct = 100,
                     UpdatedAt = now
                 }
             });

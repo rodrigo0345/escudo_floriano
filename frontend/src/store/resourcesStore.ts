@@ -14,7 +14,12 @@ import {
   type Vehicle,
 } from '@/api';
 import { templateForVehicle, templateToInput } from '@/domain/vehicleCatalog';
-import { createDefaultHelicopters } from '@/domain/defaultHelicopters';
+import {
+  createDefaultAnepcVehicles,
+  createDefaultEquipment,
+  createDefaultHelicopters,
+  createDefaultPools,
+} from '@/domain/defaultHelicopters';
 
 /** Every organization's registered resources (what the "Recursos" tab edits and the "Simulação" tab dispatches). */
 interface ResourcesState {
@@ -67,7 +72,47 @@ export const useResourcesStore = create<ResourcesState>((set, get) => ({
           }
         }
       }
-      set({ organizations, stations, vehicles: allVehicles, pools, equipment, loading: false, loaded: true });
+
+      // Default ANEPC vehicles (PCO, VCOT, VETA, Drones, VTTP, Autocarros, ABEV, Bulldozer, Tanque, Apoio Logístico)
+      const anepcOrg = organizations.find((o) => o.type === 'civil_protection');
+      const defAnepc = createDefaultAnepcVehicles(stations, organizations);
+      for (const def of defAnepc) {
+        if (!allVehicles.some((v) => v.callsign === def.callsign || v.id === def.id)) {
+          allVehicles.push(def);
+        }
+      }
+
+      // Personnel pools: Ensure 300 operationals are available for ANEPC
+      let allPools = [...pools];
+      const procivPool = allPools.find((p) => p.organizationId === anepcOrg?.id);
+      if (!procivPool) {
+        const defPools = createDefaultPools(organizations);
+        for (const dp of defPools) {
+          if (!allPools.some((p) => p.organizationId === dp.organizationId)) {
+            allPools.push(dp);
+          }
+        }
+      } else if (procivPool.available < 300) {
+        allPools = allPools.map((p) =>
+          p.organizationId === anepcOrg?.id
+            ? { ...p, total: Math.max(p.total, 300), available: 300 }
+            : p,
+        );
+      }
+
+      // Evacuation and emergency equipment for ANEPC and response forces
+      const allEquipment = [...equipment];
+      const anepcEq = allEquipment.filter((e) => e.organizationId === anepcOrg?.id);
+      if (anepcEq.length === 0) {
+        const defEq = createDefaultEquipment(stations, organizations);
+        for (const de of defEq) {
+          if (!allEquipment.some((e) => e.id === de.id || e.label === de.label)) {
+            allEquipment.push(de);
+          }
+        }
+      }
+
+      set({ organizations, stations, vehicles: allVehicles, pools: allPools, equipment: allEquipment, loading: false, loaded: true });
     } catch (e) {
       set({ loading: false, error: describe(e) });
     }
