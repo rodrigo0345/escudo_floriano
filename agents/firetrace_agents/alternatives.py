@@ -34,6 +34,7 @@ WITHDRAW_MARGIN_MIN = 5  # a crew leaves this long before the fire reaches its g
 MIN_USEFUL_WORK_MIN = 10  # a crew that could work less than this before the fire arrives is not sent
 HOUSE_ZONES_FOR_B = 10
 HOUSE_ZONES_FOR_A = 4  # A defends the houses the fire reaches first and sends the rest of the engines at the fire
+DEFENDERS_PER_ZONE_B = 5  # plan B puts more engines on each patch of houses (A: buildings.DEFENDERS_PER_ZONE = 3)
 RESERVE_SHARE_B = 0.25  # B keeps a quarter of its combat units at their stations, ready for the re-plans
 CANDIDATES = 2  # candidates judged per plan before the best is kept (1 = the first, unjudged choice)
 ALT_CONCENTRATION = 3  # the second candidate spends the barrier metres on fewer, stronger stretches
@@ -298,8 +299,9 @@ def build_alternatives(
     options = {
         "A": [{"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True}, {"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True, "concentration": ALT_CONCENTRATION}],
         # B's aircraft are timed with its crews too: on Penha that alone takes B from 176 ha to 8.6 ha (A: 9 ha)
-        "B": [{"building_zones": house_zones, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B},
-              {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B}],
+        # B defends every patch of houses the fire reaches in the whole run, with more engines on each: it saves houses, A saves area
+        "B": [{"building_zones": house_zones, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B},
+              {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B}],
     }
     chosen: dict[str, tuple[CycleResult, dict[str, Any], Any, int, int]] = {}
     for variant, choices in options.items():

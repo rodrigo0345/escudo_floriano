@@ -206,6 +206,8 @@ class OrchestratorAgent:
         fuel_breaks: bool = False,
         air_support: bool = False,
         reserve_share: float = 0.0,
+        defend_whole_run: bool = False,
+        defenders_per_zone: int = DEFENDERS_PER_ZONE,
         validate: bool = True,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
@@ -224,6 +226,8 @@ class OrchestratorAgent:
         ``fuel_breaks`` sends the squads that are not on the fire's outline to clear a strip of fuel ahead of it, where they can finish before it arrives (see ``fuelbreak.py``).
         ``air_support`` (implied by ``fuel_breaks``) times the aircraft with the crews: each drops on the stretch the next crews go in to (see ``_air_support``).
         ``reserve_share`` keeps that share of the combat units at their stations as a tactical reserve (the farthest ones): free for the re-plans along the fire.
+        ``defend_whole_run`` (plan B) defends every patch of houses the forecast fire reaches in the whole run, not only those it reaches before the crews could
+        stop it, with ``defenders_per_zone`` engines each (each prepares its patch and leaves before the fire arrives, see ``_place_safely``).
         ``lean`` and ``reserve_share`` only apply when the fire must be contained: while it can be put out (``initial_attack``) every unit that arrives in time attacks.
         A combat unit that would arrive with under ``MIN_USEFUL_WORK_MIN`` of the run left is not sent.
         Every crew is placed where it is safe (``placement.py``): an initial attack works from the burned side of the edge at the minute the crew arrives, and a
@@ -255,7 +259,7 @@ class OrchestratorAgent:
         decided = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
         result.arrival_intensity = intensity_lookup(situation.summary)(decided + (result.attack_lead or 0.0))  # what the crews find when they get there
         # The engines that defend houses are set aside first: taken out of a barrier already laid they would leave a gap in it.
-        result.zones, reserved = self._plan_buildings(situation, location_id, building_zones, stage_minutes, result)
+        result.zones, reserved = self._plan_buildings(situation, location_id, building_zones, stage_minutes, result, whole_run=defend_whole_run, per_zone=defenders_per_zone)
         groups = self._arrival_groups(situation, [a.agent_id for a in self.agents if a.agent_id not in reserved]) if result.initial_attack else []
         if groups:
             everyone = {a.agent_id for a in self.agents}
@@ -804,7 +808,7 @@ class OrchestratorAgent:
         return plan if by_id else None
 
     def _plan_buildings(
-        self, situation: Situation, location_id: str, max_zones: int, stage_minutes: int | None, result: CycleResult
+        self, situation: Situation, location_id: str, max_zones: int, stage_minutes: int | None, result: CycleResult, *, whole_run: bool = False, per_zone: int = DEFENDERS_PER_ZONE
     ) -> tuple[list[BuildingZone], dict[str, dict[str, Any]]]:
         """Pick the houses the forecast fire reaches soonest and set aside three fire engines for each patch of them.
 
@@ -831,13 +835,15 @@ class OrchestratorAgent:
         # defended. A fire too strong to attack has to be contained, and containing it is mostly defending what is in its way: every patch of houses it reaches
         # while there is still time to prepare it (the engines prepare and leave before the fire arrives, see `_place_safely`).
         window = (stage_minutes or situation.horizon_minutes) if situation.initial_attack else max(stage_minutes or situation.horizon_minutes, situation.life_horizon_minutes)
+        if whole_run and self._run_minutes:  # plan B: every patch of houses the forecast fire reaches in the whole run, whether the fire can be attacked or not
+            window = max(window, self._run_minutes - int(decided_at))
         zones = zones_to_defend(
             cells, ignition, after_min=decided_at, until_min=decided_at + window, radius_m=situation.zone_radius_m,
-            max_zones=min(max_zones, max(1, len(engines) // DEFENDERS_PER_ZONE)),
+            max_zones=min(max_zones, max(1, len(engines) // per_zone)),
         )
         reserved: dict[str, dict[str, Any]] = {}
         for index, zone in enumerate(zones):
-            for agent in engines[index * DEFENDERS_PER_ZONE:(index + 1) * DEFENDERS_PER_ZONE]:
+            for agent in engines[index * per_zone:(index + 1) * per_zone]:
                 reserved[agent.agent_id] = zone.asset(index)
         return zones, reserved
 
