@@ -214,6 +214,13 @@ class FiretraceClient:
         """``GET /locations/{id}/facilities``: schools, shelters, hospitals, stations... (``id``, ``name``, ``kind``, ``position``, ``vulnerable``)."""
         return list(self._request("GET", self._fill("/locations/{locationId}/facilities", locationId=location_id), params={"limit": 2000}).get("items", []))
 
+    def water_points_near(self, location_id: str, lat: float, lon: float, *, helicopter_only: bool = False, limit: int = 1) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/water-points/near``: the nearest water points (``point``, ``distanceM``), only those a helicopter can dip into with ``helicopter_only``."""
+        params: dict[str, Any] = {"lat": lat, "lon": lon, "limit": limit}
+        if helicopter_only:
+            params["helicopterOnly"] = "true"
+        return list(self._request("GET", self._fill("/locations/{locationId}/water-points/near", locationId=location_id), params=params).get("items", []))
+
     def patch_plan(self, plan_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         """``PATCH /plans/{id}`` with ``application/merge-patch+json``: only the fields sent change (``actions`` is replaced as a whole)."""
         response = self._http.patch(self._fill("/plans/{planId}", planId=plan_id), content=json.dumps(patch), headers={"Content-Type": "application/merge-patch+json"})

@@ -38,6 +38,11 @@ from .tiers import FirefighterTier, tier_for_vehicle
 EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", "perimeter_security"})
 
 LINE_FACTOR = {FirefighterTier.HELICOPTER: 1.5, FirefighterTier.TRUCK: 1.0, FirefighterTier.SQUAD: 0.8}
+# Aircraft: how hard one drop hits by what it carries (a light helicopter's ~1 000 L, a Fire Boss' ~3 000 L, a heavy helicopter's or a Canadair's 4 500–6 000 L),
+# how long a sortie lasts before the next re-plan sends it elsewhere, and how long a water drop keeps the ground wet (the rotation is weighed against it).
+AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.5, 0.6, 0.7
+AIR_SORTIE_MIN = 45
+AIR_DROP_WET_MIN = 20
 """Half-length of the line a tier makes, in work-zone radii: an aircraft lays a long curtain, a crew on foot a short line."""
 
 PROTECT_LIFE = "protect_life"
@@ -281,6 +286,10 @@ class Observation:
     """The vehicle's pump flow (``pumpFlowLpm``): with its tank, how long it works before going to refill (``duty.py``)."""
     mobilization_min: float = 0.0
     """A reinforcement from another district: minutes after the call before it reaches its entry point (``metadata["agents.mobilizationMinutes"]``)."""
+    aerial: dict[str, Any] | None = None
+    """An aircraft's ``AerialSpec`` (bucket/tank, load and drop minutes, speed, ``dayOnly``): how much it drops and how often (see the orchestrator's rotations)."""
+    scoop_km: float = 0.0
+    """An amphibious airtanker scoops from a large water body this far away (``metadata["agents.scoopDistanceKm"]``); 0 = the nearest helicopter water point."""
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +333,8 @@ class FirefighterAgent:
                 },
                 pump_lpm=float(vehicle.get("pumpFlowLpm") or 0.0),
                 mobilization_min=float((vehicle.get("metadata") or {}).get("agents.mobilizationMinutes") or 0.0),
+                aerial=vehicle.get("aerial"),
+                scoop_km=float((vehicle.get("metadata") or {}).get("agents.scoopDistanceKm") or 0.0),
             )
         )
 
@@ -690,25 +701,52 @@ class FirefighterAgent:
 
     # -- suppression per tier (isolated region) ------------------------------------
     def _helicopter_suppression(self, situation: Situation) -> list[ActionProposal]:
-        agent = "water" if situation.max_intensity_kwm >= 2000 else "retardant"
-        effectiveness = 0.6 if situation.max_intensity_kwm < 1500 else 0.45
-        duration = 20 if agent == "water" else 45
+        load = float((self.observation.aerial or {}).get("bucketCapacityL") or self.observation.water_capacity_l or 1000.0)
+        strength = AIR_STRENGTH_LIGHT if load <= 1500 else AIR_STRENGTH_MEDIUM if load <= 3500 else AIR_STRENGTH_HEAVY  # a bigger load covers more front per drop
+        if self._assignment.air_corridor is not None and self._assignment.air_until:
+            # the fire will be past direct attack before the crews arrive: this aircraft is the only one in time, and keeps dropping on its head until then
+            until = int(round(self._assignment.air_until))
+            return [
+                ActionProposal(
+                    action_type="fire_attack",
+                    title=f"Ataque aéreo inicial: largadas na cabeça até as equipas chegarem (T+{until})",
+                    intervention={
+                        "type": "aerial_drop",
+                        "label": "Ataque aéreo inicial",
+                        "start": {"offsetMinutes": 0},
+                        "geometry": self._assignment.air_corridor,
+                        "agent": "water",
+                        "effectiveness": strength,
+                        "effectDurationMinutes": until,
+                    },
+                    priority="critical",
+                    resources=self._air_resources(),
+                    expected_effect="Rotações de poucos minutos sobre a cabeça mantêm o fogo de superfície baixo e fora das copas até os autotanques chegarem.",
+                    confidence=0.6,
+                    safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral; só de dia e com vento dentro do limite do meio.",
+                    extra_action_fields={"tactic": "direct"},
+                )
+            ]
+        # A sortie: it drops, flies to refill and comes back for ``AIR_SORTIE_MIN`` (until the next re-plan sends it where the fire has gone); the orchestrator
+        # weighs the effect by how much of that time a drop is still wet on the ground (its rotation, see ``_air_rotation``) and ends it at nightfall.
+        if situation.max_intensity_kwm >= 1500:
+            strength = round(strength * 0.75, 2)
         return [
             ActionProposal(
                 action_type="fire_attack",
-                title="Largada aérea na cabeça do fogo",
+                title="Largadas aéreas na cabeça do fogo (vai reabastecer e volta)",
                 intervention={
                     "type": "aerial_drop",
-                    "label": "Largada cabeça",
+                    "label": "Largadas cabeça",
                     "start": {"offsetMinutes": 0},
                     "geometry": self._line(situation),
-                    "agent": agent,
-                    "effectiveness": effectiveness,
-                    "effectDurationMinutes": duration,
+                    "agent": "water",
+                    "effectiveness": strength,
+                    "effectDurationMinutes": AIR_SORTIE_MIN,
                 },
                 priority="high",
                 resources=self._air_resources(),
-                expected_effect="Freia a cabeça (retardante ~45 min de efeito; água ~20 min).",
+                expected_effect=f"Freia a cabeça com largadas sucessivas durante ~{AIR_SORTIE_MIN} min (cada largada molha ~{AIR_DROP_WET_MIN} min; entre largadas vai reabastecer).",
                 confidence=0.6,
                 safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral.",
                 extra_action_fields={"tactic": "direct"},
@@ -741,6 +779,31 @@ class FirefighterAgent:
                 )
             ]
         # Fire outruns crews → indirect: build a wide wet/machine line behind safety.
+        line = self._assignment.fuel_strip
+        if line is not None and (line.geometry or {}).get("type") == "LineString":
+            # the orchestrator found where this engine can lay its line and finish before the fire gets there (see `fuelbreak.plan_wet_line`)
+            return [
+                ActionProposal(
+                    action_type="fire_attack",
+                    title=f"Linha molhada à frente do fogo ({line.length_m:.0f} m, {line.ahead_m:.0f} m à frente)",
+                    intervention={
+                        "type": "fire_line",
+                        "label": "Linha molhada à frente",
+                        "start": {"offsetMinutes": 0},
+                        "geometry": line.geometry,
+                        "constructionMinutes": line.build_minutes,
+                        "effectiveness": 0.8,
+                        "method": "wet_line",
+                    },
+                    priority="high",
+                    resources=self._ground_resources(),
+                    expected_effect="O fogo é forte demais para ataque direto: a linha, feita antes de ele chegar, trava-o onde a cruza (o motor não a enfraquece com a intensidade).",
+                    confidence=0.6,
+                    safety_notes="Trabalha em terreno que ainda não arde e sai quando a linha está feita, antes de o fogo chegar; via de fuga pelo lado de trás.",
+                    extra_action_fields={"tactic": "indirect", "expectedDurationMinutes": line.build_minutes},
+                    target=line.center,
+                )
+            ]
         return [
             ActionProposal(
                 action_type="fire_attack",

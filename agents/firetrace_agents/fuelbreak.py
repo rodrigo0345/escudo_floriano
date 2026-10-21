@@ -13,7 +13,7 @@ A strip that cannot be done in time is not drawn: the squad keeps its handline.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from .sectors import Sector, destination
@@ -27,6 +27,8 @@ MAX_LENGTH_M = 900.0
 FIRST_AHEAD_M = 500.0  # nearest the strip may be to the head
 STEP_AHEAD_M = 250.0
 MAX_AHEAD_M = 4000.0
+WET_LINE_M = 400.0  # an engine's hose lay across the fire's path (the length its lines reach)
+WET_LINE_MINUTES = 40  # = the wet line's constructionMinutes in firefighter.py
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,40 @@ def plan_strip(
     length = min(MAX_LENGTH_M, CREW_RATE_M_PER_H_PER_PERSON * max(people, 0) * BUILD_MINUTES / 60.0)
     if length < MIN_LENGTH_M:
         return None
+    return _ahead(sector, length, BUILD_MINUTES, decided_at, travel=travel, perimeters_at=perimeters_at)
+
+
+def plan_wet_line(
+    sector: Sector,
+    decided_at: float,
+    *,
+    travel: Callable[[dict[str, float]], Any],
+    perimeters_at: Callable[[int], dict[str, Any]],
+) -> Strip | None:
+    """An engine's wet line (hose laid out and the ground wetted, ``WET_LINE_M`` long in ``WET_LINE_MINUTES``) across ``sector``'s heading, ahead of its head,
+    at the nearest place the engine finishes ``MARGIN_MIN`` before the fire gets there; ``None`` if there is none. ``geometry`` is then the line (a LineString).
+
+    This is how an engine fights a fire too strong to attack head-on: the backend fades direct attack to nothing past ``noEffectFromKwm``, a line already
+    in place it does not (the fire is slowed where it crosses it).
+    """
+    strip = _ahead(sector, WET_LINE_M, WET_LINE_MINUTES, decided_at, travel=travel, perimeters_at=perimeters_at)
+    if strip is None:
+        return None
+    across = (sector.bearing_deg + 90.0) % 360.0
+    (a_lat, a_lon), (b_lat, b_lon) = (destination(strip.center["lat"], strip.center["lon"], across, side * WET_LINE_M / 2.0) for side in (-1, 1))
+    return replace(strip, geometry={"type": "LineString", "coordinates": [[a_lon, a_lat], [b_lon, b_lat]]})
+
+
+def _ahead(
+    sector: Sector,
+    length: float,
+    build_minutes: int,
+    decided_at: float,
+    *,
+    travel: Callable[[dict[str, float]], Any],
+    perimeters_at: Callable[[int], dict[str, Any]],
+) -> Strip | None:
+    """The nearest strip ``length`` metres across ``sector``'s heading, ahead of its head, that is done ``build_minutes`` after the crew arrives and ``MARGIN_MIN`` before the fire."""
     ahead = FIRST_AHEAD_M
     while ahead <= MAX_AHEAD_M:
         lat, lon = destination(sector.lat, sector.lon, sector.bearing_deg, ahead)
@@ -97,11 +133,11 @@ def plan_strip(
         route = travel(center)
         if route.reachable and route.eta_minutes is not None:
             arrives = route.eta_minutes + float(getattr(route, "delay_minutes", 0.0) or 0.0)  # a reinforcement first has to reach the municipality
-            ready = int(round(decided_at + arrives + BUILD_MINUTES + MARGIN_MIN))
+            ready = int(round(decided_at + arrives + build_minutes + MARGIN_MIN))
             perimeters = perimeters_at(ready)
             polygon = strip_polygon(lat, lon, sector.bearing_deg, length)
             corners = polygon["coordinates"][0][:-1]
             if not burning_in(perimeters, lat, lon) and not any(burning_in(perimeters, c[1], c[0]) for c in corners):
-                return Strip(polygon, center, round(length), BUILD_MINUTES, float(arrives), ahead, getattr(route, "geometry", None), getattr(route, "from_station", None))
+                return Strip(polygon, center, round(length), build_minutes, float(arrives), ahead, getattr(route, "geometry", None), getattr(route, "from_station", None))
         ahead += STEP_AHEAD_M
     return None

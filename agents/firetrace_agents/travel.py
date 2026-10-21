@@ -140,7 +140,7 @@ class TravelPlanner:
         if not station and not origin:
             return Travel(True, None, "a unidade não tem posto")
         if agent.tier is FirefighterTier.HELICOPTER:
-            return self._fly(station, target, origin)
+            return self._fly(station, target, origin, float((agent.observation.profile or {}).get("speedKmh") or self.helicopter_kmh))
         if self.unavailable:
             return Travel(True, None, "encaminhamento indisponível", station)
         request: dict[str, Any] = {"locationId": self.location_id, "to": {"lat": float(target["lat"]), "lon": float(target["lon"])}}
@@ -173,11 +173,12 @@ class TravelPlanner:
         walk = gap / 1000.0 / speed * 60.0
         return Travel(True, drive + walk, "estrada", station, drive, gap, walk, geometry=route.get("geometry"))
 
-    def _fly(self, station: str | None, target: dict[str, Any], origin: dict[str, float] | None = None) -> Travel:
+    def _fly(self, station: str | None, target: dict[str, Any], origin: dict[str, float] | None = None, speed_kmh: float | None = None) -> Travel:
+        """A straight flight at the aircraft's own cruise speed (an airtanker flies faster than a light helicopter)."""
         base = origin or (self._station_position(station) if station else None)
         if base is None:
             return Travel(True, None, "posição da base desconhecida", station)
-        minutes = distance_m(base["lat"], base["lon"], float(target["lat"]), float(target["lon"])) / 1000.0 / self.helicopter_kmh * 60.0
+        minutes = distance_m(base["lat"], base["lon"], float(target["lat"]), float(target["lon"])) / 1000.0 / (speed_kmh or self.helicopter_kmh) * 60.0
         return Travel(True, minutes, "voo directo", station, minutes)
 
     def station_position(self, station_id: str) -> dict[str, float] | None:

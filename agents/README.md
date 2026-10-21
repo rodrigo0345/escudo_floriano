@@ -31,7 +31,17 @@ attack it when it weakens: each re-plan reads the fire again and says which it d
 
 **Plan B's reserve waits forward**: a quarter of its units at a safe point near the fire (`stage_resources`), not at their stations, so the next re-plan (or a new outbreak) has
 them in minutes. It is held **only when the fire must be contained**: while it can still be put out, B too sends every unit that gets there in time (on Penha, holding back
-two engines meant for the head let the fire escape: 9 ha with them, 612 ha without). A combat unit that would arrive with under 20 min of the run left is not sent. **Reinforcements from the neighbouring districts** (`scripts/seed_reinforcements.py`: GRIF Porto, Viana do Castelo and Vila Real, and the district of Braga) enter the
+two engines meant for the head let the fire escape: 9 ha with them, 612 ha without). A combat unit that would arrive with under 20 min of the run left is not sent.
+
+**A fire too strong to attack head-on** (the new crown-fire physics): each stretch of the edge is judged by the intensity in its own direction (`sectors.plan_sectors`:
+the head's intensity scaled by how fast that stretch spreads, as the backend now fights it), so the flanks are attacked while the head cannot be; where nothing can be
+attacked, engines lay wet lines and squads open fuel strips ahead, only where they finish before the fire arrives (`fuelbreak.plan_wet_line` / `plan_strip`). The
+initial attack is on if the **first group** of units to arrive can still work the fire. **Aircraft**: when the fire will outgrow direct attack before the bulk of
+the crews arrives, every aircraft drops on the corridor its head runs along until then (spreading the late ones over the flanks was tried and did worse); each
+works in rotations (drop, refill at the nearest water point or, amphibious aircraft, a large water body, come back: `Rules.aerial.cycleTime`) and flies by day
+only (`daylight.py`). `scripts/seed_air_and_prepositioning.py` adds a maximum-alert day's resources (demo data, to be checked with CDOS/DECIR): 6 aircraft and
+6 crews pre-positioned at forest points chosen from the map. On the new physics (forecast, ±30° wind safety): Penha 1013 ha / 105 buildings with no response →
+626 ha / 52; Falperra 360 ha / 8 → 199 ha / 7; zero predicted crew casualties. **Reinforcements from the neighbouring districts** (`scripts/seed_reinforcements.py`: GRIF Porto, Viana do Castelo and Vila Real, and the district of Braga) enter the
 municipality by its main roads `agents.mobilizationMinutes` after the call (30–90 min, example numbers to check with the CDOS); their actions are triggered then, and they show on the
 map in orange. **Each plan carries the other organizations' numbers** (`metadata["agents.metrics"]`, shown in the plans panel): people evacuated in time (the agents' own model: the
 backend does not count evacuations), roads closed and left open for lack of a patrol, ambulances on standby, units in reserve or without a safe spot, and whether the fire goes out.
