@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 EARTH_RADIUS_M = 6_371_008.8
@@ -21,6 +21,14 @@ EARTH_RADIUS_M = 6_371_008.8
 # take the slower flanks (and every tier falls back to all sectors when there are few).
 HELICOPTER_SHARE = 1 / 3
 TRUCK_SHARE = 2 / 3
+
+
+def bearing_to(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial bearing (degrees, 0 = north) from the first point to the second."""
+    p1, p2, dl = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
 def destination(lat: float, lon: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
@@ -46,8 +54,9 @@ class Sector:
     lon: float
     bearing_deg: float
     speed_mmin: float
-    intensity_kwm: float
+    intensity_kwm: float  # what the crews here face: the fire's intensity in the direction this stretch spreads (see `plan_sectors`)
     crown: bool = False
+    head_intensity_kwm: float = 0.0  # what its cells burn at in their head direction (the vector's own figure)
 
     @property
     def position(self) -> dict[str, float]:
@@ -67,6 +76,13 @@ class Assignment:
     place: dict[str, Any] | None = None  # a threatened place/facility (`ThreatenedAsset`)
     segment_m: float | None = None  # how much line this unit can build this stage (None = the tier's fixed length)
     offset_m: float = 0.0  # where along the barrier its segment sits, from the sector's centre (laid end to end with the others)
+    reserve: bool = False  # in an initial attack, a unit the fire's outline has no room for: it keeps to the usual tactic (blocks ahead)
+    air_corridor: dict[str, Any] | None = None  # early air attack: the polygon an aircraft keeps dropping on, from its arrival until ``air_until`` (see orchestrator)
+    air_until: float | None = None  # minutes from the decision the early air attack lasts (the first crews' arrival)
+    fuel_strip: Any = None  # a ``fuelbreak.Strip`` this crew can finish before the fire arrives: a squad clears fuel there, an engine lays a wet line (LineString)
+    site: dict[str, float] | None = None  # where the crew stands (``placement.py``): inside the burned area for an attack from the black; None = the sector's front
+    stay_minutes: int | None = None  # how long it may work there without the fire reaching it (None = the tactic's default; 0 = no safe spot: not sent)
+    start_after: float | None = None  # minutes after the decision before which its effect does not start (an aircraft cooling the ground just before a crew goes in)
 
 
 def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12) -> list[Sector]:
@@ -80,6 +96,11 @@ def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit
         candidates.append(
             Sector(float(lat), float(lon), float(props["bearingDeg"]), float(props["speedMmin"]), float(props.get("intensityKwm") or 0.0), bool(props.get("crown")))
         )
+    # A vector's intensity is what its cells burn at in their head direction; the fire there spreads at `speedMmin`. Byram's intensity is proportional to the
+    # spread rate, so the stretch faces its head intensity scaled by how fast it moves next to the fastest stretch (the head): the backend fights it with that.
+    head = max((s.speed_mmin for s in candidates), default=0.0)
+    if head > 0:
+        candidates = [replace(s, intensity_kwm=s.intensity_kwm * min(1.0, s.speed_mmin / head), head_intensity_kwm=s.intensity_kwm) for s in candidates]
     candidates.sort(key=lambda s: s.danger, reverse=True)
     kept: list[Sector] = []
     for sector in candidates:

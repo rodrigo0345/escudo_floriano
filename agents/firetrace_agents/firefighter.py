@@ -29,7 +29,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
-from .contracts import OBJECTIVES, INTERVENTION_TYPES, UNSAFE_ON_WIRE
+from .contracts import OBJECTIVES, INTERVENTION_TYPES
 from .sectors import Assignment, Sector, line_across, line_segment, zone_around
 from .tiers import FirefighterTier, tier_for_vehicle
 
@@ -38,6 +38,11 @@ from .tiers import FirefighterTier, tier_for_vehicle
 EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", "perimeter_security"})
 
 LINE_FACTOR = {FirefighterTier.HELICOPTER: 1.5, FirefighterTier.TRUCK: 1.0, FirefighterTier.SQUAD: 0.8}
+# Aircraft: how hard one drop hits by what it carries (a light helicopter's ~1 000 L, a Fire Boss' ~3 000 L, a heavy helicopter's or a Canadair's 4 500–6 000 L),
+# how long a sortie lasts before the next re-plan sends it elsewhere, and how long a water drop keeps the ground wet (the rotation is weighed against it).
+AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.5, 0.6, 0.7
+AIR_SORTIE_MIN = 45
+AIR_DROP_WET_MIN = 20
 """Half-length of the line a tier makes, in work-zone radii: an aircraft lays a long curtain, a crew on foot a short line."""
 
 PROTECT_LIFE = "protect_life"
@@ -65,6 +70,11 @@ class Situation:
     """How far ahead the life planner looks: emptying a town takes hours, so it looks further than the fire fight does."""
     focus: Sector | None = None
     """The stretch of front this agent was assigned. When set, position, bearing, speed and intensity are *its* sector's."""
+    initial_attack: bool = False
+    """The fire is still weak enough, when the units get there, for direct attack to work: crews go on the fire's own outline and pile
+    on the same ground (their effects multiply) instead of building lines ahead of it."""
+    work_minutes: int = 60
+    """How long a crew works its ground before the effect ends (an initial attack holds the fire for as long as a crew can work)."""
 
     @property
     def safe_distance_m(self) -> float:
@@ -215,6 +225,10 @@ class ActionProposal:
     eta_minutes: float | None = None
     """Set by the orchestrator from ``POST /routing/route``: minutes until the unit is on the spot (``None`` = not computed)."""
     from_station: str | None = None
+    route: dict[str, Any] | None = None
+    """The road (GeoJSON LineString) the backend routed this unit along; written into ``resources[].route`` of a crew on foot, whose route the backend does not compute."""
+    delay_minutes: float = 0.0
+    """Minutes before the unit can set off (a reinforcement still on its way to the municipality): the action is triggered then, and it arrives ``eta`` later."""
 
     def __post_init__(self) -> None:
         if self.action_type not in {"fire_attack", "evacuation", "structure_protection"}:
@@ -266,6 +280,16 @@ class Observation:
     vehicle_type: str | None = None
     off_road: bool = False
     """A vehicle that can leave the road for the last stretch; everyone else walks it."""
+    profile: dict[str, Any] | None = None
+    """What limits the roads a vehicle can use (``VehicleProfile``: height, width, weight, speed, slope): sent with every route request."""
+    pump_lpm: float = 0.0
+    """The vehicle's pump flow (``pumpFlowLpm``): with its tank, how long it works before going to refill (``duty.py``)."""
+    mobilization_min: float = 0.0
+    """A reinforcement from another district: minutes after the call before it reaches its entry point (``metadata["agents.mobilizationMinutes"]``)."""
+    aerial: dict[str, Any] | None = None
+    """An aircraft's ``AerialSpec`` (bucket/tank, load and drop minutes, speed, ``dayOnly``): how much it drops and how often (see the orchestrator's rotations)."""
+    scoop_km: float = 0.0
+    """An amphibious airtanker scoops from a large water body this far away (``metadata["agents.scoopDistanceKm"]``); 0 = the nearest helicopter water point."""
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +326,15 @@ class FirefighterAgent:
                 station_id=vehicle.get("stationId"),
                 vehicle_type=vehicle.get("type"),
                 off_road=bool(vehicle.get("offRoad")),
+                profile={
+                    **{k: vehicle[k] for k in ("heightM", "widthM", "weightT", "maxSlopePercent") if vehicle.get(k) is not None},
+                    **({"offRoad": True} if vehicle.get("offRoad") else {}),
+                    **({"speedKmh": vehicle["cruiseSpeedKmh"]} if vehicle.get("cruiseSpeedKmh") is not None else {}),
+                },
+                pump_lpm=float(vehicle.get("pumpFlowLpm") or 0.0),
+                mobilization_min=float((vehicle.get("metadata") or {}).get("agents.mobilizationMinutes") or 0.0),
+                aerial=vehicle.get("aerial"),
+                scoop_km=float((vehicle.get("metadata") or {}).get("agents.scoopDistanceKm") or 0.0),
             )
         )
 
@@ -332,6 +365,8 @@ class FirefighterAgent:
         """``assignment`` is what the orchestrator gave this unit (its sector of the front and its place); without one the
         unit acts on the fire's head, which is what every unit did before sectors existed."""
         self._assignment = assignment or Assignment()
+        if self._assignment.reserve and situation.initial_attack:
+            situation = replace(situation, initial_attack=False, work_minutes=60)  # no room on the outline: the usual tactic
         if self._assignment.sector is not None:
             situation = replace(situation, focus=self._assignment.sector)  # position, bearing, speed and intensity of *its* sector
         if self._assignment.place is not None:
@@ -353,6 +388,12 @@ class FirefighterAgent:
             if proposal.action_type == "fire_attack":  # LCES: the backend warns `missing_safety` without it
                 for key, value in self._lces(situation, proposal.intervention.get("geometry")).items():
                     proposal.extra_action_fields.setdefault(key, value)
+                self._keep_safe(proposal)
+            elif self._assignment.place is not None and self._assignment.stay_minutes:
+                # defending houses or evacuating: the crew prepares the place and leaves before the fire reaches it (the backend counts it there for this long)
+                proposal.extra_action_fields["expectedDurationMinutes"] = int(self._assignment.stay_minutes)
+                if proposal.intervention.get("type") == "crew_deployment" and proposal.intervention.get("durationMinutes"):
+                    proposal.intervention["durationMinutes"] = int(min(int(proposal.intervention["durationMinutes"]), self._assignment.stay_minutes))
         return DecisionMessage(
             agent_id=self.agent_id,
             tier=self.tier,
@@ -362,6 +403,20 @@ class FirefighterAgent:
             proposals=proposals,
             confidence=confidence,
         )
+
+    def _keep_safe(self, proposal: ActionProposal) -> None:
+        """Where the orchestrator found a safe spot (``placement.py``), the crew works from there and only as long as it is safe: the backend counts a crew as
+        caught by where its action is anchored and for how long it stays (``expectedDurationMinutes``)."""
+        if self._assignment.site is not None and proposal.target is None:
+            proposal.target = dict(self._assignment.site)
+        if self._assignment.start_after is not None:
+            begin = int((proposal.intervention.get("start") or {}).get("offsetMinutes") or 0)
+            proposal.intervention["start"] = {"offsetMinutes": max(begin, int(self._assignment.start_after))}
+        stay = self._assignment.stay_minutes
+        if stay:
+            if proposal.intervention.get("type") == "crew_deployment":
+                proposal.intervention["durationMinutes"] = int(min(int(proposal.intervention.get("durationMinutes") or stay), stay))
+            proposal.extra_action_fields["expectedDurationMinutes"] = int(stay)
 
     def _lces(self, situation: Situation, geometry: dict[str, Any] | None) -> dict[str, Any]:
         """Lookouts, Communications, Escape routes, Safety zones: an escape line and a safety zone *away* from
@@ -391,7 +446,10 @@ class FirefighterAgent:
         return line_across(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, half, self._assignment.slot)
 
     def _zone(self, situation: Situation, factor: float = 1.0) -> dict[str, Any]:
-        """The ground one crew works around its sector (``Rules.suppression.zoneRadiusM``), beside its neighbours."""
+        """The ground one crew works around its sector (``Rules.suppression.zoneRadiusM``), beside its neighbours; around its own safe spot when it has one."""
+        if self._assignment.site is not None:
+            at = self._assignment.site
+            return zone_around(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, situation.zone_radius_m * factor, 0)
         at = situation.anchor
         return zone_around(float(at["lat"]), float(at["lon"]), situation.head_bearing_deg, situation.zone_radius_m * factor, self._assignment.slot)
 
@@ -538,6 +596,14 @@ class FirefighterAgent:
 
         protection_id = f"prot-{self.agent_id}"
         effectiveness = situation.suppression_effectiveness(self.observation.crew_onboard, self.observation.water_capacity_l)
+        first = in_danger[0]
+        spot = first.get("position")
+        # a facility (a camp site, a scout centre) is not a place: the backend finds neither its position nor its effect by ``placeId``, so it would route nobody and
+        # check nothing. The target carries the id the right way round *and* the point, and the effect of a facility is the ground around it.
+        shield = (
+            {"geometry": zone_around(float(spot["lat"]), float(spot["lon"]), 0.0, 250.0, 0, 12)}
+            if first.get("assetType") == "facility" and spot else {"placeId": first["id"]}
+        )
         protection = ActionProposal(
             action_type="structure_protection",
             title=f"Defender {names} (proteção de edifícios)",
@@ -546,7 +612,7 @@ class FirefighterAgent:
                 "type": "structure_protection",
                 "label": f"Defesa {names}",
                 "start": {"offsetMinutes": 0},
-                "placeId": in_danger[0]["id"],
+                **shield,
                 "effectiveness": effectiveness,
             },
             priority="critical",
@@ -555,7 +621,14 @@ class FirefighterAgent:
             confidence=0.7,
             safety_notes="Defender a partir da zona já ardida ou de segurança; retirar se o fogo chegar em menos do que o limite das regras.",
             extra_action_fields={
-                "targets": [{"placeId": asset["id"], "label": str(asset.get("name") or asset["id"])} for asset in in_danger],
+                "targets": [
+                    {
+                        ("facilityId" if asset.get("assetType") == "facility" else "placeId"): asset["id"],
+                        "label": str(asset.get("name") or asset["id"]),
+                        **({"position": {"lat": asset["position"]["lat"], "lon": asset["position"]["lon"]}} if asset.get("position") else {}),
+                    }
+                    for asset in in_danger
+                ],
                 "tactic": "wetting",
             },
             target=in_danger[0].get("position"),  # the intervention names a place, not a point
@@ -628,25 +701,52 @@ class FirefighterAgent:
 
     # -- suppression per tier (isolated region) ------------------------------------
     def _helicopter_suppression(self, situation: Situation) -> list[ActionProposal]:
-        agent = "water" if situation.max_intensity_kwm >= 2000 else "retardant"
-        effectiveness = 0.6 if situation.max_intensity_kwm < 1500 else 0.45
-        duration = 20 if agent == "water" else 45
+        load = float((self.observation.aerial or {}).get("bucketCapacityL") or self.observation.water_capacity_l or 1000.0)
+        strength = AIR_STRENGTH_LIGHT if load <= 1500 else AIR_STRENGTH_MEDIUM if load <= 3500 else AIR_STRENGTH_HEAVY  # a bigger load covers more front per drop
+        if self._assignment.air_corridor is not None and self._assignment.air_until:
+            # the fire will be past direct attack before the crews arrive: this aircraft is the only one in time, and keeps dropping on its head until then
+            until = int(round(self._assignment.air_until))
+            return [
+                ActionProposal(
+                    action_type="fire_attack",
+                    title=f"Ataque aéreo inicial: largadas na cabeça até as equipas chegarem (T+{until})",
+                    intervention={
+                        "type": "aerial_drop",
+                        "label": "Ataque aéreo inicial",
+                        "start": {"offsetMinutes": 0},
+                        "geometry": self._assignment.air_corridor,
+                        "agent": "water",
+                        "effectiveness": strength,
+                        "effectDurationMinutes": until,
+                    },
+                    priority="critical",
+                    resources=self._air_resources(),
+                    expected_effect="Rotações de poucos minutos sobre a cabeça mantêm o fogo de superfície baixo e fora das copas até os autotanques chegarem.",
+                    confidence=0.6,
+                    safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral; só de dia e com vento dentro do limite do meio.",
+                    extra_action_fields={"tactic": "direct"},
+                )
+            ]
+        # A sortie: it drops, flies to refill and comes back for ``AIR_SORTIE_MIN`` (until the next re-plan sends it where the fire has gone); the orchestrator
+        # weighs the effect by how much of that time a drop is still wet on the ground (its rotation, see ``_air_rotation``) and ends it at nightfall.
+        if situation.max_intensity_kwm >= 1500:
+            strength = round(strength * 0.75, 2)
         return [
             ActionProposal(
                 action_type="fire_attack",
-                title="Largada aérea na cabeça do fogo",
+                title="Largadas aéreas na cabeça do fogo (vai reabastecer e volta)",
                 intervention={
                     "type": "aerial_drop",
-                    "label": "Largada cabeça",
+                    "label": "Largadas cabeça",
                     "start": {"offsetMinutes": 0},
                     "geometry": self._line(situation),
-                    "agent": agent,
-                    "effectiveness": effectiveness,
-                    "effectDurationMinutes": duration,
+                    "agent": "water",
+                    "effectiveness": strength,
+                    "effectDurationMinutes": AIR_SORTIE_MIN,
                 },
                 priority="high",
                 resources=self._air_resources(),
-                expected_effect="Freia a cabeça (retardante ~45 min de efeito; água ~20 min).",
+                expected_effect=f"Freia a cabeça com largadas sucessivas durante ~{AIR_SORTIE_MIN} min (cada largada molha ~{AIR_DROP_WET_MIN} min; entre largadas vai reabastecer).",
                 confidence=0.6,
                 safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral.",
                 extra_action_fields={"tactic": "direct"},
@@ -654,11 +754,11 @@ class FirefighterAgent:
         ]
 
     def _truck_suppression(self, situation: Situation) -> list[ActionProposal]:
-        if situation.head_speed_mmin <= 8 and situation.max_intensity_kwm <= 2500:
+        if situation.initial_attack or (situation.head_speed_mmin <= 8 and situation.max_intensity_kwm <= 2500):
             return [
                 ActionProposal(
                     action_type="fire_attack",
-                    title="Ataque direto na cabeça com água",
+                    title="Ataque inicial ao perímetro com água" if situation.initial_attack else "Ataque direto na cabeça com água",
                     intervention={
                         "type": "crew_deployment",
                         "responsibility": "firefighting",
@@ -668,7 +768,7 @@ class FirefighterAgent:
                         "vehicles": 1,
                         "waterL": self.observation.water_capacity_l,
                         "geometry": self._zone(situation),
-                        "durationMinutes": 60,
+                        "durationMinutes": situation.work_minutes,
                     },
                     priority="high",
                     resources=self._ground_resources(),
@@ -679,6 +779,31 @@ class FirefighterAgent:
                 )
             ]
         # Fire outruns crews → indirect: build a wide wet/machine line behind safety.
+        line = self._assignment.fuel_strip
+        if line is not None and (line.geometry or {}).get("type") == "LineString":
+            # the orchestrator found where this engine can lay its line and finish before the fire gets there (see `fuelbreak.plan_wet_line`)
+            return [
+                ActionProposal(
+                    action_type="fire_attack",
+                    title=f"Linha molhada à frente do fogo ({line.length_m:.0f} m, {line.ahead_m:.0f} m à frente)",
+                    intervention={
+                        "type": "fire_line",
+                        "label": "Linha molhada à frente",
+                        "start": {"offsetMinutes": 0},
+                        "geometry": line.geometry,
+                        "constructionMinutes": line.build_minutes,
+                        "effectiveness": 0.8,
+                        "method": "wet_line",
+                    },
+                    priority="high",
+                    resources=self._ground_resources(),
+                    expected_effect="O fogo é forte demais para ataque direto: a linha, feita antes de ele chegar, trava-o onde a cruza (o motor não a enfraquece com a intensidade).",
+                    confidence=0.6,
+                    safety_notes="Trabalha em terreno que ainda não arde e sai quando a linha está feita, antes de o fogo chegar; via de fuga pelo lado de trás.",
+                    extra_action_fields={"tactic": "indirect", "expectedDurationMinutes": line.build_minutes},
+                    target=line.center,
+                )
+            ]
         return [
             ActionProposal(
                 action_type="fire_attack",
@@ -702,48 +827,76 @@ class FirefighterAgent:
         ]
 
     def _squad_suppression(self, situation: Situation) -> list[ActionProposal]:
-        # fuel_removal is a tame-fire option, but the live backend rejects its payload (see UNSAFE_ON_WIRE): handline then.
-        if "fuel_removal" in UNSAFE_ON_WIRE or situation.head_speed_mmin > 8 or situation.max_intensity_kwm > 2500:
+        if situation.initial_attack:
+            # a crew on foot is worth ~0.6 on its own (the rules: base + per-crew term) and it adds to the engines on the same ground
             return [
                 ActionProposal(
                     action_type="fire_attack",
-                    title="Handline no flanco",
+                    title="Ataque inicial ao perímetro (a pé)",
                     intervention={
-                        "type": "fire_line",
-                        "label": "Handline flanco",
+                        "type": "crew_deployment",
+                        "responsibility": "firefighting",
+                        "label": "Ataque inicial a pé",
                         "start": {"offsetMinutes": 0},
-                        "geometry": self._line(situation),
-                        "constructionMinutes": 60,
-                        "effectiveness": 0.7,
-                        "method": "handline",
+                        "personnel": self.observation.crew_onboard,
+                        "vehicles": 0,
+                        "waterL": 0,
+                        "geometry": self._zone(situation),
+                        "durationMinutes": situation.work_minutes,
                     },
                     priority="high",
                     resources=self._ground_resources(),
-                    expected_effect="Handline bloqueia ~70% da propagação no flanco onde a frente atinge.",
+                    expected_effect="Equipa a pé no perímetro, com os autotanques, trava o fogo enquanto ainda é fraco.",
+                    confidence=0.6,
+                    safety_notes="Atacar a partir da zona já ardida; vigia e via de fuga pelo flanco; retirar se o fogo passar do limite das regras.",
+                    extra_action_fields={"tactic": "direct"},
+                )
+            ]
+        strip = self._assignment.fuel_strip
+        if strip is not None:
+            # the orchestrator found ground ahead of the fire this crew can clear before the fire gets there (see `fuelbreak.py`)
+            return [
+                ActionProposal(
+                    action_type="fire_attack",
+                    title=f"Faixa corta-fogo à frente ({strip.length_m:.0f} m, {strip.build_minutes} min de trabalho)",
+                    intervention={
+                        "type": "fuel_removal",
+                        "label": "Faixa corta-fogo",
+                        "start": {"offsetMinutes": 0},
+                        "geometry": strip.geometry,
+                        "method": "hand_tool",
+                        "constructionMinutes": strip.build_minutes,
+                        "effectiveness": 0.6,  # the contract's field (the backend ignores it) ...
+                        "removal": "understory",  # ... and the backend's own: what the crew clears (the spec does not have it yet)
+                    },
+                    priority="high",
+                    resources=self._ground_resources(),
+                    expected_effect=f"Uma equipa a pé abre {strip.length_m:.0f} m de faixa sem mato à frente do fogo, em terreno que ainda não arde, e termina antes de ele chegar: a frente abranda ao atingi-la.",
                     confidence=0.5,
-                    safety_notes="Squad a pé: zonas de fuga registadas, vigilante posto.",
-                    extra_action_fields={"tactic": "parallel"},
+                    safety_notes="Trabalha em terreno por queimar, com via de fuga pelo lado de trás; sai quando a faixa está feita.",
+                    extra_action_fields={"tactic": "indirect", "expectedDurationMinutes": strip.build_minutes},
+                    target=strip.center,
                 )
             ]
         return [
             ActionProposal(
                 action_type="fire_attack",
-                title="Limpeza de combustível (mão) à frente",
+                title="Handline no flanco",
                 intervention={
-                    "type": "fuel_removal",
-                    "label": "Descapamento flanco",
+                    "type": "fire_line",
+                    "label": "Handline flanco",
                     "start": {"offsetMinutes": 0},
-                    "geometry": self._zone(situation, 1.5),
-                    "method": "hand_tool",
-                    "constructionMinutes": 45,
-                    "effectiveness": 0.6,
+                    "geometry": self._line(situation),
+                    "constructionMinutes": 60,
+                    "effectiveness": 0.7,
+                    "method": "handline",
                 },
                 priority="high",
                 resources=self._ground_resources(),
-                expected_effect="Retira combustível à frente; efeito permanente na propagação.",
+                expected_effect="Handline bloqueia ~70% da propagação no flanco onde a frente atinge.",
                 confidence=0.5,
-                safety_notes="Equipa sempre a <40 m da via de fuga.",
-                extra_action_fields={"tactic": "indirect"},
+                safety_notes="Squad a pé: zonas de fuga registadas, vigilante posto.",
+                extra_action_fields={"tactic": "parallel"},
             )
         ]
 

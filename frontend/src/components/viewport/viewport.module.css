@@ -405,6 +405,23 @@
   max-width: min(470px, calc(100vw - 440px));
 }
 
+/* the "Camadas" button: same frame as the segmented controls beside it, highlighted while the panel is open */
+.layersToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.layersToggleOn {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+}
+
 .layerPanel {
   width: 304px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);

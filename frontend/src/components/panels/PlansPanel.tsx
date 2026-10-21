@@ -6,6 +6,7 @@ import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
+import { AttackTimeline } from './AttackTimeline';
 import styles from './panels.module.css';
 
 const nf = (n: number) => n.toLocaleString('pt-PT');
@@ -39,11 +40,12 @@ const ACTION_STATUS_LABEL: Record<string, string> = {
 };
 
 type Stats = NonNullable<Simulation['stats']>;
-const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed'; label: string; unit: string }[] = [
+const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed' | 'crewCasualties'; label: string; unit: string }[] = [
   { key: 'burnedHa', label: 'Área ardida', unit: ' ha' },
   { key: 'crownFireHa', label: 'Fogo de copas', unit: ' ha' },
   { key: 'buildingsAffected', label: 'Edifícios atingidos', unit: '' },
   { key: 'populationExposed', label: 'População exposta', unit: '' },
+  { key: 'crewCasualties', label: 'Baixas de equipas', unit: '' }, // only a plan's what-if has it: the cost of the plan in people
 ];
 
 /** `-26%` against the baseline; green when the plan did better (lower is better for every metric here). */
@@ -131,11 +133,70 @@ function StatsRows({ stats, base }: { stats?: Stats; base?: Stats }) {
   );
 }
 
+/** What each organization's agents did in a plan (`metadata["agents.metrics"]`, written by the agents service): the numbers the engine does not give. */
+interface AgentMetrics {
+  people: { atRisk: number; evacuatedInTime: number; sheltered: number; exposed: number; vulnerableAtRisk: number; vulnerableEvacuated: number };
+  civilProtection: { evacuations: number; withShelter: number; transports: number; publicAlerts: number; commandPost: boolean };
+  gnr: { roadsClosed: number; roadsWithoutPatrol: number; patrols: number };
+  inem: { ambulancesOnStandby: number; hospitalsAlerted: number };
+  units: { committed: number; forwardReserve: number; noSafeSpot: number };
+  fire: { outAtMinute: number | null };
+}
+
+function metricsOf(plan: Plan | undefined): AgentMetrics | null {
+  const value = (plan?.metadata as Record<string, unknown> | undefined)?.['agents.metrics'];
+  return value && typeof value === 'object' ? (value as AgentMetrics) : null;
+}
+
+function AgentRows({ m }: { m: AgentMetrics | null }) {
+  if (!m) return null;
+  return (
+    <>
+      <Row>
+        <span>Fogo</span>
+        <span>{m.fire?.outAtMinute != null ? <Tag kind="ok">{`extinto às T+${m.fire.outAtMinute} min`}</Tag> : <Tag kind="warn">ativo no fim</Tag>}</span>
+      </Row>
+      <Row>
+        <span title="Modelo dos agentes: o motor não conta evacuações">Pessoas evacuadas a tempo</span>
+        <span>
+          {nf(m.people.evacuatedInTime)} de {nf(m.people.atRisk)}
+          {m.people.sheltered ? ` · ${nf(m.people.sheltered)} abrigadas` : ''}
+          {m.people.exposed ? ` · ${nf(m.people.exposed)} expostas` : ''}
+        </span>
+      </Row>
+      <Row>
+        <span>Proteção Civil</span>
+        <span>
+          {m.civilProtection.evacuations} evacuações · {m.civilProtection.publicAlerts} avisos{m.civilProtection.commandPost ? ' · posto de comando' : ''}
+        </span>
+      </Row>
+      <Row>
+        <span>GNR</span>
+        <span>
+          {m.gnr.roadsClosed} cortes patrulhados{m.gnr.roadsWithoutPatrol ? ` · ${m.gnr.roadsWithoutPatrol} sem patrulha` : ''}
+        </span>
+      </Row>
+      <Row>
+        <span>INEM</span>
+        <span>{m.inem.ambulancesOnStandby} ambulâncias de prevenção</span>
+      </Row>
+      <Row>
+        <span>Meios</span>
+        <span>
+          {m.units.committed} no terreno{m.units.forwardReserve ? ` · ${m.units.forwardReserve} em reserva avançada` : ''}
+          {m.units.noSafeSpot ? ` · ${m.units.noSafeSpot} sem posição segura` : ''}
+        </span>
+      </Row>
+    </>
+  );
+}
+
 /** What the agents proposed for the baseline on screen: the plans, what each one does to the fire, and each action with its reason. */
 export function PlansPanel() {
   const baseId = useAppStore((s) => s.baseSimulationId);
   const run = useAppStore((s) => s.run);
   const showBanner = useAppStore((s) => s.showBanner);
+  const setFocusedAction = useAppStore((s) => s.setFocusedAction);
   const { showSimulationById } = useSimulationActions();
   const organizations = useResourcesStore((s) => s.organizations);
   const resourcesLoaded = useResourcesStore((s) => s.loaded);
@@ -148,6 +209,7 @@ export function PlansPanel() {
   const [runs, setRuns] = useState<Map<string, Simulation>>(new Map());
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<Plan | null>(null);
+  const [full, setFull] = useState<Map<string, Plan>>(new Map()); // the whole plans: the list has no metadata (the agents' metrics)
 
   useEffect(() => {
     if (!resourcesLoaded) void loadResources();
@@ -173,6 +235,8 @@ export function PlansPanel() {
       setBase(baseline);
       setPlans(ordered);
       setRuns(ordered.length ? await plansApi.whatIfRuns(ordered.map((p) => p.id as string)) : new Map());
+      const plansFull = await Promise.all(ordered.map((p) => plansApi.get(p.id as string).catch(() => null)));
+      setFull(new Map(plansFull.filter((p): p is Plan => !!p).map((p) => [p.id as string, p])));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -233,6 +297,7 @@ export function PlansPanel() {
   };
 
   const toggleActions = async (plan: PlanSummary) => {
+    setFocusedAction(null);
     if (open?.id === plan.id) return setOpen(null);
     try {
       setOpen(await plansApi.get(plan.id as string));
@@ -269,7 +334,7 @@ export function PlansPanel() {
       {error ? <p className="note">Erro: {error}</p> : null}
       {!loading && !error && !plans.length ? (
         <p className="note">
-          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho cerca de um minuto depois de a base terminar; esta lista atualiza-se.
+          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho poucos minutos depois de a base terminar (avalia cada plano com o motor antes de o publicar); esta lista atualiza-se.
           Sem o serviço: <code>python -m firetrace_agents --simulation-id {baseId}</code>.
         </p>
       ) : null}
@@ -299,6 +364,7 @@ export function PlansPanel() {
               </small>
             </div>
             {sim ? <StatsRows stats={sim.stats} base={base?.stats} /> : <small className="note">Ainda sem simulação deste plano.</small>}
+            <AgentRows m={metricsOf(full.get(id))} />
             <div className={styles.two}>
               {sim ? (
                 <button className={showing?.id === sim.id ? 'on' : ''} onClick={() => void showSimulationById(sim.id as string)}>
@@ -328,6 +394,9 @@ export function PlansPanel() {
             </div>
             {open?.id === id ? (
               <div className={styles.actionGroups}>
+                <h3>Combate ao fogo</h3>
+                <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
+                <h3>Todas as ações ({open.actions.length}), por organização</h3>
                 {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
                   <div key={organizationId} className={styles.actionGroup}>
                     <div className={styles.orgHead}>

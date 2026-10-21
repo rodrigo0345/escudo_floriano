@@ -27,7 +27,8 @@ from .orchestrator import CycleResult, OrchestratorAgent
 
 SCENARIO_FIELDS = ("name", "description", "locationId", "purpose", "start", "durationMinutes", "ignitions", "weather", "resources", "engine")
 MIN_WINDOW_MINUTES = 5  # the spec's minimum scenario duration
-PERMANENT = frozenset({"fire_line"})
+PERMANENT = frozenset({"fire_line", "fuel_removal"})
+RESOURCE_SOURCES = frozenset({"live", "none"})  # ScenarioResources.source in the contract
 """Interventions that stay on the ground after a stage: a built line holds; crews, drops and defences must be decided again."""
 
 
@@ -45,6 +46,9 @@ def scenario_at(
     start = datetime.fromisoformat(snapshot["start"]) + timedelta(minutes=t0)
     scenario = {key: copy.deepcopy(snapshot[key]) for key in SCENARIO_FIELDS if key in snapshot}
     scenario.update(start=start.isoformat(), durationMinutes=duration, name=name)
+    resources = scenario.get("resources")
+    if isinstance(resources, dict) and resources.get("source") not in RESOURCE_SOURCES:
+        scenario.pop("resources")  # a stored scenario may carry a value the contract does not list (the UI writes "all"): the runs made here need no fleet
     if t0 > 0 and perimeter:
         scenario["initialFire"] = {"perimeter": perimeter, "asOf": start.isoformat(), "source": "estimated"}
     scenario["interventions"] = copy.deepcopy(interventions)

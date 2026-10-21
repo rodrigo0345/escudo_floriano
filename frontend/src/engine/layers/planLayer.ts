@@ -6,15 +6,29 @@ import type { Georef, WorldPoint } from '@/domain/georef';
 
 import type { Pickable } from '../picking';
 
-export type PlanKind = 'fire_line' | 'aerial_drop' | 'crew_deployment' | 'structure_protection' | 'evacuation' | 'safety';
+export type PlanKind =
+  | 'fire_line'
+  | 'fuel_break'
+  | 'aerial_drop'
+  | 'crew_deployment'
+  | 'structure_protection'
+  | 'evacuation'
+  | 'safety'
+  | 'road_closure'
+  | 'traffic_control'
+  | 'support';
 
 export const PLAN_KINDS: Record<PlanKind, { label: string; color: string }> = {
   fire_line: { label: 'Linhas de fogo', color: '#ffd400' },
+  fuel_break: { label: 'Faixas corta-fogo', color: '#c8873a' },
   aerial_drop: { label: 'Largadas aéreas', color: '#3b8cff' },
   crew_deployment: { label: 'Zonas das equipas', color: '#33e06a' },
   structure_protection: { label: 'Defesa de edifícios', color: '#c07bff' },
-  evacuation: { label: 'Evacuações', color: '#ff7a1a' },
+  evacuation: { label: 'Evacuações, rotas e abrigos', color: '#ff7a1a' },
   safety: { label: 'Vias de fuga, zonas seguras, vigias', color: '#ffffff' },
+  road_closure: { label: 'Cortes de estrada (laranja: emergência passa)', color: '#ff3b3b' },
+  traffic_control: { label: 'Controlo de trânsito', color: '#4da3ff' },
+  support: { label: 'INEM e posto de comando', color: '#ff4fd8' },
 };
 const KIND_ORDER = Object.keys(PLAN_KINDS) as PlanKind[];
 
@@ -23,11 +37,32 @@ const LINE_HALF_WIDTH = 2.5;
 const DROP_HALF_WIDTH = 4;
 const OUTLINE_HALF_WIDTH = 1.1;
 const ROUTE_HALF_WIDTH = 1;
+const CLOSURE_HALF_WIDTH = 1.7; // a little wider than the road it covers
+const EMERGENCY_PASSES = '#ff9f1a';
 const PLACE_RING_M = 160;
 const LIFT = 2.2;
+const FOCUS_ROUTE = '#00e5ff';
 
 const FIRE_LINE_COLORS: Record<string, string> = { handline: '#ffd400', wet_line: '#00e5ff', machine: '#ff9f1a' };
 const DROP_COLORS: Record<string, string> = { water: '#3b8cff', retardant: '#ff4fa3', foam: '#f4f4f4' };
+
+/** When an effect works (minutes of the run) and whose it is: the layer brightens it while it works and dims it before and after. */
+interface Window {
+  action: string;
+  start: number;
+  end: number;
+}
+
+/** A run of vertices `[from, to)` drawn at `alpha` for the effect of `action`. */
+interface Span extends Window {
+  from: number;
+  to: number;
+  alpha: number;
+}
+
+const UPCOMING = 0.22; // share of its alpha an effect keeps before it starts (the plan is still readable ahead of time)
+const DONE = 0.1; // ...and once it is over, or when another action is focused
+const WORKING = 1.6; // a working effect is drawn stronger than the plan at rest
 
 /** Triangles accumulated for one mesh; `tips[i]` is the tooltip of triangle `i` (what a hover on that face shows). */
 class MeshAcc {
@@ -35,9 +70,28 @@ class MeshAcc {
   readonly colors: number[] = [];
   readonly indices: number[] = [];
   readonly tips: string[] = [];
+  private readonly spans: Span[] = [];
+  private geometry: THREE.BufferGeometry | null = null;
+
+  private span(from: number, alpha: number, win?: Window): void {
+    if (win) this.spans.push({ ...win, from, to: this.positions.length / 3, alpha });
+  }
+
+  /** Re-weights each timed effect's alpha for minute `t` (`null`: as drawn); a focused action is drawn at full strength whatever the time. */
+  retime(t: number | null, focus: string | null): void {
+    const attr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
+    if (!attr || !this.spans.length) return;
+    for (const s of this.spans) {
+      let a = s.alpha;
+      if (focus) a = s.action === focus ? Math.min(1, s.alpha * 2.2) : s.alpha * DONE;
+      else if (t !== null) a = t < s.start ? s.alpha * UPCOMING : t >= s.end ? s.alpha * DONE : Math.min(1, s.alpha * WORKING);
+      for (let v = s.from; v < s.to; v++) attr.setW(v, a);
+    }
+    attr.needsUpdate = true;
+  }
 
   /** A ribbon of constant half-width along `points` (like the road layer), `closed` joins the last point back to the first. */
-  ribbon(points: WorldPoint[], halfWidth: number, color: THREE.Color, alpha: number, tip: string, closed = false): void {
+  ribbon(points: WorldPoint[], halfWidth: number, color: THREE.Color, alpha: number, tip: string, closed = false, win?: Window): void {
     const pts = closed && points.length > 2 ? [...points, points[0]] : points;
     if (pts.length < 2) return;
     const start = this.positions.length / 3;
@@ -57,10 +111,11 @@ class MeshAcc {
         this.tips.push(tip, tip);
       }
     });
+    this.span(start, alpha, win);
   }
 
   /** A translucent convex polygon as a fan from its centroid (every vertex follows the terrain, so it drapes over hills). */
-  fan(ring: WorldPoint[], color: THREE.Color, alpha: number, tip: string): void {
+  fan(ring: WorldPoint[], color: THREE.Color, alpha: number, tip: string, win?: Window): void {
     const pts = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][2] === ring[ring.length - 1][2] ? ring.slice(0, -1) : ring;
     if (pts.length < 3) return;
     const start = this.positions.length / 3;
@@ -77,6 +132,7 @@ class MeshAcc {
       this.indices.push(start, start + 1 + i, start + 1 + ((i + 1) % pts.length));
       this.tips.push(tip);
     }
+    this.span(start, alpha, win);
   }
 
   build(renderOrder: number): THREE.Mesh | null {
@@ -99,6 +155,7 @@ class MeshAcc {
     );
     mesh.renderOrder = renderOrder;
     mesh.userData.tipForFace = (face: number) => this.tips[face] ?? '';
+    this.geometry = geometry;
     return mesh;
   }
 }
@@ -109,11 +166,37 @@ interface Bucket {
   markers: { positions: number[]; colors: number[]; tips: string[] };
 }
 
-const tipOf = (action: PlanAction): string => {
+const tipOf = (action: PlanAction, win?: Window, facts = ''): string => {
   const why = (action.rationale ?? '').replace(/\s+/g, ' ').trim();
-  const head = `${action.title} · ${action.organizationId} · ${action.priority ?? 'normal'}`;
+  const when = win ? ` · trabalha T+${Math.round(win.start)}→${Number.isFinite(win.end) ? `T+${Math.round(win.end)}` : 'fim'} min` : '';
+  const head = `${action.title} · ${action.organizationId}${when}${facts}`;
   return why ? `${head} — ${why.length > 230 ? `${why.slice(0, 230)}…` : why}` : head;
 };
+
+type Effect = NonNullable<PlanAction['simulationEffects']>[number];
+const finite = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+/** When an effect works: from its `start` (minutes of the run) for its duration; a fire line or fuel break stays once made, a defence lasts the action's stay. */
+function windowOf(action: PlanAction, effect: Effect): Window | undefined {
+  const e = effect as unknown as Record<string, unknown>;
+  const start = finite((e.start as { offsetMinutes?: number } | undefined)?.offsetMinutes);
+  if (start === undefined) return undefined;
+  const lasting = e.type === 'fire_line' || e.type === 'fuel_removal';
+  const stay = finite(e.durationMinutes) ?? finite(e.effectDurationMinutes) ?? (lasting ? Infinity : finite(action.expectedDurationMinutes) ?? 60);
+  return { action: action.id as string, start, end: start + stay };
+}
+
+/** ` · 35 op. · 1 veíc. · 3000 L · eficácia 83%` for an effect that has those numbers. */
+function effectFacts(effect: Effect): string {
+  const e = effect as unknown as Record<string, unknown>;
+  const parts: string[] = [];
+  if (finite(e.personnel)) parts.push(`${e.personnel} op.`);
+  if (finite(e.vehicles)) parts.push(`${e.vehicles} veíc.`);
+  if (finite(e.waterL)) parts.push(`${e.waterL} L`);
+  const effectiveness = finite(e.effectiveness);
+  if (effectiveness !== undefined) parts.push(`eficácia ${Math.round(effectiveness * 100)}%`);
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
 
 /** A circle of `radiusM` around a point, as `[lon, lat]` (closed ring). */
 function circleRing(lat: number, lon: number, radiusM: number, vertices = 20): LonLat[] {
@@ -132,14 +215,32 @@ function circleRing(lat: number, lon: number, radiusM: number, vertices = 20): L
  * What the agents' plan does, drawn on the terrain: fire lines across the fire's path, aerial-drop curtains, crew zones,
  * building defence and evacuation areas, plus the escape routes / safety zones / lookouts of each attack. Hover shows the
  * action and the agent's reason. The plan's `simulationEffects` are what the backend simulated, so this is what was run.
+ * The timed effects follow the playback (`setTime`): bright while the crew works there, faint before it arrives and after it leaves;
+ * an action picked in the panel (`setFocus`) is outlined with the road its unit takes.
  */
 export class PlanLayer {
   readonly group = new THREE.Group();
   readonly pickables: Pickable[] = [];
-  readonly counts: Record<PlanKind, number> = { fire_line: 0, aerial_drop: 0, crew_deployment: 0, structure_protection: 0, evacuation: 0, safety: 0 };
+  readonly counts: Record<PlanKind, number> = {
+    fire_line: 0,
+    fuel_break: 0,
+    aerial_drop: 0,
+    crew_deployment: 0,
+    structure_protection: 0,
+    evacuation: 0,
+    safety: 0,
+    road_closure: 0,
+    traffic_control: 0,
+    support: 0,
+  };
   private readonly kindGroups = new Map<PlanKind, THREE.Group>();
   private readonly hidden = new Set<PlanKind>();
   private readonly listeners = new Set<() => void>();
+  private readonly accs: MeshAcc[] = [];
+  private readonly focusGroup = new THREE.Group();
+  private plan: Plan | null = null;
+  private time: number | null = null;
+  private focus: string | null = null;
 
   constructor(private readonly geo: Georef) {}
 
@@ -149,33 +250,36 @@ export class PlanLayer {
     return () => void this.listeners.delete(listener);
   }
 
-  /** `places` maps a place/facility id to where it is (a `structure_protection` effect names the place, not a shape). */
-  setPlan(plan: Plan | null, places: ReadonlyMap<string, { lat: number; lon: number }>): void {
+  /**
+   * `places` maps a place/facility id to where it is (a `structure_protection` effect names the place, not a shape);
+   * `roadGeometry` gives a road's `[lon, lat]` points by id (a `road_closure` action names roads, not a shape).
+   */
+  setPlan(plan: Plan | null, places: ReadonlyMap<string, { lat: number; lon: number }>, roadGeometry?: (id: string) => LonLat[]): void {
     this.clear();
     if (!plan) return;
     const buckets = new Map<PlanKind, Bucket>(KIND_ORDER.map((k) => [k, { ribbons: new MeshAcc(), fills: new MeshAcc(), markers: { positions: [], colors: [], tips: [] } }]));
     const world = (ring: LonLat[]): WorldPoint[] => ring.map(([lon, lat]) => this.geo.world(lat, lon, LIFT));
 
-    const shape = (kind: PlanKind, geometry: Parameters<typeof lineStringCoordinates>[0], color: THREE.Color, tip: string, width: number) => {
+    const shape = (kind: PlanKind, geometry: Parameters<typeof lineStringCoordinates>[0], color: THREE.Color, tip: string, width: number, win?: Window) => {
       const b = buckets.get(kind)!;
       if (geometry?.type === 'LineString') {
-        b.ribbons.ribbon(world(lineStringCoordinates(geometry)), width, color, 0.95, tip);
+        b.ribbons.ribbon(world(lineStringCoordinates(geometry)), width, color, 0.95, tip, false, win);
         this.counts[kind]++;
       } else {
         const rings = polygonRings(geometry);
         rings.forEach((ring) => {
-          b.fills.fan(world(ring), color, 0.3, tip);
-          b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true);
+          b.fills.fan(world(ring), color, 0.3, tip, win);
+          b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true, win);
         });
         if (rings.length) this.counts[kind]++;
       }
     };
-    const marker = (lat: number, lon: number, color: THREE.Color, tip: string) => {
-      const m = buckets.get('safety')!.markers;
+    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind = 'safety') => {
+      const m = buckets.get(kind)!.markers;
       m.positions.push(...this.geo.world(lat, lon, 3));
       m.colors.push(color.r, color.g, color.b);
       m.tips.push(tip);
-      this.counts.safety++;
+      this.counts[kind]++;
     };
     const placeRing = (id: string | undefined): LonLat[] | null => {
       const at = id ? places.get(id) : undefined;
@@ -185,24 +289,29 @@ export class PlanLayer {
     for (const action of plan.actions) {
       const tip = tipOf(action);
       for (const effect of action.simulationEffects ?? []) {
+        const win = windowOf(action, effect);
+        const effectTip = win ? tipOf(action, win, effectFacts(effect)) : tip;
         switch (effect.type) {
           case 'fire_line':
-            shape('fire_line', effect.geometry, new THREE.Color(FIRE_LINE_COLORS[effect.method ?? ''] ?? PLAN_KINDS.fire_line.color), tip, LINE_HALF_WIDTH);
+            shape('fire_line', effect.geometry, new THREE.Color(FIRE_LINE_COLORS[effect.method ?? ''] ?? PLAN_KINDS.fire_line.color), effectTip, LINE_HALF_WIDTH, win);
             break;
           case 'aerial_drop':
-            shape('aerial_drop', effect.geometry, new THREE.Color(DROP_COLORS[effect.agent ?? ''] ?? PLAN_KINDS.aerial_drop.color), tip, DROP_HALF_WIDTH);
+            shape('aerial_drop', effect.geometry, new THREE.Color(DROP_COLORS[effect.agent ?? ''] ?? PLAN_KINDS.aerial_drop.color), effectTip, DROP_HALF_WIDTH, win);
             break;
           case 'crew_deployment':
-            shape('crew_deployment', effect.geometry, new THREE.Color(PLAN_KINDS.crew_deployment.color), tip, LINE_HALF_WIDTH);
+            shape('crew_deployment', effect.geometry, new THREE.Color(PLAN_KINDS.crew_deployment.color), effectTip, LINE_HALF_WIDTH, win);
+            break;
+          case 'fuel_removal':
+            shape('fuel_break', effect.geometry, new THREE.Color(PLAN_KINDS.fuel_break.color), effectTip, LINE_HALF_WIDTH, win);
             break;
           case 'structure_protection': {
             const color = new THREE.Color(PLAN_KINDS.structure_protection.color);
             const ring = placeRing(effect.placeId);
-            if (effect.geometry) shape('structure_protection', effect.geometry, color, tip, LINE_HALF_WIDTH);
+            if (effect.geometry) shape('structure_protection', effect.geometry, color, effectTip, LINE_HALF_WIDTH, win);
             else if (ring) {
               const b = buckets.get('structure_protection')!;
-              b.fills.fan(world(ring), color, 0.3, tip);
-              b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true);
+              b.fills.fan(world(ring), color, 0.3, effectTip, win);
+              b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, effectTip, true, win);
               this.counts.structure_protection++;
             }
             break;
@@ -225,6 +334,36 @@ export class PlanLayer {
             break; // road closures, backfires...: nothing to draw yet
         }
       }
+      if (action.type === 'road_closure') {
+        // orange where emergency vehicles may still pass (the closure's exemption), red where nobody does
+        const color = new THREE.Color((action.exemptions ?? []).includes('emergency_vehicles') ? EMERGENCY_PASSES : PLAN_KINDS.road_closure.color);
+        let drawn = false;
+        for (const id of action.roadIds ?? []) {
+          const points = roadGeometry?.(id) ?? [];
+          if (points.length < 2) continue;
+          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, 0.95, tip);
+          drawn = true;
+        }
+        if (drawn) this.counts.road_closure++;
+      }
+      if (action.type === 'traffic_control_point' && action.position) {
+        marker(action.position.lat, action.position.lon, new THREE.Color(PLAN_KINDS.traffic_control.color), tip, 'traffic_control');
+      }
+      if (action.type === 'evacuation') {
+        // Proteção Civil's part of an evacuation: the road to the shelter and the shelter itself
+        const orange = new THREE.Color(PLAN_KINDS.evacuation.color);
+        for (const route of action.routes ?? []) {
+          buckets.get('evacuation')!.ribbons.ribbon(world(lineStringCoordinates(route.geometry)), ROUTE_HALF_WIDTH, orange, 0.9, `Rota de evacuação · ${tip}`);
+        }
+        for (const shelter of action.shelters ?? []) marker(shelter.position.lat, shelter.position.lon, orange, `Abrigo: ${shelter.name ?? ''} · ${action.title}`, 'evacuation');
+      }
+      if (action.type === 'medical_standby') {
+        const pink = new THREE.Color(PLAN_KINDS.support.color);
+        for (const target of action.positions ?? []) if (target.position) marker(target.position.lat, target.position.lon, pink, tip, 'support');
+      }
+      if (action.type === 'establish_command_post' && action.location.position) {
+        marker(action.location.position.lat, action.location.position.lon, new THREE.Color(PLAN_KINDS.support.color), tip, 'support');
+      }
       if (action.type === 'fire_attack') {
         const white = new THREE.Color(PLAN_KINDS.safety.color);
         for (const route of action.escapeRoutes ?? []) {
@@ -241,6 +380,7 @@ export class PlanLayer {
       for (const [acc, order] of [[b.fills, 6], [b.ribbons, 7]] as const) {
         const mesh = acc.build(order);
         if (!mesh) continue;
+        this.accs.push(acc);
         kindGroup.add(mesh);
         this.pickables.push(mesh as unknown as Pickable);
       }
@@ -258,7 +398,72 @@ export class PlanLayer {
       this.kindGroups.set(kind, kindGroup);
       this.group.add(kindGroup);
     });
+    this.plan = plan;
+    this.retime();
+    this.drawFocus();
     this.listeners.forEach((listener) => listener());
+  }
+
+  /** The playback minute: crews and drops are bright while they work, faint before they start and after they leave. */
+  setTime(t: number | null): void {
+    if (t === this.time) return;
+    this.time = t;
+    this.retime();
+  }
+
+  /** One action picked in the panel: drawn at full strength (the rest dimmed), with the road its unit takes and its escape route. */
+  setFocus(actionId: string | null): void {
+    if (actionId === this.focus) return;
+    this.focus = actionId;
+    this.retime();
+    this.drawFocus();
+  }
+
+  private focused(): PlanAction | undefined {
+    return this.focus ? this.plan?.actions.find((a) => a.id === this.focus) : undefined;
+  }
+
+  private retime(): void {
+    const focus = this.focused() ? this.focus : null;
+    for (const acc of this.accs) acc.retime(this.time, focus);
+  }
+
+  private clearFocus(): void {
+    for (const child of this.focusGroup.children) {
+      const mesh = child as THREE.Mesh;
+      mesh.geometry?.dispose();
+      (mesh.material as THREE.Material | undefined)?.dispose();
+      const at = this.pickables.indexOf(mesh as unknown as Pickable);
+      if (at >= 0) this.pickables.splice(at, 1);
+    }
+    this.focusGroup.clear();
+    this.group.remove(this.focusGroup);
+  }
+
+  private drawFocus(): void {
+    this.clearFocus();
+    const action = this.focused();
+    if (!action) return;
+    const acc = new MeshAcc();
+    const world = (ring: LonLat[]): WorldPoint[] => ring.map(([lon, lat]) => this.geo.world(lat, lon, LIFT + 0.4));
+    const white = new THREE.Color('#ffffff');
+    const tip = tipOf(action);
+    for (const r of action.resources ?? []) {
+      const route = (r as { route?: Parameters<typeof lineStringCoordinates>[0] }).route;
+      if (route) acc.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH * 1.6, new THREE.Color(FOCUS_ROUTE), 0.95, `Caminho do meio · ${tip}`);
+    }
+    if (action.type === 'fire_attack') {
+      for (const route of action.escapeRoutes ?? []) acc.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH * 1.4, white, 1, `Via de fuga · ${tip}`);
+    }
+    for (const effect of action.simulationEffects ?? []) {
+      if (effect.geometry?.type === 'LineString') acc.ribbon(world(lineStringCoordinates(effect.geometry)), LINE_HALF_WIDTH * 1.3, white, 1, tip);
+      else for (const ring of polygonRings(effect.geometry)) acc.ribbon(world(ring), OUTLINE_HALF_WIDTH * 1.8, white, 1, tip, true);
+    }
+    const mesh = acc.build(9);
+    if (!mesh) return;
+    this.focusGroup.add(mesh);
+    this.group.add(this.focusGroup);
+    this.pickables.push(mesh as unknown as Pickable);
   }
 
   isVisible(kind: PlanKind): boolean {
@@ -273,6 +478,7 @@ export class PlanLayer {
   }
 
   private clear(): void {
+    this.clearFocus();
     this.group.children.forEach((child) =>
       child.traverse((o) => {
         const object = o as THREE.Mesh | THREE.Points;
@@ -282,6 +488,8 @@ export class PlanLayer {
     );
     this.group.clear();
     this.kindGroups.clear();
+    this.accs.length = 0;
+    this.plan = null;
     this.pickables.length = 0;
     KIND_ORDER.forEach((k) => (this.counts[k] = 0));
   }

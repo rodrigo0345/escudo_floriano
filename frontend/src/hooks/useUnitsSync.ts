@@ -7,6 +7,8 @@ import type { MapUnit } from '@/engine/layers/unitLayer';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
+const REINFORCEMENT_COLOR = '#ff9f1a';
+
 /**
  * Draws the units of a plan's what-if from the backend: `GET /units` gives the metadata, and
  * `GET /units/{unitId}/track` gives the one-minute positions the 3D layer interpolates.
@@ -57,10 +59,12 @@ export function useUnitsSync(): void {
 
   useEffect(() => {
     if (!world) return;
-    const type = (id: string) => organizations.find((o) => o.id === id)?.type ?? 'other';
-    const name = (id: string) => organizations.find((o) => o.id === id)?.shortName ?? id;
+    const orgOf = (id: string) => organizations.find((o) => o.id === id);
+    const type = (id: string) => orgOf(id)?.type ?? 'other';
+    const name = (id: string) => orgOf(id)?.shortName ?? id;
     world.units.setUnits(units, {
-      colorOf: (id) => ORG_COLOR[type(id)] ?? '#9aa0a8',
+      // reinforcements from other districts (tag `reinforcement`, see agents/scripts/seed_reinforcements.py) stand out from the local brigades
+      colorOf: (id) => ((orgOf(id)?.tags ?? []).includes('reinforcement') ? REINFORCEMENT_COLOR : ORG_COLOR[type(id)] ?? '#9aa0a8'),
       orgName: name,
       orgType: type,
       vehicleOf: (unitId) => vehicles.find((v) => v.id === unitId),

@@ -41,6 +41,8 @@ export interface AppState {
   customEvents: TimelineRangeEvent[];
   /** The agents' plan drawn on the map (the one whose what-if run is on screen); `null` = nothing drawn. */
   activePlan: Plan | null;
+  /** The plan action picked in the combat timeline: outlined on the map with its unit's road. */
+  focusedActionId: string | null;
   /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
   baseSimulationId: string | null;
   job: Job | null;
@@ -91,6 +93,7 @@ export interface AppState {
   removeCustomEvent: (id: string) => void;
   setBaseSimulationId: (simulationId: string | null) => void;
   setActivePlan: (plan: Plan | null) => void;
+  setFocusedAction: (actionId: string | null) => void;
   setImpact: (impact: RunData['impact']) => void;
   setJob: (job: Job | null) => void;
   setProgress: (progress: Progress | null) => void;
@@ -130,6 +133,7 @@ export const useAppStore = create<AppState>((set) => ({
   customEvents: [],
   baseSimulationId: null,
   activePlan: null,
+  focusedActionId: null,
   job: null,
   progress: null,
   smokeInfo: null,
@@ -191,6 +195,7 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setActivePlan: (activePlan) => set({ activePlan }),
+  setFocusedAction: (focusedActionId) => set({ focusedActionId }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
   setJob: (job) => set({ job }),
   setProgress: (progress) => set({ progress }),

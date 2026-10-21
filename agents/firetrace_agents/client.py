@@ -18,6 +18,7 @@ stable ``code`` so callers branch on ``code``, not on the human message.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -52,7 +53,7 @@ class FiretraceClient:
         self,
         base_url: str | None = None,
         *,
-        timeout: float = 30.0,
+        timeout: float = 120.0,  # publishing a plan of a hundred actions makes the backend route every vehicle: well over 30 s on a busy machine
         transport: httpx.BaseTransport | None = None,
         validate_sent_payloads: bool = True,
     ) -> None:
@@ -189,6 +190,16 @@ class FiretraceClient:
             json_body={"geometry": geometry},
         )
 
+    def get_road_status(self, simulation_id: str, *, t_min: int) -> list[dict[str, Any]]:
+        """``GET /simulations/{id}/road-status``: for each road the fire is predicted to cut, when it is cut and reopened (p10/p50/p90 minutes since ignition) and how likely."""
+        body = self._request("GET", self._fill("/simulations/{simulationId}/road-status", simulationId=simulation_id), params={"tMin": t_min})
+        return list(body.get("roads", []))
+
+    def list_roads(self, location_id: str) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/roads``: every road segment of the location as GeoJSON features (``properties``: id, name, class, lengthM)."""
+        body = self._request("GET", self._fill("/locations/{locationId}/roads", locationId=location_id), params={"limit": 50000})
+        return list(body.get("features", []))
+
     def route(self, request: dict[str, Any]) -> dict[str, Any]:
         """``POST /routing/route``: the ``Route`` of a vehicle (``found``, ``durationMin``, ``geometry``, ``blockedBy``, ``warnings``)."""
         if self._validate:
@@ -198,6 +209,32 @@ class FiretraceClient:
     def get_station(self, station_id: str) -> dict[str, Any]:
         """``GET /stations/{id}``: where a unit is based (``position``)."""
         return self._request("GET", self._fill("/stations/{stationId}", stationId=station_id))
+
+    def list_facilities(self, location_id: str) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/facilities``: schools, shelters, hospitals, stations... (``id``, ``name``, ``kind``, ``position``, ``vulnerable``)."""
+        return list(self._request("GET", self._fill("/locations/{locationId}/facilities", locationId=location_id), params={"limit": 2000}).get("items", []))
+
+    def water_points_near(self, location_id: str, lat: float, lon: float, *, helicopter_only: bool = False, limit: int = 1) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/water-points/near``: the nearest water points (``point``, ``distanceM``), only those a helicopter can dip into with ``helicopter_only``."""
+        params: dict[str, Any] = {"lat": lat, "lon": lon, "limit": limit}
+        if helicopter_only:
+            params["helicopterOnly"] = "true"
+        return list(self._request("GET", self._fill("/locations/{locationId}/water-points/near", locationId=location_id), params=params).get("items", []))
+
+    def patch_plan(self, plan_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """``PATCH /plans/{id}`` with ``application/merge-patch+json``: only the fields sent change (``actions`` is replaced as a whole)."""
+        response = self._http.patch(self._fill("/plans/{planId}", planId=plan_id), content=json.dumps(patch), headers={"Content-Type": "application/merge-patch+json"})
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
+        return dict(response.json())
+
+    def get_plan(self, plan_id: str) -> dict[str, Any]:
+        return self._request("GET", self._fill("/plans/{planId}", planId=plan_id))
+
+    def list_stations(self, organization_id: str) -> list[dict[str, Any]]:
+        """``GET /stations?organizationId=``: the stations of one organization (``id``, ``position``)."""
+        return list(self._request("GET", "/stations", params={"organizationId": organization_id, "limit": 200}).get("items", []))
 
     def get_location(self, location_id: str) -> dict[str, Any]:
         """``GET /locations/{id}``: bounds and the grid (size, cell size, north-west corner) every simulation of it uses."""
@@ -297,6 +334,13 @@ class FiretraceClient:
             raise ApiProblem(response.status_code, {"code": "http_error", "title": response.text[:400]})
         body_json: dict[str, Any] = response.json()
         return body_json
+
+    def delete_plan(self, plan_id: str) -> None:
+        """``DELETE /plans/{id}`` (a proposed plan only): used to throw away a candidate that was published just to be simulated."""
+        response = self._http.delete(self._fill("/plans/{planId}", planId=plan_id))
+        if response.status_code >= 400 and response.status_code != 404:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
 
     def list_plans(self, simulation_id: str) -> list[dict[str, Any]]:
         page = self._request("GET", "/plans", params={"simulationId": simulation_id})
