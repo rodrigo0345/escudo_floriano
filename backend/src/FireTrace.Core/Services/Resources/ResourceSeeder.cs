@@ -274,6 +274,90 @@ public sealed class ResourceSeeder(
                 }
             }
 
+            // 2 helicópteros de combate a incêndios por omissão (CMA - Centro de Meios Aéreos)
+            var heliStation = new Station
+            {
+                Id = $"st-cma-{location.Id}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Name = $"Centro de Meios Aéreos ({location.Name})",
+                Kind = StationKind.Helipad,
+                LocationId = location.Id,
+                Position = new LatLon(location.Center.Lat + 0.005, location.Center.Lon - 0.005),
+                VehicleBays = 4,
+                Status = StationStatus.Operational
+            };
+            var existingHeliSt = await stationStore.GetAsync(heliStation.Id, ct);
+            await stationStore.UpsertAsync(existingHeliSt is null ? heliStation : heliStation with { CreatedAt = existingHeliSt.CreatedAt }, ct);
+            stationCount++;
+
+            var heli1 = new Vehicle
+            {
+                Id = $"v-hebp-{location.Id}-01",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                StationId = heliStation.Id,
+                Callsign = "HEBP 01",
+                Type = VehicleType.Helicopter,
+                TypeCode = "UH-60A",
+                CrewCapacity = 3,
+                MinimumCrew = 2,
+                OffRoad = true,
+                CruiseSpeedKmh = 260,
+                RangeKm = 580,
+                FuelCapacityL = 1360,
+                WaterCapacityL = 3000,
+                PumpFlowLpm = 6000,
+                Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                Aerial = new AerialSpec(BucketCapacityL: 3000, LoadMinutes: 1.0, DropMinutes: 0.5, CruiseSpeedKmh: 260, MaxWindKmh: 50, MinVisibilityM: 2000, DayOnly: true),
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = heliStation.Position,
+                    CrewOnboard = 2,
+                    Water = new WaterStatus(3000, 3000),
+                    UpdatedAt = now
+                }
+            };
+            var existingHeli1 = await vehicleStore.GetAsync(heli1.Id, ct);
+            await vehicleStore.UpsertAsync(existingHeli1 is null ? heli1 : heli1 with { CreatedAt = existingHeli1.CreatedAt }, ct);
+            vehicleCount++;
+
+            var heli2 = new Vehicle
+            {
+                Id = $"v-hebl-{location.Id}-02",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-bombeiros",
+                StationId = heliStation.Id,
+                Callsign = "HEBL 02",
+                Type = VehicleType.Helicopter,
+                TypeCode = "AS350B3",
+                CrewCapacity = 5,
+                MinimumCrew = 1,
+                OffRoad = true,
+                CruiseSpeedKmh = 250,
+                RangeKm = 650,
+                FuelCapacityL = 540,
+                WaterCapacityL = 1000,
+                PumpFlowLpm = 3000,
+                Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                Aerial = new AerialSpec(BucketCapacityL: 1000, LoadMinutes: 0.7, DropMinutes: 0.3, CruiseSpeedKmh: 250, MaxWindKmh: 45, MinVisibilityM: 2000, DayOnly: true),
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = heliStation.Position,
+                    CrewOnboard = 2,
+                    Water = new WaterStatus(1000, 1000),
+                    UpdatedAt = now
+                }
+            };
+            var existingHeli2 = await vehicleStore.GetAsync(heli2.Id, ct);
+            await vehicleStore.UpsertAsync(existingHeli2 is null ? heli2 : heli2 with { CreatedAt = existingHeli2.CreatedAt }, ct);
+            vehicleCount++;
+
             log.LogInformation("Recursos semeados para '{Location}': {Stations} postos, {Vehicles} viaturas.", location.Id, stationCount, vehicleCount);
         }
 

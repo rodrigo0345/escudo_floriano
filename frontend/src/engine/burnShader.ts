@@ -106,7 +106,8 @@ vec3 burnSurface(vec3 base, vec2 uv) {
   if (style < 0.5) return base;
   // the edge of the burned area breaks up with noise instead of following the bilinear blend
   vec2 p = uv * fireDim;
-  float edge = smoothstep(0.35, 0.75, w + (bfbm(p * 1.7) - 0.5) * 0.35);
+  float wn = w + (bfbm(p * 1.7) - 0.5) * 0.35;
+  float edge = smoothstep(0.35, 0.75, wn);
   float lum = dot(base, vec3(0.299, 0.587, 0.114));
   float n = bfbm(p * 6.0), fine = bnoise(p * 38.0), streak = bnoise(vec2(p.x * 22.0, p.y * 3.0 + p.x * 0.7));
   vec3 charred; float amount;
@@ -121,9 +122,9 @@ vec3 burnSurface(vec3 base, vec2 uv) {
     charred = mix(vec3(0.30, 0.29, 0.27), vec3(0.52, 0.50, 0.47), n);
     charred = mix(charred, vec3(0.03, 0.028, 0.025), smoothstep(0.55, 0.85, streak) * (0.5 + 0.5 * sev));
     amount = mix(0.65, 0.88, sev);
-  } else if (style < 4.5) { // urban: soot over roofs and walls, the shapes stay readable
-    charred = base * mix(0.28, 0.5, n);
-    amount = mix(0.45, 0.75, sev);
+  } else if (style < 4.5) { // urban: greyed soot over roofs and walls, dark enough to read on a photo, the shapes stay readable
+    charred = mix(vec3(lum), base, 0.35) * mix(0.2, 0.42, n);
+    amount = mix(0.6, 0.85, sev);
   } else {                  // bare ground: only scorched
     charred = base * 0.55;
     amount = 0.45;
@@ -131,6 +132,9 @@ vec3 burnSurface(vec3 base, vec2 uv) {
   // while it burns the surface goes from untouched to charred; the flames themselves are 3D (FlameLayer)
   float k = smoothstep(0.0, 0.85, age / dur) * amount * edge;
   vec3 result = mix(base, charred, k);
+  // a thin warm-grey ash line along the burned perimeter, so the edge reads on busy photo textures too
+  float rim = smoothstep(0.4, 0.52, wn) * (1.0 - smoothstep(0.52, 0.66, wn));
+  result = mix(result, vec3(0.46, 0.41, 0.36) * (0.85 + 0.3 * lum), rim * 0.6 * smoothstep(0.0, 0.85, age / dur));
   if (age < dur) {
     float life = age / dur;
     float flicker = 0.7 + 0.3 * bnoise(p * 3.0 + vec2(fireTime * 9.0, -fireTime * 7.0));

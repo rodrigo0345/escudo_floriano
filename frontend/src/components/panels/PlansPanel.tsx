@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { plansApi, simulationsApi, type Plan, type PlanSummary, type PlanStatus, type Simulation } from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
+import { OrgLogo } from '@/domain/organizationLogos';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
@@ -404,9 +405,10 @@ export function PlansPanel() {
                 <h3>Todas as ações ({open.actions.length}), por organização</h3>
                 {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
                   <div key={organizationId} className={styles.actionGroup}>
-                    <div className={styles.orgHead}>
+                    <div className={styles.orgHead} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={24} inline />
                       <b>{orgName(organizationId)}</b>
-                      <small className="note">{actions.length} ação(ões)</small>
+                      <small className="note" style={{ marginLeft: 'auto' }}>{actions.length} ação(ões)</small>
                     </div>
                     {actions.map((a) => (
                       <Row key={a.id}>

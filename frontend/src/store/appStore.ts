@@ -62,6 +62,8 @@ export interface AppState {
   baseLayer: BaseLayer;
   probMode: boolean;
   smokeEnabled: boolean;
+  /** Smoke wisps, embers and ash over the burned ground after the flames pass (on by default). */
+  aftermathEnabled: boolean;
   windEnabled: boolean;
   /** The photoreal 3D city (local tiles). Off by default: nothing is loaded until the operator turns it on. */
   cityEnabled: boolean;
@@ -106,6 +108,7 @@ export interface AppState {
   setBaseLayer: (layer: BaseLayer) => void;
   setProbMode: (on: boolean) => void;
   setSmokeEnabled: (on: boolean) => void;
+  setAftermathEnabled: (on: boolean) => void;
   setCityEnabled: (on: boolean) => void;
   setCitySource: (source: CitySource) => void;
   setCityKey: (key: string) => void;
@@ -147,6 +150,7 @@ export const useAppStore = create<AppState>((set) => ({
   baseLayer: 'satellite',
   probMode: false,
   smokeEnabled: true,
+  aftermathEnabled: true,
   windEnabled: false,
   cityEnabled: false,
   citySource: 'live',
@@ -208,6 +212,7 @@ export const useAppStore = create<AppState>((set) => ({
   setBaseLayer: (baseLayer) => set({ baseLayer }),
   setProbMode: (probMode) => set({ probMode }),
   setSmokeEnabled: (smokeEnabled) => set({ smokeEnabled }),
+  setAftermathEnabled: (aftermathEnabled) => set({ aftermathEnabled }),
   setCityEnabled: (cityEnabled) => set({ cityEnabled }),
   setCitySource: (citySource) => set({ citySource }),
   setCityKey: (cityKey) => set({ cityKey }),

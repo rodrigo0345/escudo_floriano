@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import type * as THREE from 'three';
 
 import { compass } from '@/domain/georef';
 import { useEngine, useWorld } from '@/engine/EngineContext';
 import { Picker } from '@/engine/picking';
+import type { VehicleActor } from '@/engine/vehicles/vehicleActor';
 import { useAppStore } from '@/store/appStore';
 
 export interface Tooltip {
@@ -22,6 +24,17 @@ export interface TerrainReadout {
 
 const HOVER_THROTTLE_MS = 60;
 const CLICK_SLOP_PX = 4;
+/** How long a vehicle's tag stays after the cursor leaves it. */
+const UNHOVER_GRACE_MS = 250;
+
+/** The vehicle a picked object belongs to (any mesh of its model, or its tag), found by walking up to the object that carries `userData.actor`. */
+function actorOf(object: THREE.Object3D | undefined): VehicleActor | null {
+  for (let o: THREE.Object3D | null | undefined = object; o; o = o.parent) {
+    const actor = (o.userData as { actor?: VehicleActor }).actor;
+    if (actor) return actor;
+  }
+  return null;
+}
 
 /**
  * Pointer interaction on the map: hover tooltips for facilities/places/water points, a terrain
@@ -39,6 +52,30 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
     const canvas = engine.canvas;
     let downAt: [number, number] | null = null;
     let lastMove = 0;
+    let hovered: VehicleActor | null = null;
+    let unhoverTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // the vehicle under the cursor shows its tag; it stays a moment after the cursor leaves it, so a jittery pointer does not make the tag flicker
+    const unhover = () => {
+      clearTimeout(unhoverTimer);
+      unhoverTimer = undefined;
+      if (hovered) hovered.hovered = false;
+      hovered = null;
+    };
+    const hoverActor = (actor: VehicleActor | null) => {
+      if (actor === hovered) {
+        clearTimeout(unhoverTimer);
+        unhoverTimer = undefined;
+        return;
+      }
+      if (actor) {
+        unhover();
+        hovered = actor;
+        actor.hovered = true;
+      } else if (hovered && unhoverTimer === undefined) {
+        unhoverTimer = setTimeout(unhover, UNHOVER_GRACE_MS);
+      }
+    };
 
     const onDown = (e: PointerEvent) => {
       downAt = [e.clientX, e.clientY];
@@ -66,7 +103,11 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
       const bounds = canvas.getBoundingClientRect();
       engine.picker.setPointThreshold(Math.max(1.6, engine.camera.position.distanceTo(engine.controls.target) * 0.012)); // ~8 px in world units
 
-      const text = Picker.tooltipFor(engine.picker.pick(e.clientX, e.clientY, bounds, world.pickables));
+      const picked = engine.picker.pick(e.clientX, e.clientY, bounds, world.pickables);
+      const actor = actorOf(picked?.object);
+      hoverActor(actor);
+      // a vehicle shows its own status tag instead of the tooltip
+      const text = actor ? null : Picker.tooltipFor(picked);
       setTooltip(text ? { text, x: e.clientX + 12, y: e.clientY + 12 } : null);
 
       const hit = engine.picker.pick(e.clientX, e.clientY, bounds, [world.terrain.mesh]);
@@ -89,7 +130,10 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
       });
     };
 
-    const onLeave = () => setTooltip(null);
+    const onLeave = () => {
+      setTooltip(null);
+      unhover();
+    };
 
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointerup', onUp);
@@ -100,6 +144,7 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerleave', onLeave);
+      unhover();
     };
   }, [engine, world]);
 

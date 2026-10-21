@@ -22,12 +22,15 @@ import { CardGrid, StatCard } from '@/components/common/StatCard';
 import {
   CAPABILITY_LABEL,
   EQUIPMENT_LABEL,
+  ORG_COLOR,
   ORG_TYPE_LABEL,
   ROLE_LABEL,
   STATION_KIND_LABEL,
   VEHICLE_TYPE_LABEL,
   enumEntries,
 } from '@/domain/resourceLabels';
+import { OrgLogo } from '@/domain/organizationLogos';
+import { VehicleIcon } from '@/domain/vehicleIcons';
 import { VEHICLE_CATALOG, catalogFor, templateToInput, type VehicleTemplate } from '@/domain/vehicleCatalog';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
@@ -112,10 +115,16 @@ export function ResourcesView() {
               setCreatingOrg(false);
             }}
           >
-            <b>{o.shortName ?? o.name}</b>
-            <small>
-              {ORG_TYPE_LABEL[o.type]} · {vehicles.filter((v) => v.organizationId === o.id).length} veículos
-            </small>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <OrgLogo org={o} size={32} />
+              <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                <b>{o.shortName ?? o.name}</b>
+                <br />
+                <small>
+                  {ORG_TYPE_LABEL[o.type]} · {vehicles.filter((v) => v.organizationId === o.id).length} veículos
+                </small>
+              </div>
+            </div>
           </button>
         ))}
         <button className="primary" onClick={() => setCreatingOrg(true)}>
@@ -149,6 +158,7 @@ export function ResourcesView() {
         ) : org ? (
           <>
             <div className={styles.head}>
+              <OrgLogo org={org} size={44} style={{ marginRight: '14px' }} />
               <h2>{org.name}</h2>
               <span className={styles.chip}>{ORG_TYPE_LABEL[org.type]}</span>
               {loading ? <small>a atualizar…</small> : null}
@@ -213,7 +223,10 @@ function OrgEditor({
   }, [org]);
   return (
     <div className={styles.editor}>
-      <h3>{org ? 'Dados da corporação' : 'Nova corporação'}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <OrgLogo org={d} size={36} />
+        <h3>{org ? 'Dados da corporação' : 'Nova corporação'}</h3>
+      </div>
       <div className={styles.grid}>
         <Field label="Nome" wide>
           <input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} />
@@ -314,9 +327,19 @@ function VehiclesSection({ org, list, stations }: { org: Organization; list: Veh
           {list.map((v) => (
             <tr key={v.id}>
               <td>
-                <b>{v.callsign}</b> {v.inService === false ? <span className={styles.chip}>fora de serviço</span> : null}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <VehicleIcon type={v.type} size={22} color={ORG_COLOR[org.type] ?? '#ff3b3b'} />
+                  <div>
+                    <b>{v.callsign}</b> {v.inService === false ? <span className={styles.chip}>fora de serviço</span> : null}
+                  </div>
+                </div>
               </td>
-              <td>{VEHICLE_TYPE_LABEL[v.type]}</td>
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <VehicleIcon type={v.type} size={16} color="var(--muted, #8a94a0)" />
+                  <span>{VEHICLE_TYPE_LABEL[v.type]}</span>
+                </div>
+              </td>
               <td>{stations.find((s) => s.id === v.stationId)?.name ?? '—'}</td>
               <td className={styles.num}>
                 {v.minimumCrew ?? '—'}–{v.crewCapacity}
@@ -392,7 +415,10 @@ function VehicleEditor({
 
   return (
     <div className={styles.editor}>
-      <h3>{initial.id ? `Editar ${initial.draft.callsign}` : 'Novo veículo'}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+        <VehicleIcon type={d.type} size={28} color={ORG_COLOR[org.type] ?? '#ff3b3b'} />
+        <h3 style={{ margin: 0 }}>{initial.id ? `Editar ${initial.draft.callsign}` : 'Novo veículo'}</h3>
+      </div>
       <Field label="Modelo do catálogo (preenche as especificações)" wide>
         <select value={tpl?.key ?? ''} onChange={(e) => applyTemplate(e.target.value)}>
           <option value="">— manual —</option>
@@ -425,13 +451,16 @@ function VehicleEditor({
           <input value={d.plate ?? ''} onChange={(e) => set('plate', e.target.value || undefined)} />
         </Field>
         <Field label="Tipo">
-          <select value={d.type} onChange={(e) => set('type', e.target.value as VehicleInput['type'])}>
-            {enumEntries(VEHICLE_TYPE_LABEL).map(([k, l]) => (
-              <option key={k} value={k}>
-                {l}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <VehicleIcon type={d.type} size={22} color={ORG_COLOR[org.type] ?? '#ff3b3b'} />
+            <select style={{ flex: 1 }} value={d.type} onChange={(e) => set('type', e.target.value as VehicleInput['type'])}>
+              {enumEntries(VEHICLE_TYPE_LABEL).map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </div>
         </Field>
         <Field label="Sigla (typeCode)">
           <input value={d.typeCode ?? ''} onChange={(e) => set('typeCode', e.target.value || undefined)} />

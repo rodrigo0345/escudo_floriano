@@ -5,13 +5,13 @@ import type { Georef } from '@/domain/georef';
 import { ORG_COLOR, VEHICLE_STATUS_LABEL } from '@/domain/resourceLabels';
 
 import type { Pickable } from '../picking';
+import { spreadPositions } from '../vehicles/declutter';
 import type { Activity } from '../vehicles/statusTag';
 import { VehicleActor } from '../vehicles/vehicleActor';
 import { modelClassOf } from '../vehicles/vehicleModels';
 
-/** Parked vehicles are drawn only within this distance of the camera (world units, 1 = 10 m), and their tags closer still: a station's fleet when you look at it. */
+/** Parked vehicles are drawn only within this distance of the camera (world units, 1 = 10 m): a station's fleet when you look at it. */
 const PARKED_VISIBLE = 160;
-const PARKED_TAG_VISIBLE = 70;
 /** Gap between parked vehicles (m) in the station's yard. */
 const BAY_M = 9;
 /** Parked vehicles may grow less than moving ones, so a full yard does not merge into one blob. */
@@ -21,6 +21,8 @@ interface Entry {
   vehicle: Vehicle;
   actor: VehicleActor;
   base: THREE.Vector3;
+  /** Where it is drawn this frame (the base, lifted for aircraft and spread apart from others at the same point). */
+  pos: THREE.Vector3;
   heading: number;
   activity: Activity;
   org: string;
@@ -35,7 +37,6 @@ interface Entry {
 export class FleetLayer {
   readonly group = new THREE.Group();
   private entries: Entry[] = [];
-  private readonly tmp = new THREE.Vector3();
 
   constructor(private readonly geo: Georef) {}
 
@@ -73,6 +74,7 @@ export class FleetLayer {
         vehicle: v,
         actor,
         base,
+        pos: base.clone(),
         heading,
         activity,
         org: org?.shortName ?? org?.name ?? '',
@@ -93,16 +95,25 @@ export class FleetLayer {
 
   update(camera: THREE.PerspectiveCamera, timeS: number): void {
     const geo = this.geo;
+    // dispatched vehicles reported at one point are spread out (parked ones already stand in their bays)
+    const moving = this.entries.filter((e) => !e.parked);
+    for (const e of moving) {
+      e.pos.copy(e.base);
+      if (e.actor.air) e.pos.y += 200 / geo.unit;
+    }
+    spreadPositions(
+      moving.map((e) => ({ id: e.vehicle.id as string, pos: e.pos, footprint: e.actor.footprintAt(e.pos, camera, geo.unit), air: e.actor.air })),
+      geo,
+    );
     for (const e of this.entries) {
       const { actor } = e;
-      const distance = camera.position.distanceTo(e.base);
-      const show = !e.parked || distance < PARKED_VISIBLE;
+      const show = !e.parked || camera.position.distanceTo(e.base) < PARKED_VISIBLE;
       actor.group.visible = show;
-      actor.tag.sprite.visible = show && (!e.parked || distance < PARKED_TAG_VISIBLE);
+      // the status tag only while the cursor is on the vehicle
+      actor.tag.sprite.visible = show && actor.hovered;
       actor.tag.setCompact(e.parked);
       if (!show) continue;
-      const pos = this.tmp.copy(e.base);
-      if (actor.air && !e.parked) pos.y += 200 / geo.unit;
+      const pos = e.parked ? e.pos.copy(e.base) : e.pos;
       actor.place(pos, e.heading, camera, e.parked ? PARKED_MAX_ENLARGE : undefined);
       actor.flash(timeS, e.activity === 'en_route' || e.activity === 'attacking' || e.activity === 'traffic' || e.activity === 'medical' || e.activity === 'ordered');
       actor.spin(timeS);
@@ -112,6 +123,7 @@ export class FleetLayer {
           callsign: e.vehicle.callsign,
           org: e.org,
           orgColor: e.orgColor,
+          vehicleType: e.vehicle.type,
           activity: e.activity,
           water: water?.capacityL ? (water.levelL ?? water.capacityL) / water.capacityL : undefined,
           fuel: e.vehicle.state?.fuelPct != null ? e.vehicle.state.fuelPct / 100 : undefined,
@@ -123,8 +135,11 @@ export class FleetLayer {
     }
   }
 
+  /** The visible vehicles, plus the tag of a hovered one so the cursor can rest on the tag without it disappearing. */
   get pickables(): Pickable[] {
-    return this.entries.filter((e) => e.actor.group.visible).map((e) => e.actor.group as Pickable);
+    return this.entries
+      .filter((e) => e.actor.group.visible)
+      .flatMap((e) => (e.actor.tag.sprite.visible ? [e.actor.group, e.actor.tag.sprite] : [e.actor.group]) as Pickable[]);
   }
 }
 

@@ -187,15 +187,8 @@ export class PhotorealLayer {
     this.group.add(tiles.group);
 
     // photographic textures already carry their lighting: an unlit material shows them true and is cheaper than a lit one; it also chars where the fire burned
-    tiles.addEventListener('load-model', (event) => {
-      (event as unknown as { scene: THREE.Object3D }).scene.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        const material = mesh.material as THREE.MeshStandardMaterial | undefined;
-        if (!mesh.isMesh || !material?.isMeshStandardMaterial) return;
-        mesh.material = this.burnableMaterial(material.map);
-        material.dispose(); // the texture stays: the new material owns it now
-      });
-    });
+    tiles.addEventListener('load-model', (event) => this.makeBurnable((event as unknown as { scene: THREE.Object3D }).scene));
+    tiles.forEachLoadedModel((scene: THREE.Object3D) => this.makeBurnable(scene));
     tiles.addEventListener('tiles-load-end', () => {
       if (source === 'live') this.updateLiveAttribution(tiles);
       if (!this.reportedVisible) {
@@ -209,11 +202,27 @@ export class PhotorealLayer {
   }
 
   /**
+   * Swaps every textured material of a tile for the burnable one. Google's tiles are unlit (KHR_materials_unlit), so the loader gives MeshBasicMaterial, not Standard:
+   * any material with a photo (Basic, Standard, Physical) is taken.
+   */
+  private makeBurnable(scene: THREE.Object3D): void {
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      const material = mesh.material as THREE.MeshBasicMaterial | undefined;
+      if (!mesh.isMesh || !material || Array.isArray(material) || !material.map || material.userData.burnable) return;
+      mesh.material = this.burnableMaterial(material.map, material.color);
+      material.dispose(); // the texture stays: the new material owns it now
+    });
+  }
+
+  /**
    * The tile's photo, charred where the simulation burned (same shader and same uniforms as the terrain): trees, roofs and fields in the city turn to charcoal, soot or
    * ash by land-cover type as the fire passes, and the ground glows under the flames. The grid position comes from the fragment's world position.
    */
-  private burnableMaterial(map: THREE.Texture | null): THREE.MeshBasicMaterial {
-    const material = new THREE.MeshBasicMaterial({ map, side: THREE.FrontSide });
+  private burnableMaterial(map: THREE.Texture, color: THREE.Color): THREE.MeshBasicMaterial {
+    const material = new THREE.MeshBasicMaterial({ map, color, side: THREE.FrontSide });
+    material.userData.burnable = true;
+    material.customProgramCacheKey = () => 'burn-city'; // every tile shares one compiled program
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.burn);
       shader.vertexShader = `varying vec3 vBurnWorld;\n${shader.vertexShader.replace(

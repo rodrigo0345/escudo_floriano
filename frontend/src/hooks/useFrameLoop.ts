@@ -50,6 +50,14 @@ export function useFrameLoop(): void {
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
         const smokeVisM = groundVisibilityFromSmoke(s.smokeInfo);
         world.flames.update(tf, ts / 1000, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio(), w?.windKmh ?? 0, w?.windFromDeg ?? 0);
+        // the aftermath cloud is built once per simulation, the first frame that shows it
+        if (world.aftermath.runId !== run.id && s.data) {
+          world.aftermath.setRun(run.id, { ign: run.ign, dur: s.data.burnMinutes, width: run.gridWidth, height: run.gridHeight });
+        }
+        world.aftermath.points.visible = s.aftermathEnabled;
+        if (s.aftermathEnabled) {
+          world.aftermath.update(tf, ts / 1000, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio(), w?.windKmh ?? 0, w?.windFromDeg ?? 0);
+        }
 
         let effectivePrecipMmH = w?.precipitationMmH ?? 0;
         let effectiveCloudCoverPct = w?.cloudCoverPct ?? 0;

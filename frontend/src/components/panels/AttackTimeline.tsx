@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import type { LatLon, Plan } from '@/api';
 import { ATTACK_KINDS, attacksOf, personnelByMinute, type AttackKind, type AttackRow } from '@/domain/planAttacks';
+import { OrgLogo } from '@/domain/organizationLogos';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
@@ -174,9 +175,12 @@ function AttackDetail({ row, horizon, seeWorking }: { row: AttackRow; horizon: n
       <b>{row.title}</b>
       <dl>
         <dt>Quem</dt>
-        <dd>
-          {row.units} · {row.orgName}
-          {row.reinforcement ? ' · reforço' : ''}
+        <dd style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <OrgLogo org={row.orgName} size={18} inline />
+          <span>
+            {row.units} · {row.orgName}
+            {row.reinforcement ? ' · reforço' : ''}
+          </span>
         </dd>
         {row.fromStation ? (
           <>

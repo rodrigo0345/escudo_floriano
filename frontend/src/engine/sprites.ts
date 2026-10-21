@@ -43,26 +43,62 @@ export function textSprite(text: string, options: TextSpriteOptions = {}): THREE
   return sprite;
 }
 
-/** A square code badge (one to three letters on a colored plate) for facilities and vehicles: legible at a glance, no pictograms. */
-export function badgeSprite(code: string, color: string): THREE.Sprite {
+const BADGE_IMG_CACHE = new Map<string, HTMLImageElement>();
+
+/** A square badge (with official organization logo or one to three letters on a colored plate) for facilities and vehicles. */
+export function badgeSprite(code: string, color: string, logoUrl?: string | null): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.roundRect(8, 8, 112, 112, 12);
-  ctx.fill();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = '#0b0e12';
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = `700 ${code.length > 2 ? 44 : 58}px system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(code, 64, 68);
+
+  const renderBadge = (img?: HTMLImageElement) => {
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 112, 112, 16);
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#0b0e12';
+    ctx.stroke();
+
+    if (img && img.complete && img.naturalWidth > 0) {
+      // Draw official crest / logo neatly centered
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(16, 16, 96, 96, 12);
+      ctx.clip();
+      ctx.drawImage(img, 16, 16, 96, 96);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${code.length > 2 ? 44 : 58}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(code, 64, 68);
+    }
+  };
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+
+  if (logoUrl) {
+    const cached = BADGE_IMG_CACHE.get(logoUrl);
+    if (cached && cached.complete) {
+      renderBadge(cached);
+    } else {
+      renderBadge();
+      const img = new Image();
+      img.src = logoUrl;
+      img.onload = () => {
+        BADGE_IMG_CACHE.set(logoUrl, img);
+        renderBadge(img);
+        tex.needsUpdate = true;
+      };
+    }
+  } else {
+    renderBadge();
+  }
+
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
   sprite.scale.set(BADGE_SIZE, BADGE_SIZE, 1);
   sprite.renderOrder = 21;

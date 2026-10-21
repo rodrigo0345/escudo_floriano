@@ -14,6 +14,7 @@ import {
   type Vehicle,
 } from '@/api';
 import { templateForVehicle, templateToInput } from '@/domain/vehicleCatalog';
+import { createDefaultHelicopters } from '@/domain/defaultHelicopters';
 
 /** Every organization's registered resources (what the "Recursos" tab edits and the "Simulação" tab dispatches). */
 interface ResourcesState {
@@ -56,7 +57,17 @@ export const useResourcesStore = create<ResourcesState>((set, get) => ({
         personnelApi.all(),
         equipmentApi.all(),
       ]);
-      set({ organizations, stations, vehicles, pools, equipment, loading: false, loaded: true });
+      const allVehicles = [...vehicles];
+      const existingHelis = allVehicles.filter((v) => v.type === 'helicopter');
+      if (existingHelis.length < 2) {
+        const defaults = createDefaultHelicopters(stations, organizations);
+        for (const def of defaults) {
+          if (!allVehicles.some((v) => v.callsign === def.callsign || v.id === def.id)) {
+            allVehicles.push(def);
+          }
+        }
+      }
+      set({ organizations, stations, vehicles: allVehicles, pools, equipment, loading: false, loaded: true });
     } catch (e) {
       set({ loading: false, error: describe(e) });
     }

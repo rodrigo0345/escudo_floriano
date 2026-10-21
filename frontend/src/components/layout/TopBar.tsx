@@ -1,3 +1,4 @@
+import { Icon } from '@/components/common/Icon';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { formatDateTime } from '@/domain/weather';
 import { useAppStore } from '@/store/appStore';
@@ -98,7 +99,7 @@ export function TopBar() {
       </div>
       <div className={styles.actionsGroup}>
         <button className={styles.helpLink} onClick={() => setHelpOpen(true)} title="Atalhos de teclado (?)">
-          ⌨️ Atalhos
+          <Icon name="keyboard" /> Atalhos
         </button>
         <a className={styles.apiLink} href="/swagger" target="_blank" rel="noopener noreferrer" title="Documentação interativa da API (Swagger)">
           API ↗

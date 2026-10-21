@@ -1,5 +1,6 @@
 import type { Facility, FacilityKind, WaterPoint, WaterPointKind } from '@/api';
 import { Row } from '@/components/common/StatCard';
+import { OrgLogo } from '@/domain/organizationLogos';
 import { FACILITY_KIND_NAME } from '@/engine/layers/assetLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import { useAppStore } from '@/store/appStore';
@@ -22,8 +23,9 @@ export function AssetsPanel() {
         const list = byKind.get(kind) ?? [];
         return (
           <section key={kind}>
-            <h3>
-              {FACILITY_KIND_NAME[kind]} ({list.length})
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <OrgLogo kind={kind} size={20} inline />
+              <span>{FACILITY_KIND_NAME[kind]} ({list.length})</span>
             </h3>
             {list.length ? (
               list.map((f) => (
