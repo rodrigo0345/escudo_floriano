@@ -8,12 +8,12 @@ namespace FireTrace.Core.Models.Operations;
 /// <summary>Estado de um meio num instante da simulação.</summary>
 public sealed record UnitState(
     string UnitId,
-    ResourceType ResourceType,
+    DispatchStatus Status,
+    ResourceType? ResourceType = null,
     string? Callsign = null,
     string? OrganizationId = null,
     string? DispatchId = null,
     Responsibility? Responsibility = null,
-    DispatchStatus Status = DispatchStatus.Ordered,
     LatLon? Position = null,
     Target? Target = null,
     double? EtaMinutes = null,
