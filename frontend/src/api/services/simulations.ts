@@ -10,6 +10,8 @@ import type {
   SimulationSummary,
   Smoke,
   SpreadVectorCollection,
+  UnitStateList,
+  UnitTrackResponse,
   WeatherSeries,
 } from '../types';
 
@@ -107,6 +109,18 @@ export const simulationsApi = {
     const { data } = await http.get<PlaceAccessTimeline>(`/simulations/${simulationId}/place-access`, {
       params: { origin, stepMin },
     });
+    return data;
+  },
+
+  /** Every unit the simulation's plan puts to work, at minute `tMin` (empty for a simulation that applied no plan). */
+  units: async (simulationId: string, tMin: number): Promise<UnitStateList> => {
+    const { data } = await http.get<UnitStateList>(`/simulations/${simulationId}/units`, { params: { tMin } });
+    return data;
+  },
+
+  /** One unit's position and state minute by minute, and its events (departure, arrival, empty tank, refill, rest, return). */
+  unitTrack: async (simulationId: string, unitId: string, stepMin = 1): Promise<UnitTrackResponse> => {
+    const { data } = await http.get<UnitTrackResponse>(`/simulations/${simulationId}/units/${encodeURIComponent(unitId)}/track`, { params: { stepMin } });
     return data;
   },
 

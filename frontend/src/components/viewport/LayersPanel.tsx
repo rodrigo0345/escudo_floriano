@@ -25,20 +25,52 @@ const ELEVATION_GRADIENT = 'linear-gradient(90deg,#669e66,#9ec273,#dbd68c,#cca67
 const SMOKE_LEGEND = ['neblina', 'reduzida', 'fraca', 'densa'];
 const WIND_LEGEND = [5, 15, 30, 50].map((kmh) => ({ label: `${kmh} km/h`, color: windColorCss(kmh) }));
 
-/** 3D/2D switch, base-layer switch, smoke overlay toggle, the legend for the active base layer, and water-point filters. */
+const OPEN_KEY = 'firetrace.layersOpen';
+
+/** Whether the layers panel was left open last time; closed by default so the map has the room (storage can be blocked: then closed). */
+function readOpen(): boolean {
+  try {
+    return window.localStorage.getItem(OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** 3D/2D switch, base-layer switch, and a "Camadas" button that opens the panel: smoke, wind and plan overlays, the legend for the active base layer, and water-point filters. */
 export function LayersPanel() {
+  const [open, setOpen] = useState(readOpen);
+  const toggle = () =>
+    setOpen((was) => {
+      try {
+        window.localStorage.setItem(OPEN_KEY, was ? '0' : '1');
+      } catch {
+        /* a blocked storage only means the choice is not remembered */
+      }
+      return !was;
+    });
+
   return (
     <div className={styles.layers}>
       <div className={styles.layerControls}>
         <ViewModeSwitch />
         <BaseLayerSwitch />
+        <button type="button" className={`${styles.layersToggle} ${open ? styles.layersToggleOn : ''}`} onClick={toggle} aria-expanded={open} title={open ? 'Esconder as camadas' : 'Mostrar as camadas'}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 3 3 8l9 5 9-5-9-5Z" />
+            <path d="m3 12 9 5 9-5" />
+            <path d="m3 16 9 5 9-5" />
+          </svg>
+          Camadas
+        </button>
       </div>
-      <div className={styles.layerPanel}>
-        <WaterBox />
-        <OverlayBox />
-        <PlanBox />
-        <BaseLayerLegend />
-      </div>
+      {open ? (
+        <div className={styles.layerPanel}>
+          <WaterBox />
+          <OverlayBox />
+          <PlanBox />
+          <BaseLayerLegend />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,8 +1,13 @@
 import { useEffect, useRef } from 'react';
 
 import { simulationsApi, type PerimeterCollection, type Smoke, type SpreadVectorCollection } from '@/api';
+import { lineStringCoordinates } from '@/domain/geojson';
+import { loadBackendTracks } from '@/domain/backendUnits';
+import { tracksFromPlan } from '@/domain/planUnits';
+import { ORG_COLOR } from '@/domain/resourceLabels';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
+import { useResourcesStore } from '@/store/resourcesStore';
 
 const DETAIL_DEBOUNCE_MS = 160;
 
@@ -78,8 +83,44 @@ export function useWorldSync(): void {
     const where = new Map<string, { lat: number; lon: number }>();
     for (const p of locationData?.places ?? []) where.set(p.id as string, p.position);
     for (const f of locationData?.facilities ?? []) where.set(f.id as string, f.position);
-    world.plan.setPlan(activePlan, where);
+    // a road closure names road ids: the layer needs their shape (forest tracks are not in the road layer, and are not closed by the agents)
+    const roadShape = (id: string) => {
+      const at = world.roads.indexById.get(id);
+      return at === undefined ? [] : lineStringCoordinates(world.roads.features[at].geometry);
+    };
+    world.plan.setPlan(activePlan, where, roadShape);
   }, [world, activePlan, locationData]);
+
+  // the plan's units: leave their station, follow the route the backend stored for them, work, and leave the map (see `domain/planUnits`)
+  const resourcesLoaded = useResourcesStore((s) => s.loaded);
+  const planUnitsOnMap = useRef(false);
+  useEffect(() => {
+    if (!resourcesLoaded) void useResourcesStore.getState().load();
+  }, [resourcesLoaded]);
+  useEffect(() => {
+    if (!world) return;
+    if (!activePlan || !run || !resourcesLoaded) {
+      if (planUnitsOnMap.current) {
+        world.units.clear(); // only what this effect drew: the rehearsal tab draws its own
+        planUnitsOnMap.current = false;
+      }
+      return;
+    }
+    const resources = useResourcesStore.getState();
+    const typeOf = (id: string) => resources.organizations.find((o) => o.id === id)?.type ?? 'other';
+    const nameOf = (id: string) => resources.organizations.find((o) => o.id === id)?.shortName ?? id;
+    let cancelled = false;
+    void (async () => {
+      // the backend simulates the units of a plan's what-if (route, arrival, water, refills, rest, return); only a server without that falls back to the plan's stored routes
+      const fromBackend = await loadBackendTracks(run.id, run, resources).catch(() => []);
+      if (cancelled) return;
+      world.units.setTracks(fromBackend.length ? fromBackend : tracksFromPlan(activePlan, run, resources), (id) => ORG_COLOR[typeOf(id)] ?? '#9aa0a8', nameOf);
+      planUnitsOnMap.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [world, activePlan, run?.id, resourcesLoaded]);
 
   // a new run invalidates cached per-minute detail
   useEffect(() => {

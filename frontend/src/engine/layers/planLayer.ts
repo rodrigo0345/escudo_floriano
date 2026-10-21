@@ -6,7 +6,7 @@ import type { Georef, WorldPoint } from '@/domain/georef';
 
 import type { Pickable } from '../picking';
 
-export type PlanKind = 'fire_line' | 'aerial_drop' | 'crew_deployment' | 'structure_protection' | 'evacuation' | 'safety';
+export type PlanKind = 'fire_line' | 'aerial_drop' | 'crew_deployment' | 'structure_protection' | 'evacuation' | 'safety' | 'road_closure' | 'traffic_control';
 
 export const PLAN_KINDS: Record<PlanKind, { label: string; color: string }> = {
   fire_line: { label: 'Linhas de fogo', color: '#ffd400' },
@@ -15,6 +15,8 @@ export const PLAN_KINDS: Record<PlanKind, { label: string; color: string }> = {
   structure_protection: { label: 'Defesa de edifícios', color: '#c07bff' },
   evacuation: { label: 'Evacuações', color: '#ff7a1a' },
   safety: { label: 'Vias de fuga, zonas seguras, vigias', color: '#ffffff' },
+  road_closure: { label: 'Cortes de estrada (laranja: emergência passa)', color: '#ff3b3b' },
+  traffic_control: { label: 'Controlo de trânsito', color: '#4da3ff' },
 };
 const KIND_ORDER = Object.keys(PLAN_KINDS) as PlanKind[];
 
@@ -23,6 +25,8 @@ const LINE_HALF_WIDTH = 2.5;
 const DROP_HALF_WIDTH = 4;
 const OUTLINE_HALF_WIDTH = 1.1;
 const ROUTE_HALF_WIDTH = 1;
+const CLOSURE_HALF_WIDTH = 1.7; // a little wider than the road it covers
+const EMERGENCY_PASSES = '#ff9f1a';
 const PLACE_RING_M = 160;
 const LIFT = 2.2;
 
@@ -136,7 +140,7 @@ function circleRing(lat: number, lon: number, radiusM: number, vertices = 20): L
 export class PlanLayer {
   readonly group = new THREE.Group();
   readonly pickables: Pickable[] = [];
-  readonly counts: Record<PlanKind, number> = { fire_line: 0, aerial_drop: 0, crew_deployment: 0, structure_protection: 0, evacuation: 0, safety: 0 };
+  readonly counts: Record<PlanKind, number> = { fire_line: 0, aerial_drop: 0, crew_deployment: 0, structure_protection: 0, evacuation: 0, safety: 0, road_closure: 0, traffic_control: 0 };
   private readonly kindGroups = new Map<PlanKind, THREE.Group>();
   private readonly hidden = new Set<PlanKind>();
   private readonly listeners = new Set<() => void>();
@@ -149,8 +153,11 @@ export class PlanLayer {
     return () => void this.listeners.delete(listener);
   }
 
-  /** `places` maps a place/facility id to where it is (a `structure_protection` effect names the place, not a shape). */
-  setPlan(plan: Plan | null, places: ReadonlyMap<string, { lat: number; lon: number }>): void {
+  /**
+   * `places` maps a place/facility id to where it is (a `structure_protection` effect names the place, not a shape);
+   * `roadGeometry` gives a road's `[lon, lat]` points by id (a `road_closure` action names roads, not a shape).
+   */
+  setPlan(plan: Plan | null, places: ReadonlyMap<string, { lat: number; lon: number }>, roadGeometry?: (id: string) => LonLat[]): void {
     this.clear();
     if (!plan) return;
     const buckets = new Map<PlanKind, Bucket>(KIND_ORDER.map((k) => [k, { ribbons: new MeshAcc(), fills: new MeshAcc(), markers: { positions: [], colors: [], tips: [] } }]));
@@ -170,12 +177,12 @@ export class PlanLayer {
         if (rings.length) this.counts[kind]++;
       }
     };
-    const marker = (lat: number, lon: number, color: THREE.Color, tip: string) => {
-      const m = buckets.get('safety')!.markers;
+    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind = 'safety') => {
+      const m = buckets.get(kind)!.markers;
       m.positions.push(...this.geo.world(lat, lon, 3));
       m.colors.push(color.r, color.g, color.b);
       m.tips.push(tip);
-      this.counts.safety++;
+      this.counts[kind]++;
     };
     const placeRing = (id: string | undefined): LonLat[] | null => {
       const at = id ? places.get(id) : undefined;
@@ -224,6 +231,21 @@ export class PlanLayer {
           default:
             break; // road closures, backfires...: nothing to draw yet
         }
+      }
+      if (action.type === 'road_closure') {
+        // orange where emergency vehicles may still pass (the closure's exemption), red where nobody does
+        const color = new THREE.Color((action.exemptions ?? []).includes('emergency_vehicles') ? EMERGENCY_PASSES : PLAN_KINDS.road_closure.color);
+        let drawn = false;
+        for (const id of action.roadIds ?? []) {
+          const points = roadGeometry?.(id) ?? [];
+          if (points.length < 2) continue;
+          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, 0.95, tip);
+          drawn = true;
+        }
+        if (drawn) this.counts.road_closure++;
+      }
+      if (action.type === 'traffic_control_point' && action.position) {
+        marker(action.position.lat, action.position.lon, new THREE.Color(PLAN_KINDS.traffic_control.color), tip, 'traffic_control');
       }
       if (action.type === 'fire_attack') {
         const white = new THREE.Color(PLAN_KINDS.safety.color);

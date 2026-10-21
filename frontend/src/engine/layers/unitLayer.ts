@@ -16,6 +16,8 @@ interface Entry {
   sprite: THREE.Sprite;
   org: string;
   exposure: CrewExposure | undefined;
+  /** The track says how much water the unit has (so the tooltip may). */
+  hasWater: boolean;
 }
 
 /** The dispatched vehicles of the operation replay, drawn on the same terrain as everything else and positioned from the planner's per-minute tracks. */
@@ -32,7 +34,7 @@ export class UnitLayer {
       sprite.scale.set(SIZE, SIZE, 1);
       sprite.visible = false;
       this.group.add(sprite);
-      return { track, sprite, org: orgName(track.unit.orgId), exposure: exposures.find((e) => e.vehicleId === track.unit.id) };
+      return { track, sprite, org: orgName(track.unit.orgId), exposure: exposures.find((e) => e.vehicleId === track.unit.id), hasWater: track.waterL.some((v) => v > 0) };
     });
   }
 
@@ -47,7 +49,7 @@ export class UnitLayer {
 
   /** Positions every unit at fractional minute `tf` (linear interpolation between the per-minute samples). */
   update(tf: number): void {
-    for (const { track: k, sprite, org, exposure } of this.entries) {
+    for (const { track: k, sprite, org, exposure, hasWater } of this.entries) {
       const last = k.lat.length - 1;
       const i = Math.min(last, Math.max(0, Math.floor(tf)));
       const j = Math.min(last, i + 1);
@@ -67,10 +69,12 @@ export class UnitLayer {
       sprite.position.set(...this.geo.world(lat, lon, 6));
       const crew = crewAt(k, exposure, tf);
       const cap = k.unit.air ? k.unit.bucketL : k.unit.waterL;
+      // water is shown when the track carries it (the backend's unit simulator and the rehearsal planner do; a unit rebuilt from a plan does not), fuel only where it is modelled
+      const modelled = k.unit.fuelL !== null;
       (sprite.userData as { tip?: string }).tip =
         `${k.unit.callsign} · ${org} · ${UNIT_PHASE_LABEL[phase]} · ${crew.people}/${k.unit.crew} pessoas${crew.casualties ? ` (${crew.casualties} baixas)` : ''}` +
-        (cap ? ` · água ${Math.round(k.waterL[i])}/${Math.round(cap)} L` : '') +
-        ` · combustível ${Math.round(k.fuelPct[i])}%`;
+        (hasWater && cap ? ` · água ${Math.round(k.waterL[i])}/${Math.round(cap)} L` : '') +
+        (modelled ? ` · combustível ${Math.round(k.fuelPct[i])}%` : '');
     }
   }
 

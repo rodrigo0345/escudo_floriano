@@ -11,11 +11,12 @@ const nf = (n: number) => n.toLocaleString('pt-PT');
 const ACTIONS_SHOWN = 40;
 
 type Stats = NonNullable<Simulation['stats']>;
-const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed'; label: string; unit: string }[] = [
+const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed' | 'crewCasualties'; label: string; unit: string }[] = [
   { key: 'burnedHa', label: 'Área ardida', unit: ' ha' },
   { key: 'crownFireHa', label: 'Fogo de copas', unit: ' ha' },
   { key: 'buildingsAffected', label: 'Edifícios atingidos', unit: '' },
   { key: 'populationExposed', label: 'População exposta', unit: '' },
+  { key: 'crewCasualties', label: 'Baixas de equipas', unit: '' }, // only a plan's what-if has it: the cost of the plan in people
 ];
 
 /** `-26%` against the baseline; green when the plan did better (lower is better for every metric here). */
@@ -141,7 +142,7 @@ export function PlansPanel() {
       {error ? <p className="note">Erro: {error}</p> : null}
       {!loading && !error && !plans.length ? (
         <p className="note">
-          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho cerca de um minuto depois de a base terminar; esta lista atualiza-se.
+          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho poucos minutos depois de a base terminar (avalia cada plano com o motor antes de o publicar); esta lista atualiza-se.
           Sem o serviço: <code>python -m firetrace_agents --simulation-id {baseId}</code>.
         </p>
       ) : null}

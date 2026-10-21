@@ -60,6 +60,10 @@ export type RoadStatusTimeline = Schemas['RoadStatusTimeline'];
 export type RoadStatusEntry = Schemas['RoadStatusEntry'];
 export type PlaceAccessTimeline = Schemas['PlaceAccessTimeline'];
 export type Smoke = Schemas['Smoke'];
+export type UnitStateList = Schemas['UnitStateList'];
+export type UnitState = Schemas['UnitState'];
+/** What `GET /simulations/{id}/units/{unitId}/track` returns (named apart from the dispatch planner's `UnitTrack`, the per-minute arrays the map replays). */
+export type UnitTrackResponse = Schemas['UnitTrack'];
 
 // Operational Resources
 export type Organization = Schemas['Organization'];
