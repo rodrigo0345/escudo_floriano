@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 
-/** Shared canvas → sprite helpers used by the facility, place, fire-milestone and water-point layers. */
+/**
+ * Shared canvas → sprite helpers used by the facility, place, fire-milestone and water-point layers. Labels and badges keep a constant size on screen
+ * (`sizeAttenuation: false`): readable from far away, and never a giant board in front of the camera close up. Scales are in screen units (≈ 1.2 × viewport height).
+ */
+const LABEL_HEIGHT = 0.02;
+const BADGE_SIZE = 0.022;
 
 export interface TextSpriteOptions {
   color?: string;
@@ -32,8 +37,8 @@ export function textSprite(text: string, options: TextSpriteOptions = {}): THREE
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  sprite.scale.set((textWidth / 64) * 7, 7, 1);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
+  sprite.scale.set((textWidth / 64) * LABEL_HEIGHT, LABEL_HEIGHT, 1);
   sprite.renderOrder = 20;
   return sprite;
 }
@@ -58,8 +63,8 @@ export function badgeSprite(code: string, color: string): THREE.Sprite {
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  sprite.scale.set(7, 7, 1);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
+  sprite.scale.set(BADGE_SIZE, BADGE_SIZE, 1);
   sprite.renderOrder = 21;
   return sprite;
 }

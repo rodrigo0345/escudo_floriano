@@ -49,6 +49,7 @@ export function useFrameLoop(): void {
 
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
         const smokeVisM = groundVisibilityFromSmoke(s.smokeInfo);
+        world.flames.update(tf, ts / 1000, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio(), w?.windKmh ?? 0, w?.windFromDeg ?? 0);
 
         let effectivePrecipMmH = w?.precipitationMmH ?? 0;
         let effectiveCloudCoverPct = w?.cloudCoverPct ?? 0;
@@ -161,7 +162,9 @@ export function useFrameLoop(): void {
         }
       }
       world.updateCity();
-      world.units.update(tf);
+      const viewportPx = engine.renderer.domElement.height / engine.renderer.getPixelRatio();
+      world.units.update(tf, engine.camera, ts / 1000, viewportPx);
+      world.fleet.update(engine.camera, ts / 1000);
     });
   }, [engine, world]);
 }

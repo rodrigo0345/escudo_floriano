@@ -62,6 +62,7 @@ export function useSimulationActions() {
       const run = await loadRunData(simulation);
       const { data } = state;
       world.terrain.setFireData(run.ign, run.gridWidth, run.gridHeight, data.burnMinutes, run.inten);
+      world.flames.setRun({ ign: run.ign, inten: run.inten, flags: run.flags, dur: data.burnMinutes, width: run.gridWidth, height: run.gridHeight });
       world.smoke.setRun({
         ign: run.ign,
         inten: run.inten,

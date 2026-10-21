@@ -19,6 +19,7 @@ export function useWorldLoader(): void {
       facilities: data.facilities,
       places: data.places,
       waterPoints: data.waterPoints,
+      landcover: data.landcover,
     });
     const { setHint, baseLayer } = useAppStore.getState();
     setHint('A carregar a ortofoto…');

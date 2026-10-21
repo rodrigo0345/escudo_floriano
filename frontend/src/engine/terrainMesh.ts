@@ -4,7 +4,7 @@ import type { LayerInfo, VegetationClass } from '@/api';
 import { elevationColor, hexToRgb } from '@/domain/colors';
 import type { Georef } from '@/domain/georef';
 
-import { FIRE_GLSL } from './fireShader';
+import { BURN_GLSL, createBurnUniforms, type BurnUniforms } from './burnShader';
 
 const loadImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -31,8 +31,8 @@ export async function loadHeightmap(url: string): Promise<Float32Array> {
 
 type BaseLayerName = 'satellite' | 'topo' | 'species';
 
-/** Height (world units, 1 = 10 m) the fire sheet floats above the ground over the 3D city, so it is not buried in the tiles' slightly different ground. */
-const OVERLAY_LIFT = 0.2;
+/** With the 3D city on, the terrain sinks this far (world units, 1 = 10 m) below it: it only shows where the city has no tiles (loading, or outside the copy), never fights it. */
+const CITY_SINK = 2;
 
 interface OrthoTile {
   x: number;
@@ -51,7 +51,7 @@ interface ShadeField {
 /**
  * The terrain mesh: satellite (DGT orthophoto tiles, or Sentinel-2 as a fallback mosaic),
  * topographic (hillshade + hypsometric color + contour lines) and species base layers, with
- * the fire state blended on top in the GPU shader (see `fireShader.ts`). Switching base layer
+ * the fire state blended on top in the GPU shader (see `burnShader.ts`). Switching base layer
  * only swaps which texture each tile material points at — the mesh itself never rebuilds.
  */
 export class TerrainMesh {
@@ -60,7 +60,10 @@ export class TerrainMesh {
   readonly geometry: THREE.BufferGeometry;
   private readonly chunks: THREE.Mesh[] = [];
   private readonly chunkGeometries: THREE.BufferGeometry[] = [];
-  private overlay = false;
+  /** The same terrain, writing only depth: overlays drawn over the 3D city are hidden by hills but not by buildings (see `SceneEngine.setOverlayPass`). */
+  readonly depthProxy = new THREE.Group();
+  /** What the fire did to the ground, shared with the city tiles (one upload, both surfaces char together). */
+  readonly burn: BurnUniforms;
   readonly attribution: string;
   readonly sourceLabel: string;
   readonly ready: Promise<void>;
@@ -72,19 +75,13 @@ export class TerrainMesh {
   private readonly speciesUrl?: string;
   private shadeField: ShadeField | null = null;
 
-  private readonly uniforms = {
-    fireData: { value: new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType) },
-    fireDim: { value: new THREE.Vector2(1, 1) },
-    fireTime: { value: -1 },
-    overlayOnly: { value: 0 },
-  };
 
   constructor(
     private readonly geo: Georef,
     layers: LayerInfo[],
     private readonly vegetationClasses: VegetationClass[],
   ) {
-    this.uniforms.fireData.value.needsUpdate = true;
+    this.burn = createBurnUniforms(geo.W, geo.H);
 
     const ortho: OrthoTile[] = layers
       .filter((l) => l.kind === 'orthophoto')
@@ -146,6 +143,7 @@ export class TerrainMesh {
       this.materials.push(this.makeMaterial(tex));
     }
     this.mesh = new THREE.Group();
+    const depthOnly = new THREE.MeshBasicMaterial({ colorWrite: false });
     tileGroups.forEach((list, t) => {
       const chunk = new THREE.BufferGeometry();
       chunk.setAttribute('position', position);
@@ -162,7 +160,9 @@ export class TerrainMesh {
       this.chunkGeometries.push(chunk);
       this.chunks.push(mesh);
       this.mesh.add(mesh);
+      this.depthProxy.add(new THREE.Mesh(chunk, depthOnly));
     });
+    this.depthProxy.visible = false;
 
     const sources = ortho.length
       ? ortho.map((t) => ({ idx: t.y * N + t.x, url: t.url }))
@@ -185,25 +185,15 @@ export class TerrainMesh {
   private makeMaterial(map: THREE.Texture): THREE.MeshStandardMaterial {
     const material = new THREE.MeshStandardMaterial({ map, roughness: 0.95, metalness: 0 });
     material.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, this.uniforms);
-      shader.fragmentShader = `uniform float overlayOnly;\n${shader.fragmentShader}`;
+      Object.assign(shader.uniforms, this.burn);
       shader.vertexShader = `varying vec2 vGUv;\n${shader.vertexShader.replace(
         '#include <uv_vertex>',
         '#include <uv_vertex>\n vGUv = uv;',
       )}`;
-      shader.fragmentShader = FIRE_GLSL + shader.fragmentShader
-        .replace(
-          '#include <map_fragment>',
-          `#include <map_fragment>
-          vec4 fireC = fireColor(vec2(vGUv.x, 1.0 - vGUv.y));
-          diffuseColor.rgb = mix(diffuseColor.rgb, fireC.rgb, fireC.a);
-          diffuseColor.a = mix(1.0, fireC.a, overlayOnly);`,
-        )
-        .replace(
-          '#include <emissivemap_fragment>',
-          `#include <emissivemap_fragment>
-          totalEmissiveRadiance += fireC.rgb * fireC.a * vGlow * 2.6;`,
-        );
+      // the ground chars where the fire passed and glows under the flames; the flames are 3D (FlameLayer)
+      shader.fragmentShader = `varying vec2 vGUv;\n${BURN_GLSL}\n${shader.fragmentShader}`
+        .replace('#include <map_fragment>', `#include <map_fragment>\n diffuseColor.rgb = burnSurface(diffuseColor.rgb, vec2(vGUv.x, 1.0 - vGUv.y));`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n totalEmissiveRadiance += burnGlow * 1.3;`);
     };
     return material;
   }
@@ -368,45 +358,30 @@ export class TerrainMesh {
     const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
     tex.magFilter = tex.minFilter = THREE.NearestFilter; // interpolation happens in the shader, only between cells that burn
     tex.needsUpdate = true;
-    this.uniforms.fireData.value.dispose();
-    this.uniforms.fireData.value = tex;
-    this.uniforms.fireDim.value.set(width, height);
+    this.burn.fireData.value.dispose();
+    this.burn.fireData.value = tex;
+    this.burn.fireDim.value.set(width, height);
+  }
+
+  /** How each cell chars (from the land-cover map; see `burnStyleTexture`). */
+  setBurnStyle(tex: THREE.Texture): void {
+    this.burn.burnStyle.value.dispose();
+    this.burn.burnStyle.value = tex;
   }
 
   /** Instant (minutes, may be fractional) to show the fire at; negative = no fire. */
   setFireTime(minutes: number): void {
-    this.uniforms.fireTime.value = minutes;
-    this.updateChunkVisibility();
+    this.burn.fireTime.value = minutes;
   }
 
   clearFire(): void {
-    this.uniforms.fireTime.value = -1;
-    this.updateChunkVisibility();
+    this.burn.fireTime.value = -1;
   }
 
-  // ------------------------------------------------------------ over the 3D city
-  /**
-   * With the photoreal city on, the terrain no longer shows imagery: it becomes a see-through sheet, a little above the ground, that draws only the fire (and its glow)
-   * on top of the city. It is depth-tested, so buildings still hide the flames behind them, and it is not drawn at all while there is no fire.
-   */
-  setOverlay(on: boolean): void {
-    this.overlay = on;
-    this.uniforms.overlayOnly.value = on ? 1 : 0;
-    this.mesh.position.y = on ? OVERLAY_LIFT : 0;
-    for (const material of this.materials) {
-      material.transparent = on;
-      material.depthWrite = !on;
-      material.polygonOffset = on;
-      material.polygonOffsetFactor = on ? -2 : 0;
-      material.polygonOffsetUnits = on ? -2 : 0;
-      material.needsUpdate = true;
-    }
-    this.updateChunkVisibility();
-  }
-
-  private updateChunkVisibility(): void {
-    const visible = !this.overlay || this.uniforms.fireTime.value >= 0;
-    if (this.mesh.visible !== visible) this.mesh.visible = visible;
+  // ------------------------------------------------------------ under the 3D city
+  /** With the photoreal city on, the terrain sinks just below it: it fills any gap in the tiles instead of leaving grey haze, and never z-fights with them. */
+  setCityMode(on: boolean): void {
+    this.mesh.position.y = on ? -CITY_SINK : 0;
   }
 
   dispose(): void {
