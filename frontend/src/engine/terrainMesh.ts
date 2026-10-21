@@ -4,7 +4,7 @@ import type { LayerInfo, VegetationClass } from '@/api';
 import { elevationColor, hexToRgb } from '@/domain/colors';
 import type { Georef } from '@/domain/georef';
 
-import { FIRE_GLSL } from './fireShader';
+import { BURN_GLSL, createBurnUniforms, type BurnUniforms } from './burnShader';
 
 const loadImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -51,7 +51,7 @@ interface ShadeField {
 /**
  * The terrain mesh: satellite (DGT orthophoto tiles, or Sentinel-2 as a fallback mosaic),
  * topographic (hillshade + hypsometric color + contour lines) and species base layers, with
- * the fire state blended on top in the GPU shader (see `fireShader.ts`). Switching base layer
+ * the fire state blended on top in the GPU shader (see `burnShader.ts`). Switching base layer
  * only swaps which texture each tile material points at — the mesh itself never rebuilds.
  */
 export class TerrainMesh {
@@ -84,7 +84,7 @@ export class TerrainMesh {
     layers: LayerInfo[],
     private readonly vegetationClasses: VegetationClass[],
   ) {
-    this.uniforms.fireData.value.needsUpdate = true;
+    this.burn = createBurnUniforms(geo.W, geo.H);
 
     const ortho: OrthoTile[] = layers
       .filter((l) => l.kind === 'orthophoto')
@@ -368,9 +368,15 @@ export class TerrainMesh {
     const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
     tex.magFilter = tex.minFilter = THREE.NearestFilter; // interpolation happens in the shader, only between cells that burn
     tex.needsUpdate = true;
-    this.uniforms.fireData.value.dispose();
-    this.uniforms.fireData.value = tex;
-    this.uniforms.fireDim.value.set(width, height);
+    this.burn.fireData.value.dispose();
+    this.burn.fireData.value = tex;
+    this.burn.fireDim.value.set(width, height);
+  }
+
+  /** How each cell chars (from the land-cover map; see `burnStyleTexture`). */
+  setBurnStyle(tex: THREE.Texture): void {
+    this.burn.burnStyle.value.dispose();
+    this.burn.burnStyle.value = tex;
   }
 
   /** Instant (minutes, may be fractional) to show the fire at; negative = no fire. */

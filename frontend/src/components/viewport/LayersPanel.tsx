@@ -27,12 +27,37 @@ const SMOKE_LEGEND = ['neblina', 'reduzida', 'fraca', 'densa'];
 const WIND_LEGEND = [5, 15, 30, 50].map((kmh) => ({ label: `${kmh} km/h`, color: windColorCss(kmh) }));
 
 /** 3D/2D switch, base-layer switch, smoke overlay toggle, the legend for the active base layer, and water-point filters. */
+const PANEL_OPEN_KEY = 'firetrace.layers.open';
+
+function readPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(PANEL_OPEN_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
 export function LayersPanel() {
+  // the panel folds away so the map can be examined unobstructed (remembered per browser)
+  const [open, setOpen] = useState(readPanelOpen);
+  const toggle = () => {
+    setOpen((o) => {
+      try {
+        localStorage.setItem(PANEL_OPEN_KEY, o ? '0' : '1');
+      } catch {
+        // no storage: the choice simply is not remembered
+      }
+      return !o;
+    });
+  };
   return (
     <div className={styles.layers}>
       <div className={styles.layerControls}>
         <ViewModeSwitch />
         <BaseLayerSwitch />
+        <button className={styles.panelToggle} onClick={toggle} title={open ? 'Esconder o painel de camadas' : 'Mostrar o painel de camadas'} aria-expanded={open}>
+          Camadas {open ? '▴' : '▾'}
+        </button>
       </div>
       <div className={styles.layerPanel}>
         <CityBox />
