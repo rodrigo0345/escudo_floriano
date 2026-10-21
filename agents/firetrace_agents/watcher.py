@@ -41,6 +41,7 @@ from typing import Any, Callable
 
 from .alternatives import HOUSE_ZONES_FOR_B, build_alternatives
 from .client import ApiProblem, FiretraceClient, NotReady
+from .commander import commander_from_env
 from .orchestrator import OrchestratorAgent
 from .revision import Reviser
 
@@ -112,6 +113,9 @@ class Watcher:
         s = self.settings
         self.reviser = Reviser(client, orchestrator, replan_minutes=s.replan_minutes, max_waves=s.max_waves, horizon_minutes=s.horizon_minutes,
                                stage_minutes=s.stage_minutes, concentration=s.concentration or None) if s.revise_selected else None
+        self.commander = commander_from_env()  # None = the rules choose the strategy (AGENTS_COMMANDER=llm turns the LLM commander on)
+        if self.commander is not None:
+            log.info("LLM commander on: %s", self.commander.llm.model if self.commander.llm else "no model/key, the rules decide")
 
     # -- one look ----------------------------------------------------------------
     def poll_once(self) -> list[str]:
@@ -167,7 +171,7 @@ class Watcher:
             self.orchestrator, self.client, sim_id, publish=True, house_zones=self.settings.building_zones or HOUSE_ZONES_FOR_B,
             horizon_minutes=self.settings.horizon_minutes, location_id=location_id, title_prefix="Plano", at_minute=at_minute,
             stage_minutes=self.settings.stage_minutes, concentration=self.settings.concentration or None,
-            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves, candidates=self.settings.candidates,
+            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves, candidates=self.settings.candidates, commander=self.commander,
         )
         for cycle in (result.cycle_a, result.cycle_b):
             for issue in (cycle.issues if cycle else []):

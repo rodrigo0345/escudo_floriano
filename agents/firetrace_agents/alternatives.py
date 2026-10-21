@@ -86,7 +86,10 @@ class Alternatives:
 def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str) -> Evaluation | None:
     """Publish ``plan``, run its what-if, read the result and delete the plan again. ``None`` if the what-if did not succeed."""
     started = time.monotonic()
-    created = client.create_plan(plan)
+    # The candidate is created only to be simulated and deleted: without `basis.simulationId` the backend skips the smoke and crew-exposure warnings it
+    # computes on the baseline (~30 s of a ~38 s create, measured on Penha) — the what-if below counts the crews the fire reaches itself, and gives the
+    # same result (measured: identical area, buildings and casualties). The published plan keeps its basis and gets the full validation.
+    created = client.create_plan({**plan, "basis": {k: v for k, v in (plan.get("basis") or {}).items() if k != "simulationId"}})
     plan_id = str(created["id"])
     published_in = time.monotonic() - started
     try:
@@ -271,6 +274,7 @@ def build_alternatives(
     replan_minutes: int | None = None,
     max_waves: int | None = None,
     candidates: int = CANDIDATES,
+    commander: Any = None,
     **cycle: Any,
 ) -> Alternatives:
     """Plan A (maximum attack) and plan B (no casualties) for a baseline, each evaluated by the engine, then published.
@@ -296,6 +300,19 @@ def build_alternatives(
     # Both put lives first (crews and the people evacuated), then houses, then the burned area; they differ in how: A attacks the fire with everything that
     # can work safely and defends only the houses the fire reaches first, B defends people and houses first, attacks only where it is safe and keeps a reserve when the fire must be contained (never while it can still be put out).
     # Each is the best of a few candidates (how the barrier metres are spread, how many houses are defended), judged by the engine in that same order.
+    # The LLM commander (when configured, see commander/): it reads the environment, retrieves the tactics that fit it and chooses the strategy of
+    # each plan; its choice replaces the candidates below. Without it, or when it fails, the rules choose (the decision says which).
+    decision = None
+    if commander is not None:
+        try:
+            from .commander import build_brief  # noqa: PLC0415 — only needed with a commander
+
+            brief = build_brief(orchestrator, client, simulation_id, location_id=str(cycle.get("location_id") or "guimaraes-concelho"), at_minute=decided_at,
+                                horizon_minutes=int(cycle.get("horizon_minutes") or 60))
+            decision = commander.decide(brief, house_zones_b=house_zones, concentration=cycle.get("concentration"))
+            log.info("baseline %s: strategy chosen by %s%s", simulation_id, decision.source, f" ({decision.error})" if decision.error else "")
+        except ApiProblem as error:
+            issues.append(f"commander could not read the environment [{error.code}]: {error}")
     options = {
         "A": [{"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True}, {"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True, "concentration": ALT_CONCENTRATION}],
         # B's aircraft are timed with its crews too: on Penha that alone takes B from 176 ha to 8.6 ha (A: 9 ha)
@@ -303,6 +320,8 @@ def build_alternatives(
         "B": [{"building_zones": house_zones, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B},
               {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B}],
     }
+    if decision is not None:
+        options = {variant: [decision.plans[variant].cycle_kwargs()] for variant in ("A", "B")}
     chosen: dict[str, tuple[CycleResult, dict[str, Any], Any, int, int]] = {}
     for variant, choices in options.items():
         best: tuple[tuple[Any, ...], CycleResult, dict[str, Any], Any, int, int] | None = None
@@ -338,6 +357,10 @@ def build_alternatives(
             [("protect_life", 1.0), ("protect_buildings", 0.7), ("minimize_burned_area", 0.6)])
     relabel(plan_b, "B", "Plano B — defensivo: proteger pessoas e casas", "Prioridades: 1.º vidas (equipas e população), 2.º casas, 3.º área ardida. Evacua e defende as povoações e as casas no caminho do fogo e ataca onde o perímetro deixa trabalhar com segurança. Enquanto o fogo se pode apagar, todos os meios que chegam a tempo atacam; se é forte demais e tem de ser contido, guarda um quarto dos meios em reserva avançada, para as reavaliações. Mais casas defendidas que o A e apoio aéreo coordenado com as equipas, sem faixas corta-fogo. Zero baixas previstas, na previsão e com o vento errado em 30°.",
             [("protect_life", 1.0), ("protect_buildings", 0.9), ("minimize_burned_area", 0.3)])
+    if decision is not None and decision.source == "llm":  # the commander's own words for what each plan does and why
+        for variant, plan in (("A", plan_a), ("B", plan_b)):
+            chosen_plan = decision.plans[variant]
+            plan["strategy"] = f"Prioridades: 1.º vidas (equipas e população), 2.º casas, 3.º área ardida. {chosen_plan.rationale}".strip()
 
     verdicts: dict[str, Any] = {}
     if judge is not None:
@@ -406,6 +429,10 @@ def build_alternatives(
         plan["metadata"] = {**(plan.get("metadata") or {}), "agents.metrics": metrics}
         plan["summary"] = metrics_text(metrics) + plan.get("summary", "")
         plan["summary"] = f"### Avaliação do incêndio\n- {result.assessment(orchestrator._load_rules())}\n\n" + plan["summary"]  # noqa: SLF001 — the rules the cycle used
+    if decision is not None:
+        for variant, plan in (("A", plan_a), ("B", plan_b)):
+            plan["metadata"] = {**(plan.get("metadata") or {}), "agents.commander": decision.metadata(variant)}
+            plan["summary"] = decision.summary(variant) + plan["summary"]
     if out.eval_a and out.eval_b:
         plan_a["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_a["summary"]
         plan_b["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_b["summary"]

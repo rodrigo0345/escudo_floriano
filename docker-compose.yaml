@@ -102,6 +102,12 @@ services:
       AGENTS_POLL_SECONDS: "${AGENTS_POLL_SECONDS:-10}"
       AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
+      # LLM commander (agents/LLM_COMMANDER_PLAN.md): "llm" to let it choose the strategy of plans A and B, "rules" (default) to keep the rules.
+      # The model and the key come from a local .env (git-ignored): never put the key in this file.
+      AGENTS_COMMANDER: "${AGENTS_COMMANDER:-rules}"
+      AGENTS_LLM_BASE_URL: "${AGENTS_LLM_BASE_URL:-https://api.openai.com/v1}"
+      AGENTS_LLM_MODEL: "${AGENTS_LLM_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     volumes:
       - ./api-spec:/app/api-spec:ro
     depends_on:

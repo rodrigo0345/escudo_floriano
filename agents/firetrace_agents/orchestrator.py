@@ -208,6 +208,8 @@ class OrchestratorAgent:
         reserve_share: float = 0.0,
         defend_whole_run: bool = False,
         defenders_per_zone: int = DEFENDERS_PER_ZONE,
+        force_contain: bool = False,
+        early_air: bool = True,
         validate: bool = True,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
@@ -228,6 +230,8 @@ class OrchestratorAgent:
         ``reserve_share`` keeps that share of the combat units at their stations as a tactical reserve (the farthest ones): free for the re-plans along the fire.
         ``defend_whole_run`` (plan B) defends every patch of houses the forecast fire reaches in the whole run, not only those it reaches before the crews could
         stop it, with ``defenders_per_zone`` engines each (each prepares its patch and leaves before the fire arrives, see ``_place_safely``).
+        ``force_contain`` contains the fire even when the engine's test would attack it; ``early_air=False`` keeps the aircraft timed with the crews
+        instead of the early air attack on the head (both are the LLM commander's choices, see ``commander/schema.py``).
         ``lean`` and ``reserve_share`` only apply when the fire must be contained: while it can be put out (``initial_attack``) every unit that arrives in time attacks.
         A combat unit that would arrive with under ``MIN_USEFUL_WORK_MIN`` of the run left is not sent.
         Every crew is placed where it is safe (``placement.py``): an initial attack works from the burned side of the edge at the minute the crew arrives, and a
@@ -256,6 +260,8 @@ class OrchestratorAgent:
 
         result = CycleResult(simulation_id=simulation_id)
         situation, result.attack_lead, result.initial_attack = self._initial_attack(situation, location_id, travel)
+        if force_contain and result.initial_attack:  # the commander chose to contain although the engine's test would attack
+            situation, result.initial_attack = replace(situation, initial_attack=False, work_minutes=AHEAD_STAY_MIN), False
         decided = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
         result.arrival_intensity = intensity_lookup(situation.summary)(decided + (result.attack_lead or 0.0))  # what the crews find when they get there
         # The engines that defend houses are set aside first: taken out of a barrier already laid they would leave a gap in it.
@@ -277,7 +283,7 @@ class OrchestratorAgent:
         if travel:
             result.unsafe_units = self._place_safely(situation, location_id, result)
         if (fuel_breaks or air_support) and travel:
-            self._air_support(result, situation)
+            self._air_support(result, situation, early=early_air)
         # A reserve only makes sense when the fire must be contained: while it can still be put out, every unit that gets there in time attacks
         # (B too; on Penha, holding back two engines meant for the head let the fire escape: 9 ha with them, 612 ha without).
         holding = not result.initial_attack
@@ -543,7 +549,7 @@ class OrchestratorAgent:
             result.issues.append(AgentIssue("support", "Proteção Civil / INEM", message))
         return plan, agents
 
-    def _air_support(self, result: CycleResult, situation: Situation) -> None:
+    def _air_support(self, result: CycleResult, situation: Situation, *, early: bool = True) -> None:
         """The aircraft (A and B) prepare the ground for the crews: each drops on the stretch where the next crews go in, ``AIR_LEAD_MIN`` before they get there.
 
         The drop cools the edge the crew is about to work from (its effect is temporary), instead of every aircraft hitting the head on its own.
@@ -560,7 +566,7 @@ class OrchestratorAgent:
         # next to the fire is not an attack: the aircraft hold the fire until the bulk of the crews is there
         etas = [e for e, _a in crews] or list(self._arrival.values())
         first_ground = float(statistics.median(etas)) if etas else None
-        if aircraft and first_ground is not None and self._early_air_attack(situation, result, aircraft, first_ground + AIR_LEAD_MIN):
+        if early and aircraft and first_ground is not None and self._early_air_attack(situation, result, aircraft, first_ground + AIR_LEAD_MIN):
             return
         if not result.initial_attack:
             return  # no crews on the outline to prepare the ground for: the aircraft keep their own sectors
