@@ -106,7 +106,8 @@ export function useWorldSync(): void {
   useEffect(() => {
     if (!world || !run) return;
 
-    const key = `${run.id}:${t}`;
+    const minute = Math.floor(t);
+    const key = `${run.id}:${minute}`;
     const cached = detailCache.current.get(key);
     if (cached) {
       world.fire.setPerimeter(cached[0]);
@@ -118,13 +119,14 @@ export function useWorldSync(): void {
       if (inFlightDetail.current) return;
 
       const fetchNext = async (wantedT: number) => {
+        const intT = Math.floor(wantedT);
         inFlightDetail.current = true;
         try {
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, wantedT),
-            simulationsApi.vectors(run.id, wantedT),
+            simulationsApi.perimeter(run.id, intT),
+            simulationsApi.vectors(run.id, intT),
           ]);
-          detailCache.current.set(`${run.id}:${wantedT}`, detail);
+          detailCache.current.set(`${run.id}:${intT}`, detail);
           if (useAppStore.getState().run?.id === run.id) {
             world.fire.setPerimeter(detail[0]);
             world.fire.setArrows(detail[1]);
@@ -133,10 +135,10 @@ export function useWorldSync(): void {
           console.warn('detalhe do fogo:', (e as Error).message);
         } finally {
           inFlightDetail.current = false;
-          const currentT = latestDetailT.current;
+          const currentT = Math.floor(latestDetailT.current);
           const currentRun = useAppStore.getState().run;
           const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
+          if (isPlaying && currentRun?.id === run.id && currentT !== intT) {
             const nextKey = `${run.id}:${currentT}`;
             if (detailCache.current.has(nextKey)) {
               const nextCached = detailCache.current.get(nextKey)!;
@@ -149,14 +151,14 @@ export function useWorldSync(): void {
         }
       };
 
-      void fetchNext(t);
+      void fetchNext(minute);
     } else {
       let cancelled = false;
       const timer = setTimeout(async () => {
         try {
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, t),
-            simulationsApi.vectors(run.id, t),
+            simulationsApi.perimeter(run.id, minute),
+            simulationsApi.vectors(run.id, minute),
           ]);
           detailCache.current.set(key, detail);
           if (!cancelled && useAppStore.getState().run?.id === run.id) {

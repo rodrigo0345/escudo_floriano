@@ -86,14 +86,14 @@ export const simulationsApi = {
 
   perimeter: async (simulationId: string, tMin: number): Promise<PerimeterCollection> => {
     const { data } = await http.get<PerimeterCollection>(`/simulations/${simulationId}/perimeters`, {
-      params: { tMin },
+      params: { tMin: Math.floor(tMin) },
     });
     return data;
   },
 
   vectors: async (simulationId: string, tMin: number): Promise<SpreadVectorCollection> => {
     const { data } = await http.get<SpreadVectorCollection>(`/simulations/${simulationId}/vectors`, {
-      params: { tMin },
+      params: { tMin: Math.floor(tMin) },
     });
     return data;
   },
@@ -113,7 +113,7 @@ export const simulationsApi = {
   },
 
   smoke: async (simulationId: string, tMin: number): Promise<Smoke> => {
-    const { data } = await http.get<Smoke>(`/simulations/${simulationId}/smoke`, { params: { tMin } });
+    const { data } = await http.get<Smoke>(`/simulations/${simulationId}/smoke`, { params: { tMin: Math.floor(tMin) } });
     return data;
   },
 
@@ -124,7 +124,7 @@ export const simulationsApi = {
     filters: { organizationId?: string; responsibility?: string } = {},
   ): Promise<UnitStateList> => {
     const { data } = await http.get<UnitStateList>(`/simulations/${simulationId}/units`, {
-      params: { tMin, ...filters },
+      params: { tMin: Math.floor(tMin), ...filters },
     });
     return data;
   },

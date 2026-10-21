@@ -35,9 +35,10 @@ export function TopBar() {
 
   const scenarioName = scenarios.find((s) => s.id === scenarioId)?.name ?? (scenarioId === 'custom' ? 'Cenário personalizado' : '—');
   const simulation = run?.simulation;
-  const focusLabel = simulation?.kind === 'what_if'
+  const isWhatIf = simulation?.kind === 'what_if';
+  const focusTag = isWhatIf
     ? `Plano ${activePlan?.variant ?? simulation.planId?.slice(0, 8) ?? '—'}`
-    : 'Base (sem resposta)';
+    : 'Base';
   const focusId = simulation?.id ?? baseSimulationId;
 
   return (
@@ -68,25 +69,6 @@ export function TopBar() {
           <option value="custom">Cenário personalizado…</option>
         </select>
       </div>
-      <div className={`mut ${styles.period}`}>
-        {run ? `${formatDateTime(run.startMs)} → ${formatDateTime(run.startMs + run.durationMinutes * 60000)}` : ''}
-      </div>
-      <div
-        className={styles.focusChip}
-        title={focusId ? `Simulação ${focusId} · minuto ${t}` : 'Nenhuma simulação no mapa'}
-      >
-        <span className={styles.focusScenario}>{scenarioName}</span>
-        <span className={styles.focusSep}>·</span>
-        <b>{focusLabel}</b>
-        {focusId ? (
-          <>
-            <span className={styles.focusSep}>·</span>
-            <code>{focusId}</code>
-          </>
-        ) : null}
-        <span className={styles.focusSep}>·</span>
-        <span>T+{t} min</span>
-      </div>
       <nav className={styles.tabs}>
         {TABS.map((t) => (
           <button key={t.value} className={tab === t.value ? 'on' : ''} onClick={() => setTab(t.value)}>
@@ -96,12 +78,32 @@ export function TopBar() {
         ))}
       </nav>
       <div className={styles.spacer} />
-      <button className={styles.helpLink} onClick={() => setHelpOpen(true)} title="Atalhos de teclado (?)">
-        Atalhos
-      </button>
-      <a className={styles.apiLink} href="/swagger" target="_blank" rel="noopener noreferrer" title="Documentação interativa da API (Swagger)">
-        API
-      </a>
+      <div className={`mut ${styles.period}`}>
+        {run ? `${formatDateTime(run.startMs)} → ${formatDateTime(run.startMs + run.durationMinutes * 60000)}` : ''}
+      </div>
+      <div
+        className={styles.focusChip}
+        title={focusId ? `Simulação ${focusId} · minuto ${t}` : 'Nenhuma simulação no mapa'}
+      >
+        <span
+          className={`${styles.statusDot} ${
+            !focusId ? styles.statusIdle : isWhatIf ? styles.statusActive : styles.statusBase
+          }`}
+        />
+        <span className={`${styles.focusTag} ${isWhatIf ? styles.focusTagActive : styles.focusTagBase}`}>
+          {focusTag}
+        </span>
+        <span className={styles.focusScenario}>{scenarioName}</span>
+        <span className={styles.focusTime}>T+{t}m</span>
+      </div>
+      <div className={styles.actionsGroup}>
+        <button className={styles.helpLink} onClick={() => setHelpOpen(true)} title="Atalhos de teclado (?)">
+          ⌨️ Atalhos
+        </button>
+        <a className={styles.apiLink} href="/swagger" target="_blank" rel="noopener noreferrer" title="Documentação interativa da API (Swagger)">
+          API ↗
+        </a>
+      </div>
     </header>
   );
 }

@@ -53,7 +53,7 @@ public sealed class FireBehaviorModel(NativeEngineSettings settings, FuelMoistur
         var surface = RothermelSurfaceFire.Compute(fuel, m1, m10, m100, liveHerb, liveWoody, midflameFtMin, slopeTan,
             Angles.Normalize(windFromDeg + 180), Angles.Normalize(aspect + 180), settings.MaxLengthToWidthRatio);
 
-        double rain = RainFactor(precipMmH);
+        double rain = RainFactor(precipMmH, surface.IntensityKwm);
         double ros = surface.MaxRosMPerMin * settings.SpreadCalibration * rain;
         double intensity = surface.IntensityKwm * settings.SpreadCalibration * rain;
         if (ros <= 1e-9 || intensity <= 0) return CellBehavior.None;
@@ -84,12 +84,19 @@ public sealed class FireBehaviorModel(NativeEngineSettings settings, FuelMoistur
         return new CellBehavior(ros, surface.DirectionDeg, surface.LengthToWidth, intensity, crown, active);
     }
 
-    /// <summary>How much of the spread survives the rain: none above the extinction rate, all of it below the start rate, linear in between.</summary>
-    public double RainFactor(double precipMmH)
+    /// <summary>
+    /// How much of the spread survives the rain: none above the extinction rate, all of it below the start rate, linear in between.
+    /// Grounded in Byram (1959) and Albini (1979): higher fireline intensity vaporizes incoming rain, raising the effective extinction threshold.
+    /// </summary>
+    public double RainFactor(double precipMmH, double intensityKwm = 0)
     {
         if (precipMmH <= settings.RainStartMmH) return 1;
-        if (precipMmH >= settings.RainExtinctionMmH) return 0;
-        return 1 - (precipMmH - settings.RainStartMmH) / (settings.RainExtinctionMmH - settings.RainStartMmH);
+        double intensityMultiplier = intensityKwm > 500.0
+            ? 1.0 + Math.Min(2.0, Math.Log10(intensityKwm / 500.0))
+            : 1.0;
+        double effectiveExtinction = settings.RainExtinctionMmH * intensityMultiplier;
+        if (precipMmH >= effectiveExtinction) return 0;
+        return 1 - (precipMmH - settings.RainStartMmH) / (effectiveExtinction - settings.RainStartMmH);
     }
 
     /// <summary>
