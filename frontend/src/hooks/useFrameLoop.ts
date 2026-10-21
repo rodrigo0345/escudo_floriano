@@ -48,6 +48,7 @@ export function useFrameLoop(): void {
 
         const w = sampleWeatherAt(run.weather, run.startMs, tf);
         const smokeVisM = groundVisibilityFromSmoke(s.smokeInfo);
+        world.flames.update(tf, ts / 1000, engine.camera, engine.renderer.domElement.height / engine.renderer.getPixelRatio(), w?.windKmh ?? 0, w?.windFromDeg ?? 0);
 
         // Check active custom weather events at minute `tf`
         const activeEvents = s.customEvents.filter(

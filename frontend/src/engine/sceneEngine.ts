@@ -4,6 +4,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Picker } from './picking';
 import { ViewMode } from './viewMode';
 
+/** Over the 3D city: overlays drawn after it, depth-tested against the terrain only (hills hide them, buildings and trees do not). */
+export interface OverlayPass {
+  overlays: THREE.Object3D[];
+  depthProxy: THREE.Object3D;
+}
+
 export type FrameCallback = (timestampMs: number, azimuthRad: number) => void;
 
 const SKY = 0x8fa4b8;
@@ -27,6 +33,7 @@ export class SceneEngine {
   private readonly resizeObserver: ResizeObserver;
   private rafId = 0;
   private disposed = false;
+  private overlayPass: OverlayPass | null = null;
 
   private readonly sunColorScratch = new THREE.Color();
   private readonly skyColorScratch = new THREE.Color();
@@ -141,9 +148,44 @@ export class SceneEngine {
       const azimuth = this.controls.getAzimuthalAngle();
       this.frameCallbacks.forEach((cb) => cb(ts, azimuth));
       this.controls.update();
-      this.renderer.render(this.scene, this.camera);
+      if (this.overlayPass) this.renderWithOverlays(this.overlayPass);
+      else this.renderer.render(this.scene, this.camera);
     };
     this.rafId = requestAnimationFrame(loop);
+  }
+
+  setOverlayPass(pass: OverlayPass | null): void {
+    this.overlayPass = pass;
+  }
+
+  /**
+   * Two passes: the world without the overlays, then (depth cleared) the terrain's depth only plus the overlays. Roads, icons, perimeter, plan and units are then occluded
+   * by the relief, as on the plain map, but never buried in the city's buildings and trees, whose height the overlays know nothing about.
+   */
+  private renderWithOverlays({ overlays, depthProxy }: OverlayPass): void {
+    const shown = overlays.map((o) => o.visible);
+    overlays.forEach((o) => (o.visible = false));
+    this.renderer.render(this.scene, this.camera);
+
+    const hidden: THREE.Object3D[] = [];
+    for (const child of this.scene.children) {
+      if (child.visible && !overlays.includes(child) && child !== depthProxy) {
+        child.visible = false;
+        hidden.push(child);
+      }
+    }
+    overlays.forEach((o, i) => (o.visible = shown[i]));
+    depthProxy.visible = true;
+    const autoClear = this.renderer.autoClear;
+    const background = this.scene.background;
+    this.renderer.autoClear = false;
+    this.scene.background = null;
+    this.renderer.clearDepth();
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.autoClear = autoClear;
+    this.scene.background = background;
+    depthProxy.visible = false;
+    hidden.forEach((o) => (o.visible = true));
   }
 
   /** The 3D city is meant to be seen from street level: bring the near plane and the zoom limit in (and back out when it is off). */
