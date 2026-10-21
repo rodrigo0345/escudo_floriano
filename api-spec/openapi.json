@@ -5818,6 +5818,296 @@
           }
         }
       }
+    },
+    "/simulations/{simulationId}/plan-requests": {
+      "post": {
+        "operationId": "createPlanRequest",
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Pedir aos agentes um novo plano",
+        "description": "O operador pede ao serviço dos agentes um novo par de planos (A e B) para uma simulação base terminada, mesmo que já tenha planos. O pedido fica `queued`; um agente reclama-o (`POST /plan-requests/{id}/claim`), relata o progresso (`PATCH /plan-requests/{id}`), publica os planos (`POST /plans`) e corre o what-if de cada um. A interface acompanha com `GET /plan-requests/{id}`.\n\nSe já há um pedido em curso (`queued`, `planning` ou `simulating`) para a mesma simulação, devolve-se esse (200) em vez de criar outro.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SimulationIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanRequestInput"
+              },
+              "example": {
+                "note": "O vento vai rodar para norte: defender Sande antes de atacar a cabeça.",
+                "atMinute": 45,
+                "requestedBy": "CODIS Braga"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Pedido em fila para os agentes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequest"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Já havia um pedido em curso para esta simulação",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/plan-requests": {
+      "get": {
+        "operationId": "listPlanRequests",
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Pedidos de planos aos agentes",
+        "description": "Os agentes procuram aqui os pedidos `queued`; a interface lista os pedidos de uma simulação. Mais recentes primeiro.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/UpdatedAfter"
+          },
+          {
+            "name": "simulationId",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Pedidos para esta simulação base."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/PlanRequestStatus"
+              }
+            },
+            "style": "form",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequestPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/plan-requests/{planRequestId}": {
+      "get": {
+        "operationId": "getPlanRequest",
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Obter um pedido de plano (estado e progresso)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanRequestIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePlanRequest",
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Relatar o progresso ou o fim de um pedido de plano",
+        "description": "Só o agente que o reclamou o usa. `done` exige `planIds`; `failed` deve trazer `error`. Um pedido `done` ou `failed` já não muda (409 `invalid_transition`).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanRequestIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanRequestPatch"
+              },
+              "example": {
+                "status": "simulating",
+                "progress": {
+                  "phase": "simulating",
+                  "message": "A correr o what-if dos planos A e B",
+                  "percent": 80
+                },
+                "planIds": [
+                  "pla-7Kq2",
+                  "pla-9Xw1"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido atualizado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/plan-requests/{planRequestId}/claim": {
+      "post": {
+        "operationId": "claimPlanRequest",
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Um agente fica com um pedido de plano",
+        "description": "Passa o pedido de `queued` a `planning` e regista quem o tem. Um pedido já reclamado só se volta a reclamar se o agente deixou de dar notícias há mais de uns minutos (por exemplo, reiniciou); caso contrário, 409 `plan_request_claimed`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanRequestIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanRequestClaim"
+              },
+              "example": {
+                "agent": "agents@firetrace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido reclamado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -16102,6 +16392,230 @@
           "items",
           "nextCursor"
         ]
+      },
+      "PlanRequestStatus": {
+        "type": "string",
+        "description": "`queued`: à espera de um agente · `planning`: um agente reclamou-o e está a compor e a avaliar os planos · `simulating`: planos publicados, a correr o what-if de cada um · `done`: terminado, `planIds` diz quais · `failed`: o agente não conseguiu (`error` diz porquê).",
+        "enum": [
+          "queued",
+          "planning",
+          "simulating",
+          "done",
+          "failed"
+        ]
+      },
+      "PlanRequestProgress": {
+        "type": "object",
+        "description": "Em que passo vai o agente, para o operador acompanhar.",
+        "properties": {
+          "phase": {
+            "type": "string",
+            "description": "Passo estável para a interface (`claimed`, `composing`, `judging`, `adapting`, `publishing`, `simulating`, `done`).",
+            "maxLength": 40
+          },
+          "message": {
+            "type": "string",
+            "description": "Frase para o operador.",
+            "maxLength": 500
+          },
+          "percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "phase",
+          "percent"
+        ]
+      },
+      "PlanRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResourceMeta"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "simulationId": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  },
+                  {
+                    "description": "Simulação base (`kind: baseline`, terminada) para a qual se pedem os planos."
+                  }
+                ]
+              },
+              "locationId": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "status": {
+                "$ref": "#/components/schemas/PlanRequestStatus"
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "O que o operador pediu, em texto livre."
+              },
+              "atMinute": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "description": "Minuto do fogo em que os planos decidem; sem ele, o do serviço dos agentes."
+              },
+              "requestedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "claimedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Agente que está a tratar o pedido."
+              },
+              "claimedAt": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PlanRequestProgress"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "planIds": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "description": "Planos publicados por este pedido."
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Porque falhou (`status: failed`)."
+              },
+              "completedAt": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "simulationId",
+              "locationId",
+              "status"
+            ]
+          }
+        ]
+      },
+      "PlanRequestInput": {
+        "type": "object",
+        "description": "Pedir aos agentes um novo par de planos (A e B) para uma simulação base, mesmo que já tenha planos.",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "O que o operador quer, em texto livre (fica no pedido)."
+          },
+          "atMinute": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Minuto do fogo em que os planos decidem (p. ex. o minuto que está no ecrã)."
+          },
+          "requestedBy": {
+            "type": "string",
+            "maxLength": 120
+          }
+        }
+      },
+      "PlanRequestClaim": {
+        "type": "object",
+        "description": "Um agente fica com o pedido.",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Nome do agente (aparece ao operador)."
+          }
+        },
+        "required": [
+          "agent"
+        ]
+      },
+      "PlanRequestPatch": {
+        "type": "object",
+        "description": "O agente que reclamou o pedido relata o progresso e o fim. Um pedido `done` ou `failed` já não muda.",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PlanRequestStatus"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/PlanRequestProgress"
+          },
+          "planIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        }
+      },
+      "PlanRequestPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanRequest"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor opaco para pedir a página seguinte; `null` quando não há mais resultados."
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
       }
     },
     "parameters": {
@@ -16481,6 +16995,15 @@
         },
         "style": "form",
         "explode": false
+      },
+      "PlanRequestIdPath": {
+        "name": "planRequestId",
+        "in": "path",
+        "required": true,
+        "description": "Id do pedido de plano.",
+        "schema": {
+          "$ref": "#/components/schemas/Id"
+        }
       }
     },
     "responses": {

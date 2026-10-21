@@ -40,6 +40,7 @@ public class ContractTests
         ["OrganizationInput"] = typeof(Organization), ["PersonnelPoolInput"] = typeof(PersonnelPool), ["PlanInput"] = typeof(Plan), ["ActionPatch"] = typeof(ActionPatch),
         ["RoadClosureInput"] = typeof(RoadClosure), ["RouteRequest"] = typeof(RouteRequest), ["ScenarioInput"] = typeof(Scenario), ["SimulationRequest"] = typeof(SimulationRequest),
         ["StationInput"] = typeof(Station), ["VehicleInput"] = typeof(Vehicle), ["VehicleStatePatch"] = typeof(VehicleState), ["WeatherResolveRequest"] = typeof(WeatherResolveRequest),
+        ["PlanRequestInput"] = typeof(PlanRequestInput), ["PlanRequestClaim"] = typeof(PlanRequestClaim), ["PlanRequestPatch"] = typeof(PlanRequestPatch),
     };
 
     public static IEnumerable<object[]> Examples()

@@ -102,6 +102,7 @@ services:
       AGENTS_POLL_SECONDS: "${AGENTS_POLL_SECONDS:-10}"
       AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
+      AGENTS_NAME: "${AGENTS_NAME:-firetrace-agents}"   # who claims the operator's plan requests (shown in the Planos tab)
     volumes:
       - ./api-spec:/app/api-spec:ro
     depends_on:

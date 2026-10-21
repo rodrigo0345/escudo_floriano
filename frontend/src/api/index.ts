@@ -15,6 +15,7 @@ export { equipmentApi } from './services/equipment';
 export { personnelApi } from './services/personnel';
 export { dispatchesApi } from './services/dispatches';
 export { plansApi } from './services/plans';
+export { planRequestsApi } from './services/planRequests';
 export { actionsApi } from './services/actions';
 export { roadClosuresApi } from './services/roadClosures';
 export { routingApi } from './services/routing';
@@ -32,6 +33,7 @@ import { equipmentApi } from './services/equipment';
 import { personnelApi } from './services/personnel';
 import { dispatchesApi } from './services/dispatches';
 import { plansApi } from './services/plans';
+import { planRequestsApi } from './services/planRequests';
 import { actionsApi } from './services/actions';
 import { roadClosuresApi } from './services/roadClosures';
 import { routingApi } from './services/routing';
@@ -54,6 +56,7 @@ export const api = {
   personnel: personnelApi,
   dispatches: dispatchesApi,
   plans: plansApi,
+  planRequests: planRequestsApi,
   actions: actionsApi,
   roadClosures: roadClosuresApi,
   routing: routingApi,
