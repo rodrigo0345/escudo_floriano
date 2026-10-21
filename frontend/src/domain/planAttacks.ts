@@ -3,7 +3,7 @@ import type { LatLon, Organization, PersonnelPool, Plan, PlanAction, Station, Ve
 /**
  * The combat side of an agents' plan, one row per action that works on the fire (ground attack, air drops, fuel breaks, building defence):
  * who goes, from where, when they leave, arrive and work, how hard they hit (the effect's `effectiveness`) and why. Everything comes from
- * the plan the backend stored and simulated; times are minutes of the plan's run (the effects' `start.offsetMinutes`, as `planUnits` reads them).
+ * the plan the backend stored and simulated; times are minutes of the plan's run (the effects' `start.offsetMinutes`, counted from the scenario start).
  */
 
 export type AttackKind = 'ground' | 'air' | 'fuel' | 'defence';

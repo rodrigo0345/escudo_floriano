@@ -53,9 +53,10 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
         for (int i = 0; i < times.Length; i++)
         {
             double? wind = Value("wind_speed_10m", i), dir = Value("wind_direction_10m", i), rh = Value("relative_humidity_2m", i), temp = Value("temperature_2m", i);
+            double? gust = Value("wind_gusts_10m", i), precip = Value("precipitation", i), cloud = Value("cloud_cover", i);
             if (wind is null || dir is null || rh is null || temp is null) continue;
             var ts = DateTimeOffset.Parse(times[i].GetString()! + ":00Z", inv, DateTimeStyles.AssumeUniversal);
-            if (ts >= from && ts <= to) result.Add(new HourlyWeather(ts, wind.Value, dir.Value, rh.Value, temp.Value, provider, Value("wind_gusts_10m", i), Value("precipitation", i), Value("cloud_cover", i)));
+            if (ts >= from && ts <= to) result.Add(new HourlyWeather(ts, wind.Value, dir.Value, rh.Value, temp.Value, provider, gust, precip, cloud));
         }
         return result;
     }

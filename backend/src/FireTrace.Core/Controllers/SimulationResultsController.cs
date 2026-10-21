@@ -13,7 +13,7 @@ namespace FireTrace.Core.Controllers;
 
 /// <summary>O que uma simulação deu: resumo, perímetros, impacto, estradas cortadas, acessos, fumo, meteorologia e as grelhas brutas.</summary>
 [Route("/api/v1/simulations/{id}")]
-public sealed class SimulationResultsController(FireResults results, SmokeService smoke, DefaultsSettings defaults, OperationQueries operations) : ApiController
+public sealed class SimulationResultsController(FireResults results, SmokeService smoke, OperationSimulator operations, DefaultsSettings defaults) : ApiController
 {
     [HttpGet("summary")]
     public async Task<ActionResult<SimulationSummary>> Summary(string id, [FromQuery] Query q, CancellationToken ct) =>
@@ -63,12 +63,13 @@ public sealed class SimulationResultsController(FireResults results, SmokeServic
         return GridFile(new GridData(result.Bytes, result.Width, result.Height, result.CellM, result.DType));
     }
 
-    /// <summary>Onde está cada meio do plano (ou dos despachos) que a simulação aplicou, e o que faz, ao minuto `tMin`: a viagem, a chegada, o trabalho com água e cansaço, o regresso.</summary>
+    /// <summary>Onde está cada meio do plano ao minuto pedido (posição, estado, água, cansaço).</summary>
     [HttpGet("units")]
     public async Task<ActionResult<UnitStateList>> Units(string id, [FromQuery] Query q, CancellationToken ct) =>
-        Ok(await operations.StatesAsync(id, q.RequiredInt("tMin"), q.Str("organizationId"), q.Str("responsibility"), ct));
+        Ok(await operations.UnitsAsync(id, q.RequiredInt("tMin"), q.Str("organizationId"), q.Str("responsibility"), ct));
 
+    /// <summary>O trajeto e os acontecimentos de um meio, amostrados a cada `stepMin` minutos.</summary>
     [HttpGet("units/{unitId}/track")]
     public async Task<ActionResult<UnitTrack>> UnitTrack(string id, string unitId, [FromQuery] Query q, CancellationToken ct) =>
-        Ok(await operations.TrackAsync(id, unitId, q.Int("stepMin") ?? 1, ct));
+        Ok(await operations.TrackAsync(id, unitId, q.Int("stepMin") ?? defaults.SummaryStepMinutes, ct));
 }

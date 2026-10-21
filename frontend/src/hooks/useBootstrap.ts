@@ -18,7 +18,7 @@ export function useBootstrap(): void {
         const locations = await locationsApi.list();
         if (!locations.length) throw new Error('Sem locais configurados no backend.');
         const wanted = new URLSearchParams(window.location.search).get('loc');
-        const chosen = locations.find((l) => l.id === wanted) ?? locations[0];
+        const chosen = locations.find((l) => l.id === wanted) ?? locations.find((l) => l.id === 'guimaraes') ?? locations[0];
         setCatalog(locations, chosen.id as string);
         const data = await loadLocationData(chosen.id as string);
         if (!cancelled) setLocationData(data);

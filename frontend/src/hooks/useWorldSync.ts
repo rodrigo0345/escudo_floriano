@@ -2,15 +2,11 @@ import { useEffect, useRef } from 'react';
 
 import { simulationsApi, type PerimeterCollection, type Smoke, type SpreadVectorCollection } from '@/api';
 import { lineStringCoordinates } from '@/domain/geojson';
-import { loadBackendTracks } from '@/domain/backendUnits';
-import { tracksFromPlan } from '@/domain/planUnits';
-import { ORG_COLOR } from '@/domain/resourceLabels';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
 const DETAIL_DEBOUNCE_MS = 160;
-const REINFORCEMENT_COLOR = '#ff9f1a';
 
 type Detail = [PerimeterCollection, SpreadVectorCollection];
 
@@ -116,38 +112,11 @@ export function useWorldSync(): void {
     world?.plan.setFocus(focusedActionId);
   }, [world, focusedActionId, activePlan]);
 
-  // the plan's units: leave their station, follow the route the backend stored for them, work, and leave the map (see `domain/planUnits`)
+  // the plan's units (and the combat timeline's names) need the organizations, vehicles and stations
   const resourcesLoaded = useResourcesStore((s) => s.loaded);
-  const planUnitsOnMap = useRef(false);
   useEffect(() => {
     if (!resourcesLoaded) void useResourcesStore.getState().load();
   }, [resourcesLoaded]);
-  useEffect(() => {
-    if (!world) return;
-    if (!activePlan || !run || !resourcesLoaded) {
-      if (planUnitsOnMap.current) {
-        world.units.clear(); // only what this effect drew: the rehearsal tab draws its own
-        planUnitsOnMap.current = false;
-      }
-      return;
-    }
-    const resources = useResourcesStore.getState();
-    const orgOf = (id: string) => resources.organizations.find((o) => o.id === id);
-    // reinforcements from other districts (tag `reinforcement`, see agents/scripts/seed_reinforcements.py) stand out from the local brigades
-    const colorOf = (id: string) => ((orgOf(id)?.tags ?? []).includes('reinforcement') ? REINFORCEMENT_COLOR : ORG_COLOR[orgOf(id)?.type ?? 'other'] ?? '#9aa0a8');
-    const nameOf = (id: string) => orgOf(id)?.shortName ?? id;
-    let cancelled = false;
-    void (async () => {
-      // the backend simulates the units of a plan's what-if (route, arrival, water, refills, rest, return); only a server without that falls back to the plan's stored routes
-      const fromBackend = await loadBackendTracks(run.id, run, resources).catch(() => []);
-      if (cancelled) return;
-      world.units.setTracks(fromBackend.length ? fromBackend : tracksFromPlan(activePlan, run, resources), colorOf, nameOf);
-      planUnitsOnMap.current = true;
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [world, activePlan, run?.id, resourcesLoaded]);
 
   // a new run invalidates cached per-minute detail
   useEffect(() => {
@@ -159,7 +128,8 @@ export function useWorldSync(): void {
   useEffect(() => {
     if (!world || !run) return;
 
-    const key = `${run.id}:${t}`;
+    const minute = Math.floor(t);
+    const key = `${run.id}:${minute}`;
     const cached = detailCache.current.get(key);
     if (cached) {
       world.fire.setPerimeter(cached[0]);
@@ -171,13 +141,14 @@ export function useWorldSync(): void {
       if (inFlightDetail.current) return;
 
       const fetchNext = async (wantedT: number) => {
+        const intT = Math.floor(wantedT);
         inFlightDetail.current = true;
         try {
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, wantedT),
-            simulationsApi.vectors(run.id, wantedT),
+            simulationsApi.perimeter(run.id, intT),
+            simulationsApi.vectors(run.id, intT),
           ]);
-          detailCache.current.set(`${run.id}:${wantedT}`, detail);
+          detailCache.current.set(`${run.id}:${intT}`, detail);
           if (useAppStore.getState().run?.id === run.id) {
             world.fire.setPerimeter(detail[0]);
             world.fire.setArrows(detail[1]);
@@ -186,10 +157,10 @@ export function useWorldSync(): void {
           console.warn('detalhe do fogo:', (e as Error).message);
         } finally {
           inFlightDetail.current = false;
-          const currentT = latestDetailT.current;
+          const currentT = Math.floor(latestDetailT.current);
           const currentRun = useAppStore.getState().run;
           const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
+          if (isPlaying && currentRun?.id === run.id && currentT !== intT) {
             const nextKey = `${run.id}:${currentT}`;
             if (detailCache.current.has(nextKey)) {
               const nextCached = detailCache.current.get(nextKey)!;
@@ -202,14 +173,14 @@ export function useWorldSync(): void {
         }
       };
 
-      void fetchNext(t);
+      void fetchNext(minute);
     } else {
       let cancelled = false;
       const timer = setTimeout(async () => {
         try {
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, t),
-            simulationsApi.vectors(run.id, t),
+            simulationsApi.perimeter(run.id, minute),
+            simulationsApi.vectors(run.id, minute),
           ]);
           detailCache.current.set(key, detail);
           if (!cancelled && useAppStore.getState().run?.id === run.id) {

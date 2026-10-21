@@ -6,7 +6,8 @@ using FireTrace.Engine.Weather;
 namespace FireTrace.Engine.Native;
 
 /// <summary>
-/// Motor de propagação nativo (C#, sem processo externo): Rothermel ligeiro + frente de onda elíptica pelo método do tempo mínimo de viagem.
+/// Motor de propagação nativo (C#, sem processo externo): Rothermel (1972) completo, com os modelos de combustível Scott &amp; Burgan, o vento a meio
+/// da chama (WAF), a humidade morta/viva, o declive e a frente elíptica pelo método do tempo mínimo de viagem; Van Wagner para o fogo de copas.
 /// Lê as mesmas entradas do ELMFIRE (<see cref="FireJob"/>: bandas de paisagem, ajuste por célula já com combustível/barreiras/riparian,
 /// vento por membro, humidade do combustível) e dá a mesma saída (<see cref="FireResult"/>), por isso troca-se por <see cref="IFireEngine"/>
 /// sem mudar mais nada no resto da aplicação. Não há faíscas (as barreiras já trazem a sua própria fuga) nem contentor:
@@ -32,7 +33,7 @@ public sealed class NativeFireEngine(NativeEngineSettings settings, FuelMoisture
 
     FireResult RunMember(FireJob job, MemberWeather member)
     {
-        var moistureByMinute = DeadFuelMoisture.Series(member.Weather, 60, job.Minutes + 1, moisture, 0, job.FuelMoisture); // uma linha por minuto (dt = 60 s)
+        var moistureByMinute = DeadFuelMoisture.Series(member.Weather, 60, job.Minutes + 1, moisture, job.SpinUpMinutes, job.FuelMoisture); // uma linha por minuto (dt = 60 s), com o aquecimento pedido
         return _solver.Solve(job, member, moistureByMinute);
     }
 }

@@ -183,8 +183,8 @@ public sealed class MapQueries(IMapReader map, FuelCatalog fuels, Population pop
         if (cell < 0) throw new ValidationException("O ponto está fora do local.", "/lat");
         var fuel = fuels.Get(t.LandCover[cell]);
         var road = IndexOf(await map.GetRoadsAsync(loc, ct)).Nearest(lat, lon, settings.NearestRoadMaxM);
-        var water = (await map.GetWaterPointsAsync(loc, ct)).Select(w => (W: w, D: RoadGeometry.DistanceM(lat, lon, w.Lat, w.Lon))).MinBy(x => x.D);
-        var place = (await map.GetPlacesAsync(loc, ct)).Select(p => (P: p, D: RoadGeometry.DistanceM(lat, lon, p.Lat, p.Lon))).MinBy(x => x.D);
+        var water = (await map.GetWaterPointsAsync(loc, ct)).Select(w => (W: w, D: RoadGeometry.DistanceM(lat, lon, w.Lat, w.Lon))).OrderBy(x => x.D).FirstOrDefault();
+        var place = (await map.GetPlacesAsync(loc, ct)).Select(p => (P: p, D: RoadGeometry.DistanceM(lat, lon, p.Lat, p.Lon))).OrderBy(x => x.D).FirstOrDefault();
         return new TerrainPoint(new(lat, lon), Math.Round(t.Elevation[cell], 1), Math.Round(t.Slope[cell], 1), Math.Round(t.Aspect[cell]),
             fuel.Id == 0 ? null : new VegetationAt(fuel.Id, fuel.Key, fuel.Label, fuel.Fbfm40), t.Buildings[cell], population.Of(t.Buildings[cell]),
             road is { } r ? new NearestRoad(MapIds.Road(r.Edge.Id), r.Edge.Highway, Math.Round(r.DistanceM)) : null,

@@ -55,6 +55,95 @@
   gap: 8px;
 }
 
+.compareCard {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel2) 70%, transparent);
+}
+
+.compareCard h3 {
+  margin: 0;
+}
+
+.compareScroll {
+  overflow-x: auto;
+}
+
+.compareTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.compareTable th,
+.compareTable td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compareTable th:first-child,
+.compareTable td:first-child {
+  text-align: left;
+}
+
+.compareTable thead th {
+  color: var(--mut);
+  font-weight: 600;
+}
+
+.compareTable td b {
+  font-family: var(--mono);
+}
+
+.compareTable td span {
+  margin-left: 4px;
+}
+
+.actionGroups {
+  display: grid;
+  gap: 10px;
+}
+
+.actionGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.orgHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+}
+
+.actionText {
+  min-width: 0;
+}
+
+.rationale {
+  display: block;
+  margin: 2px 0;
+  color: var(--fg);
+  opacity: 0.82;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.actionTags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .check {
   display: flex !important;
   align-items: center;

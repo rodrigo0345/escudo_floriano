@@ -3,5 +3,5 @@ using FireTrace.ExternalData.Map;
 
 namespace FireTrace.Core.Models.Operations;
 
-/// <summary>Onde um meio está, em que estado, com quanta água e quão cansado, a um minuto da simulação.</summary>
+/// <summary>Uma amostra do trajeto de um meio.</summary>
 public sealed record UnitTrackPoint(int TMin, DispatchStatus Status, LatLon? Position = null, double? WaterLevelL = null, double? FatiguePct = null);

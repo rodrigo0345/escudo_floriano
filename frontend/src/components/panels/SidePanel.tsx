@@ -1,6 +1,5 @@
 import { useAppStore } from '@/store/appStore';
 
-import { DemoPanel } from '@/components/demo/DemoPanel';
 import { AssetsPanel } from './AssetsPanel';
 import { IncidentPanel } from './IncidentPanel';
 import { PlansPanel } from './PlansPanel';
@@ -18,7 +17,6 @@ export function SidePanel() {
       {tab === 'roads' ? <RoadsPanel /> : null}
       {tab === 'assets' ? <AssetsPanel /> : null}
       {tab === 'weather' ? <WeatherPanel /> : null}
-      {tab === 'demo' ? <DemoPanel /> : null}
     </aside>
   );
 }

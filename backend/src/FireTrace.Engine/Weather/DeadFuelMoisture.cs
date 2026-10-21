@@ -4,7 +4,8 @@ namespace FireTrace.Engine.Weather;
 
 /// <summary>
 /// Humidade do combustível morto de 1 h, 10 h e 100 h (%) a partir da meteorologia: equilíbrio de Simard (HR e temperatura) com atraso de
-/// primeira ordem por classe de diâmetro. É o que as noites húmidas e as tardes secas fazem ao combustível fino e grosso.
+/// primeira ordem por classe de diâmetro, mais a água da chuva que entra diretamente no combustível. É o que as noites húmidas, as tardes
+/// secas e os aguaceiros fazem ao combustível fino e grosso.
 /// </summary>
 public static class DeadFuelMoisture
 {
@@ -70,8 +71,9 @@ public static class DeadFuelMoisture
                     m1 = Wet(m1, rainMm, s.RainIntercept1hMm, s.RainSaturationPct); m10 = Wet(m10, rainMm, s.RainIntercept10hMm, s.RainSaturationPct); m100 = Wet(m100, rainMm, s.RainIntercept100hMm, s.RainSaturationPct);
                 }
             }
-            var w = wx.At(target);
-            rows.Add(new Row(w.WindKmh, w.WindFromDeg, Math.Max(m1, s.MinDeadMoisturePct), Math.Max(m10, s.MinDeadMoisturePct), Math.Max(m100, s.MinDeadMoisturePct),
+            var targetWeather = wx.At(target);
+            rows.Add(new Row(targetWeather.WindKmh, targetWeather.WindFromDeg,
+                Math.Max(m1, s.MinDeadMoisturePct), Math.Max(m10, s.MinDeadMoisturePct), Math.Max(m100, s.MinDeadMoisturePct),
                 spec?.Values?.LiveHerbaceousPct ?? s.LiveHerbaceousPct, spec?.Values?.LiveWoodyPct ?? s.LiveWoodyPct));
         }
         return rows;
