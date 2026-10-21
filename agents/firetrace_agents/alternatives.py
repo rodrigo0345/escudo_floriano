@@ -19,7 +19,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .campaign import plan_effects, scenario_at
 from .client import ApiProblem, FiretraceClient
@@ -270,14 +270,18 @@ def build_alternatives(
     replan_minutes: int | None = None,
     max_waves: int | None = None,
     candidates: int = CANDIDATES,
+    progress: Callable[[str, float, str], None] | None = None,
+    plan_metadata: dict[str, Any] | None = None,
     **cycle: Any,
 ) -> Alternatives:
     """Plan A (maximum attack) and plan B (no casualties) for a baseline, each evaluated by the engine, then published.
 
     ``cycle`` is passed to ``OrchestratorAgent.run_cycle`` (``location_id``, ``at_minute``, ``horizon_minutes``, ``stage_minutes``...). After the first
     judgement the agents look at each plan's what-if every ``replan_minutes`` and add waves of actions where the fire is not under control (see ``adaptation.py``;
-    0 turns it off, ``None`` is its default).
+    0 turns it off, ``None`` is its default). ``progress(phase, percent, message)`` hears each step (an operator's request follows it in the UI);
+    ``plan_metadata`` is added to the metadata of both plans.
     """
+    report = progress or (lambda _phase, _percent, _message: None)
     decided_at = int(cycle.get("at_minute") or 0)
     # The safety rule (see judge.py): a plan is judged on the forecast and on a wrong wind, the crews caught are cut short or not sent, and a plan that still
     # predicts a casualty is not published.
@@ -303,6 +307,7 @@ def build_alternatives(
     }
     chosen: dict[str, tuple[CycleResult, dict[str, Any], Any, int, int]] = {}
     for variant, choices in options.items():
+        report("composing", 10 if variant == "A" else 25, f"A compor o plano {variant} ({'ofensivo' if variant == 'A' else 'defensivo'})")
         best: tuple[tuple[Any, ...], CycleResult, dict[str, Any], Any, int, int] | None = None
         for overrides in choices[:max(1, candidates)]:
             result = orchestrator.run_cycle(simulation_id, publish=False, validate=False, **{**cycle, **overrides})
@@ -338,6 +343,7 @@ def build_alternatives(
             [("protect_life", 1.0), ("protect_buildings", 0.9), ("minimize_burned_area", 0.3)])
 
     verdicts: dict[str, Any] = {}
+    report("judging", 40, "O motor avalia a segurança das equipas nos dois planos (previsão e vento errado)")
     if judge is not None:
         for variant, plan in (("A", plan_a), ("B", plan_b)):
             _result, _plan, _verdict, cut_before, gone_before = chosen[variant]
@@ -356,6 +362,7 @@ def build_alternatives(
     if replan_minutes != 0 and judge is not None and any(v is not None and v.casualties == 0 for v in verdicts.values()):
         from .adaptation import MAX_WAVES, REPLAN_MINUTES, adapt  # noqa: PLC0415 — adaptation builds on this module
 
+        report("adapting", 55, "Reavaliações ao longo do incêndio: enviar meios livres onde o fogo não está dominado")
         try:
             run_minutes = int(snapshot.get("durationMinutes") or 0)
             steps = {"replan_minutes": REPLAN_MINUTES if replan_minutes is None else replan_minutes, "max_waves": MAX_WAVES if max_waves is None else max_waves}
@@ -401,7 +408,7 @@ def build_alternatives(
                                f"{removed} não são enviadas (sem tempo útil antes do fogo).\n\n") + plan["summary"]
     for variant, plan, result, evaluation in (("A", plan_a, cycle_a, out.eval_a), ("B", plan_b, cycle_b, out.eval_b)):
         metrics = agent_metrics(result, plan, evaluation, out.safety.get(variant, (0, 0)))
-        plan["metadata"] = {**(plan.get("metadata") or {}), "agents.metrics": metrics}
+        plan["metadata"] = {**(plan.get("metadata") or {}), **(plan_metadata or {}), "agents.metrics": metrics}
         plan["summary"] = metrics_text(metrics) + plan.get("summary", "")
         plan["summary"] = f"### Avaliação do incêndio\n- {result.assessment(orchestrator._load_rules())}\n\n" + plan["summary"]  # noqa: SLF001 — the rules the cycle used
     if out.eval_a and out.eval_b:
@@ -409,6 +416,7 @@ def build_alternatives(
         plan_b["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_b["summary"]
 
     if publish:
+        report("publishing", 75, "A validar e publicar os planos no backend")
         for variant, plan in (("A", plan_a), ("B", plan_b)):
             if variant in out.unsafe:
                 continue

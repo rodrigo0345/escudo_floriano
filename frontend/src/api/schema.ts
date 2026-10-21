@@ -1364,6 +1364,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/simulations/{simulationId}/plan-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pedir aos agentes um novo plano
+         * @description O operador pede ao serviço dos agentes um novo par de planos (A e B) para uma simulação base terminada, mesmo que já tenha planos. O pedido fica `queued`; um agente reclama-o (`POST /plan-requests/{id}/claim`), relata o progresso (`PATCH /plan-requests/{id}`), publica os planos (`POST /plans`) e corre o what-if de cada um. A interface acompanha com `GET /plan-requests/{id}`.
+         *
+         *     Se já há um pedido em curso (`queued`, `planning` ou `simulating`) para a mesma simulação, devolve-se esse (200) em vez de criar outro.
+         */
+        post: operations["createPlanRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plan-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pedidos de planos aos agentes
+         * @description Os agentes procuram aqui os pedidos `queued`; a interface lista os pedidos de uma simulação. Mais recentes primeiro.
+         */
+        get: operations["listPlanRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plan-requests/{planRequestId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Obter um pedido de plano (estado e progresso) */
+        get: operations["getPlanRequest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Relatar o progresso ou o fim de um pedido de plano
+         * @description Só o agente que o reclamou o usa. `done` exige `planIds`; `failed` deve trazer `error`. Um pedido `done` ou `failed` já não muda (409 `invalid_transition`).
+         */
+        patch: operations["updatePlanRequest"];
+        trace?: never;
+    };
+    "/plan-requests/{planRequestId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Um agente fica com um pedido de plano
+         * @description Passa o pedido de `queued` a `planning` e regista quem o tem. Um pedido já reclamado só se volta a reclamar se o agente deixou de dar notícias há mais de uns minutos (por exemplo, reiniciou); caso contrário, 409 `plan_request_claimed`.
+         */
+        post: operations["claimPlanRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3485,7 +3568,7 @@ export interface components {
             /** @description Limitações ou versão em que passa a ser suportado. */
             note?: string;
         };
-        /** @description O que o servidor *realmente* suporta agora. O contrato pode definir mais do que o motor já faz: a UI e os clientes consultam isto para desativar o que ainda não existe, e o servidor responde `501 unsupported_capability` se o ignorarem. */
+        /** @description O que o servidor *realmente* suporta agora. O contrato pode definir mais do que o motor já faz: a UI e os clientes consultam isto para desativar o que ainda não existe, e o servidor responde `422 unsupported_capability` se o ignorarem. */
         Capabilities: {
             apiVersion: string;
             serverVersion?: string;
@@ -4123,6 +4206,64 @@ export interface components {
             /** @description Total de resultados que satisfazem o filtro (opcional; pode ser omitido em coleções grandes). */
             total?: number;
         };
+        /**
+         * @description `queued`: à espera de um agente · `planning`: um agente reclamou-o e está a compor e a avaliar os planos · `simulating`: planos publicados, a correr o what-if de cada um · `done`: terminado, `planIds` diz quais · `failed`: o agente não conseguiu (`error` diz porquê).
+         * @enum {string}
+         */
+        PlanRequestStatus: "queued" | "planning" | "simulating" | "done" | "failed";
+        /** @description Em que passo vai o agente, para o operador acompanhar. */
+        PlanRequestProgress: {
+            /** @description Passo estável para a interface (`claimed`, `composing`, `judging`, `adapting`, `publishing`, `simulating`, `done`). */
+            phase: string;
+            /** @description Frase para o operador. */
+            message?: string;
+            percent: number;
+        };
+        PlanRequest: components["schemas"]["ResourceMeta"] & {
+            simulationId: components["schemas"]["Id"] & unknown;
+            locationId: components["schemas"]["Id"];
+            status: components["schemas"]["PlanRequestStatus"];
+            /** @description O que o operador pediu, em texto livre. */
+            note?: string | null;
+            /** @description Minuto do fogo em que os planos decidem; sem ele, o do serviço dos agentes. */
+            atMinute?: number | null;
+            requestedBy?: string | null;
+            /** @description Agente que está a tratar o pedido. */
+            claimedBy?: string | null;
+            claimedAt?: components["schemas"]["Timestamp"] | null;
+            progress?: components["schemas"]["PlanRequestProgress"] | null;
+            /** @description Planos publicados por este pedido. */
+            planIds?: components["schemas"]["Id"][];
+            /** @description Porque falhou (`status: failed`). */
+            error?: string | null;
+            completedAt?: components["schemas"]["Timestamp"] | null;
+        };
+        /** @description Pedir aos agentes um novo par de planos (A e B) para uma simulação base, mesmo que já tenha planos. */
+        PlanRequestInput: {
+            /** @description O que o operador quer, em texto livre (fica no pedido). */
+            note?: string;
+            /** @description Minuto do fogo em que os planos decidem (p. ex. o minuto que está no ecrã). */
+            atMinute?: number;
+            requestedBy?: string;
+        };
+        /** @description Um agente fica com o pedido. */
+        PlanRequestClaim: {
+            /** @description Nome do agente (aparece ao operador). */
+            agent: string;
+        };
+        /** @description O agente que reclamou o pedido relata o progresso e o fim. Um pedido `done` ou `failed` já não muda. */
+        PlanRequestPatch: {
+            status?: components["schemas"]["PlanRequestStatus"];
+            progress?: components["schemas"]["PlanRequestProgress"];
+            planIds?: components["schemas"]["Id"][];
+            error?: string;
+        };
+        PlanRequestPage: {
+            items: components["schemas"]["PlanRequest"][];
+            /** @description Cursor opaco para pedir a página seguinte; `null` quando não há mais resultados. */
+            nextCursor: string | null;
+            total?: number;
+        };
     };
     responses: {
         /** @description Pedido malformado. */
@@ -4152,17 +4293,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Pedido bem formado mas inválido (`validation_failed`, `ignition_not_flammable`, …). */
+        /** @description Pedido bem formado mas inválido (`validation_failed`, `unsupported_capability`, `ignition_not_flammable`…). */
         Unprocessable: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/problem+json": components["schemas"]["Problem"];
-            };
-        };
-        /** @description Capacidade ainda não implementada (`unsupported_capability`). */
-        Unsupported: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4268,6 +4400,8 @@ export interface components {
         MinProbabilityQuery: number;
         ActionStatusFilter: components["schemas"]["ActionStatus"][];
         ActionTypeFilter: components["schemas"]["ActionType"][];
+        /** @description Id do pedido de plano. */
+        PlanRequestIdPath: components["schemas"]["Id"];
     };
     requestBodies: never;
     headers: {
@@ -6995,7 +7129,6 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
-            501: components["responses"]["Unsupported"];
             default: components["responses"]["UnexpectedError"];
         };
     };
@@ -7026,7 +7159,6 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
-            501: components["responses"]["Unsupported"];
             default: components["responses"]["UnexpectedError"];
         };
     };
@@ -7531,6 +7663,193 @@ export interface operations {
                     "application/json": components["schemas"]["WeatherSeries"];
                 };
             };
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["UnexpectedError"];
+        };
+    };
+    createPlanRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Id da simulação. */
+                simulationId: components["parameters"]["SimulationIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /** @example {
+                 *       "note": "O vento vai rodar para norte: defender Sande antes de atacar a cabeça.",
+                 *       "atMinute": 45,
+                 *       "requestedBy": "CODIS Braga"
+                 *     } */
+                "application/json": components["schemas"]["PlanRequestInput"];
+            };
+        };
+        responses: {
+            /** @description Já havia um pedido em curso para esta simulação */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequest"];
+                };
+            };
+            /** @description Pedido em fila para os agentes */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["UnexpectedError"];
+        };
+    };
+    listPlanRequests: {
+        parameters: {
+            query?: {
+                /** @description Máximo de itens por página. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Cursor devolvido em `nextCursor`. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Só recursos criados ou alterados depois deste instante. É assim que se acompanham mudanças (polling), sem canal de eventos. */
+                updatedAfter?: components["parameters"]["UpdatedAfter"];
+                /** @description Pedidos para esta simulação base. */
+                simulationId?: components["schemas"]["Id"];
+                status?: components["schemas"]["PlanRequestStatus"][];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequestPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["UnexpectedError"];
+        };
+    };
+    getPlanRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Id do pedido de plano. */
+                planRequestId: components["parameters"]["PlanRequestIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequest"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["UnexpectedError"];
+        };
+    };
+    updatePlanRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Id do pedido de plano. */
+                planRequestId: components["parameters"]["PlanRequestIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /** @example {
+                 *       "status": "simulating",
+                 *       "progress": {
+                 *         "phase": "simulating",
+                 *         "message": "A correr o what-if dos planos A e B",
+                 *         "percent": 80
+                 *       },
+                 *       "planIds": [
+                 *         "pla-7Kq2",
+                 *         "pla-9Xw1"
+                 *       ]
+                 *     } */
+                "application/merge-patch+json": components["schemas"]["PlanRequestPatch"];
+            };
+        };
+        responses: {
+            /** @description Pedido atualizado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["UnexpectedError"];
+        };
+    };
+    claimPlanRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Id do pedido de plano. */
+                planRequestId: components["parameters"]["PlanRequestIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /** @example {
+                 *       "agent": "agents@firetrace"
+                 *     } */
+                "application/json": components["schemas"]["PlanRequestClaim"];
+            };
+        };
+        responses: {
+            /** @description Pedido reclamado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
             default: components["responses"]["UnexpectedError"];
         };

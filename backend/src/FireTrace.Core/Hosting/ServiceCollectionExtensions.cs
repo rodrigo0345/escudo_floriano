@@ -78,12 +78,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(typeof(IEntityPolicy<>), typeof(DefaultPolicy<>)).AddSingleton(typeof(CrudService<>));
         services.AddSingleton<IEntityPolicy<Scenario>, ScenarioPolicy>().AddSingleton<IEntityPolicy<RoadClosure>, RoadClosurePolicy>();
         services.AddSingleton<IEntityPolicy<Organization>, OrganizationPolicy>().AddSingleton<IEntityPolicy<Station>, StationPolicy>().AddSingleton<IEntityPolicy<Vehicle>, VehiclePolicy>()
-            .AddSingleton<IEntityPolicy<PersonnelPool>, PersonnelPoolPolicy>().AddSingleton<IEntityPolicy<Equipment>, EquipmentPolicy>().AddSingleton<IEntityPolicy<Plan>, PlanPolicy>();
+            .AddSingleton<IEntityPolicy<PersonnelPool>, PersonnelPoolPolicy>().AddSingleton<IEntityPolicy<Equipment>, EquipmentPolicy>().AddSingleton<IEntityPolicy<Plan>, PlanPolicy>()
+            .AddSingleton<IEntityPolicy<PlanRequest>, PlanRequestPolicy>();
 
         services.AddSingleton<MetaService>().AddSingleton<WeatherService>();
         services.AddSingleton(new SmokePlume(s.Smoke)).AddSingleton<SmokeService>();
         services.AddSingleton<Population>().AddSingleton<MapQueries>().AddSingleton<RoadStatusResolver>().AddSingleton<RoadSpeeds>().AddSingleton<LandscapeBuilder>();
-        services.AddSingleton<CrewSafety>().AddSingleton<PlanValidator>().AddSingleton<ResponsibilityRules>().AddSingleton<TargetResolver>().AddSingleton<DispatchService>().AddSingleton<PlanService>();
+        services.AddSingleton<CrewSafety>().AddSingleton<PlanValidator>().AddSingleton<ResponsibilityRules>().AddSingleton<TargetResolver>().AddSingleton<DispatchService>().AddSingleton<PlanService>()
+            .AddSingleton<PlanRequestService>();
         services.AddSingleton<IResourceDispatcher, VehicleDispatcher>().AddSingleton<IResourceDispatcher, PersonnelDispatcher>().AddSingleton<IInterventionProvider, PlanInterventions>();
         services.AddSingleton<OwnerFilter>().AddSingleton<VehicleFilter>().AddSingleton<VehicleStateService>().AddSingleton<ResourceOverview>().AddSingleton<RoutingService>().AddSingleton<ArrivalEstimator>().AddSingleton<PlanRouter>()
             .AddSingleton<OperationSimulator>();

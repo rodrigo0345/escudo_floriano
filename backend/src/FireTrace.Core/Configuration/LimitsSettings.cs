@@ -4,4 +4,5 @@ namespace FireTrace.Core.Configuration;
 // records, ligados uma só vez ao arrancar. Não há valores por omissão: se faltar uma chave, a API não arranca.
 
 public sealed record LimitsSettings(int MinDurationMinutes, int MaxDurationMinutes, int MinIgnitions, int MaxIgnitions, int MaxEnsembleMembers, int MaxKeyframes, int MaxActionsPerPlan,
-    int MaxPageSize, int MaxWeatherDays, int MaxWaitSeconds, int MaxStepMinutes, int DefaultActionWindowMinutes, int ActionSmokeStepMinutes);
+    int MaxPageSize, int MaxWeatherDays, int MaxWaitSeconds, int MaxStepMinutes, int DefaultActionWindowMinutes, int ActionSmokeStepMinutes,
+    int PlanRequestStaleMinutes, int MaxPlanRequestNoteLength);

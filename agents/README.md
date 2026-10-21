@@ -74,6 +74,11 @@ The `agents` service in `docker-compose.yaml` runs `firetrace_agents/watcher.py`
 and for each baseline with no plans (`GET /plans?simulationId=`) it publishes plans A and B and asks for both what-if runs (`POST /plans/{id}/simulate`).
 A baseline started from the UI has its plans in tab **Planos** about 45 s later (Falperra, measured), with no terminal involved.
 
+The operator can also ask for a new pair at any time with **Pedir novo plano aos agentes** in tab **Planos** (optional note, and the minute on screen as the
+decision minute), even when the baseline already has plans. That creates a plan request (`POST /simulations/{id}/plan-requests`); each poll the watcher claims the
+oldest queued one (`POST /plan-requests/{id}/claim`), reports every step (`PATCH /plan-requests/{id}`) and closes it `done` with the plan ids or `failed` with the
+reason. The UI follows the request live, so nobody has to tell the agents a simulation id.
+
 ```powershell
 docker compose up -d --build agents      # needs the backend; never `down -v`
 docker compose logs -f agents

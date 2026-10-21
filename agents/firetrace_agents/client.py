@@ -351,3 +351,31 @@ class FiretraceClient:
             items.extend(page.get("items", []))
             cursor = page.get("nextCursor")
         return items
+
+    # -- the operator's requests for plans ------------------------------------------
+    def list_plan_requests(self, *, status: str | None = None, simulation_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """``GET /plan-requests`` (first page, newest first): filter by ``status`` (comma list) and ``simulationId``."""
+        params: dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        if simulation_id:
+            params["simulationId"] = simulation_id
+        return list(self._request("GET", "/plan-requests", params=params).get("items", []))
+
+    def claim_plan_request(self, request_id: str, agent: str) -> dict[str, Any]:
+        """``POST /plan-requests/{id}/claim``: this agent takes the request (409 ``plan_request_claimed`` if another one has it)."""
+        body = {"agent": agent}
+        if self._validate:
+            validate_against_spec("PlanRequestClaim", body)
+        return self._request("POST", self._fill("/plan-requests/{planRequestId}/claim", planRequestId=request_id), json_body=body)
+
+    def patch_plan_request(self, request_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """``PATCH /plan-requests/{id}`` (merge patch): progress, then ``done`` with ``planIds`` or ``failed`` with ``error``."""
+        if self._validate:
+            validate_against_spec("PlanRequestPatch", patch)
+        response = self._http.patch(self._fill("/plan-requests/{planRequestId}", planRequestId=request_id), content=json.dumps(patch),
+                                    headers={"Content-Type": "application/merge-patch+json"})
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
+        return dict(response.json())
