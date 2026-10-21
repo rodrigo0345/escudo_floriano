@@ -22,6 +22,7 @@ public sealed class PlansController(PlanService service, CrudService<Plan> plans
     {
         var filter = Filters.All(
             Filters.When<Plan>(q.Str("locationId"), p => p.LocationId), Filters.When<Plan>(q.Str("simulationId"), p => p.Basis?.SimulationId),
+            Filters.When<Plan>(q.Str("scenarioId"), p => p.Basis?.ScenarioId),
             Filters.When<Plan>(q.Str("variant"), p => p.Variant), Filters.When<Plan, PlanStatus>(q.Enums<PlanStatus>("status"), p => p.Status),
             p => q.Str("organizationId") is not { } org || p.Actions.Any(a => a.OrganizationId == org || a.SupportingOrganizationIds?.Contains(org) == true));
         var result = await plans.PageAsync(page, filter, ct);

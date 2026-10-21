@@ -8,7 +8,7 @@ using NetTopologySuite.Geometries;
 namespace FireTrace.Core.Services.Fire;
 
 /// <summary>
-/// Traduz o terreno do local para as entradas do ELMFIRE: a paisagem de 8 bandas (relevo, declive, exposição, combustível Scott &amp; Burgan,
+/// Traduz o terreno do local para as entradas dos motores de fogo (ELMFIRE e nativo): a paisagem de 8 bandas (relevo, declive, exposição, combustível Scott &amp; Burgan,
 /// cobertura/altura/base/densidade do copado) e o fator de ajuste da velocidade de propagação (fuel, edifícios, humidade ribeirinha, variabilidade e aceiros) mais as barreiras (estradas e rios).
 /// Os valores vêm de `FireTrace:Landscape` e `FireTrace:Fuels` (appsettings.json).
 /// </summary>

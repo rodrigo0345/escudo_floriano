@@ -2,7 +2,7 @@ import type { VehicleCapability, VehicleInput, VehicleType } from '@/api';
 
 /**
  * Reference catalogue of the vehicles Portuguese emergency organizations actually field, used to pre-fill the
- * resource forms and to drive the dispatch demo. `confidence` says how each template was obtained:
+ * resource forms and to drive dispatch planning. `confidence` says how each template was obtained:
  *  - `sourced`: the headline figures (water, fuel, speed...) were found in the linked public sources.
  *  - `estimate`: typical values for the class of vehicle; verify against the corporation's own fleet sheet.
  * Per-field notes say which numbers were NOT found online. Fuel capacity is the contract's `fuelCapacityL`.

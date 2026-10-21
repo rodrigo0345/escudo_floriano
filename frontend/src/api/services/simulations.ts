@@ -10,6 +10,8 @@ import type {
   SimulationSummary,
   Smoke,
   SpreadVectorCollection,
+  UnitStateList,
+  UnitTrack,
   WeatherSeries,
 } from '../types';
 
@@ -84,14 +86,14 @@ export const simulationsApi = {
 
   perimeter: async (simulationId: string, tMin: number): Promise<PerimeterCollection> => {
     const { data } = await http.get<PerimeterCollection>(`/simulations/${simulationId}/perimeters`, {
-      params: { tMin },
+      params: { tMin: Math.floor(tMin) },
     });
     return data;
   },
 
   vectors: async (simulationId: string, tMin: number): Promise<SpreadVectorCollection> => {
     const { data } = await http.get<SpreadVectorCollection>(`/simulations/${simulationId}/vectors`, {
-      params: { tMin },
+      params: { tMin: Math.floor(tMin) },
     });
     return data;
   },
@@ -111,7 +113,27 @@ export const simulationsApi = {
   },
 
   smoke: async (simulationId: string, tMin: number): Promise<Smoke> => {
-    const { data } = await http.get<Smoke>(`/simulations/${simulationId}/smoke`, { params: { tMin } });
+    const { data } = await http.get<Smoke>(`/simulations/${simulationId}/smoke`, { params: { tMin: Math.floor(tMin) } });
+    return data;
+  },
+
+  /** Every plan unit's position, status, water and fatigue at one minute. */
+  units: async (
+    simulationId: string,
+    tMin: number,
+    filters: { organizationId?: string; responsibility?: string } = {},
+  ): Promise<UnitStateList> => {
+    const { data } = await http.get<UnitStateList>(`/simulations/${simulationId}/units`, {
+      params: { tMin: Math.floor(tMin), ...filters },
+    });
+    return data;
+  },
+
+  /** A unit's per-minute track and the events on it (departure, arrival, refill, rest, return). */
+  unitTrack: async (simulationId: string, unitId: string, stepMin = 1): Promise<UnitTrack> => {
+    const { data } = await http.get<UnitTrack>(`/simulations/${simulationId}/units/${encodeURIComponent(unitId)}/track`, {
+      params: { stepMin },
+    });
     return data;
   },
 };

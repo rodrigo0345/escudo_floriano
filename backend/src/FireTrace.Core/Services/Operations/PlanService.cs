@@ -47,12 +47,17 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
             ? s.GetString() switch { "completed" => PlanStatus.Completed, "cancelled" => PlanStatus.Cancelled, var other => throw new ValidationException($"`status` só pode passar a completed ou cancelled (recebido '{other}').", "/status") }
             : null;
 
+        if (closing is { } status)
+        {
+            var closed = await CloseAsync(plan, status, ct);
+            return await plans.SaveAsync(closed, ct);
+        }
+
         // o que o servidor gere não se altera por PATCH
         var merged = MergePatch.Apply(plan, patch) with { Status = plan.Status, StatusHistory = plan.StatusHistory, Author = plan.Author, ActivatedAt = plan.ActivatedAt, CompletedAt = plan.CompletedAt };
         merged = await router.ApplyAsync(merged, ct);
         merged = merged with { Validation = await validator.ValidateAsync(merged, ct) };
         if (merged.Validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(merged.Validation.Issues);
-        if (closing is { } status) merged = await CloseAsync(merged, status, ct);
         return await plans.SaveAsync(merged, ct);
     }
 

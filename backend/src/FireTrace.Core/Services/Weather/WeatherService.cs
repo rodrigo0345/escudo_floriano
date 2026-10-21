@@ -34,9 +34,13 @@ public sealed class WeatherService(IWeatherSource source, IMapReader map, FireTr
             var pad = settings.Weather.Timeline;
             hourly = (await source.GetHourlyAsync(locationId, point, start.AddHours(-SpinUpHours(spec) - pad.ProviderPaddingBeforeHours), start.AddMinutes(durationMinutes).AddHours(pad.ProviderPaddingAfterHours), ct)).Select(h => h.ToSample()).ToList();
         }
-        else if (spec.Keyframes is not { Count: > 0 }) throw new ValidationException("Com `base: none` é preciso pelo menos um ponto-chave.", "/weather/keyframes");
+        else if (!HasManualWeather(spec)) throw new ValidationException("Com `base: none` é preciso pelo menos um ponto-chave ou uma série `custom_series`.", "/weather");
         return WeatherTimeline.Build(spec, hourly, start, durationMinutes, settings.Weather.Timeline, SpinUpHours(spec), spec.Provider?.Point ?? map.Locations.Get(locationId).WeatherPoint);
     }
+
+    /// <summary>Uma receita manual: pontos-chave ou, em alternativa, uma série `custom_series` com amostras.</summary>
+    static bool HasManualWeather(WeatherSpec spec) =>
+        spec.Keyframes is { Count: > 0 } || spec.Events?.OfType<CustomSeriesEvent>().Any(e => e.Enabled && e.Samples is { Count: > 0 }) == true;
 
     /// <summary>Pré-visualização: a série efetiva (com eventos e humidade do combustível), sem correr o motor.</summary>
     public async Task<WeatherResolveResponse> ResolveAsync(WeatherResolveRequest req, CancellationToken ct = default)

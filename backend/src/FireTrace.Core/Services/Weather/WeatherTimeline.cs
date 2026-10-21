@@ -36,8 +36,9 @@ public static class WeatherTimeline
         else foreach (var c in cells) (c.Wind, c.Dir, c.Humidity, c.Temp) = (t.NoneBase.WindKmh, t.NoneBase.WindFromDeg, t.NoneBase.HumidityPct, t.NoneBase.TempC);
 
         var interpolation = spec.Interpolation ?? new Interpolation();
-        ApplyKeyframes(cells, spec.Keyframes ?? new(), start, interpolation, spec.Base == WeatherBase.None);
-        foreach (var e in spec.Events ?? new()) if (e.Enabled) ApplyEvent(cells, e, start, interpolation, t);
+        bool baseIsNone = spec.Base == WeatherBase.None;
+        ApplyKeyframes(cells, spec.Keyframes ?? new(), start, interpolation, baseIsNone);
+        foreach (var e in spec.Events ?? new()) if (e.Enabled) ApplyEvent(cells, e, start, interpolation, t, baseIsNone);
 
         // a radiação vem da posição do sol (sítio e hora) e da nebulosidade final, depois dos pontos-chave e dos eventos: assim uma frente com chuva também escurece o dia
         return new WeatherTrack(cells.Select(c =>
@@ -87,7 +88,7 @@ public static class WeatherTimeline
     };
 
     // ------------------------------------------------------------------------------------------------ eventos
-    static void ApplyEvent(Cell[] cells, WeatherEvent e, DateTimeOffset start, Interpolation interp, WeatherTimelineSettings t)
+    static void ApplyEvent(Cell[] cells, WeatherEvent e, DateTimeOffset start, Interpolation interp, WeatherTimelineSettings t, bool baseIsNone)
     {
         switch (e)
         {
@@ -170,7 +171,7 @@ public static class WeatherTimeline
                 {
                     At = new TimeSpec(Time: x.Time), WindKmh = x.WindKmh, WindFromDeg = x.WindFromDeg, TempC = x.TempC, HumidityPct = x.HumidityPct,
                     GustKmh = x.GustKmh, PrecipitationMmH = x.PrecipitationMmH, CloudCoverPct = x.CloudCoverPct,
-                }).ToList(), start, interp, baseIsNone: false);
+                }).ToList(), start, interp, baseIsNone);
                 break;
         }
     }

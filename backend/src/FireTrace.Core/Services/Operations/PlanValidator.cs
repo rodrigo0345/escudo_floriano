@@ -59,7 +59,11 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
             switch (a)
             {
                 case RoadClosureAction c when knownRoads is not null:
-                    foreach (var road in c.RoadIds.Where(r => MapIds.RoadNumber(r) is not { } n || !knownRoads.Contains(n))) Add("error", "unknown_road", $"Troço '{road}' desconhecido.", $"{at}/roadIds", a.Id);
+                    if (c.Geometry is null && c.ClosureId is null)
+                    {
+                        foreach (var road in c.RoadIds.Where(r => MapIds.RoadNumber(r) is not { } n || !knownRoads.Contains(n)))
+                            Add("error", "unknown_road", $"Troço '{road}' desconhecido.", $"{at}/roadIds", a.Id);
+                    }
                     break;
                 case FireAttackAction f when f.EscapeRoutes is not { Count: > 0 } || f.SafetyZones is not { Count: > 0 }:
                     Add("warning", "missing_safety", "Ataque ao fogo sem vias de fuga ou zonas de segurança indicadas.", at, a.Id);

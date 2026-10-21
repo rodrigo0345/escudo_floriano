@@ -1,8 +1,8 @@
 namespace FireTrace.Core.Domain.Fuel;
 
 /// <summary>
-/// Classe de vegetação do mapa → combustível do motor ELMFIRE (modelos Scott &amp; Burgan 40, "fbfm40") e estrutura do copado. Os valores vêm de
-/// `appsettings.json` (FireTrace:Fuels): a física (Rothermel, Van Wagner, faíscas) é toda do ELMFIRE, aqui só se traduz o mapa de espécies.
+/// Classe de vegetação do mapa → combustível Scott &amp; Burgan 40 ("fbfm40") e estrutura do copado. Os valores vêm de
+/// `appsettings.json` (FireTrace:Fuels): a física (Rothermel, Van Wagner) é do motor, aqui só se traduz o mapa de espécies.
 /// </summary>
 /// <param name="Id">O id guardado na grelha "landcover" do mapa.</param>
 /// <param name="Key"></param>

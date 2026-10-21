@@ -1,4 +1,5 @@
 import type {
+  DispatchStatus,
   EquipmentKind,
   OrganizationType,
   PersonnelRole,
@@ -154,6 +155,21 @@ export const UNIT_PHASE_LABEL: Record<'base' | 'ordered' | 'en_route' | 'working
   filling: 'A carregar água',
   returning: 'A regressar',
   refueling: 'A reabastecer',
+};
+
+/** The server's `DispatchStatus` values, as shown on the unit tooltip. */
+export const DISPATCH_STATUS_LABEL: Record<DispatchStatus, string> = {
+  ordered: 'Ordem recebida',
+  en_route: 'A caminho',
+  on_scene: 'No local',
+  working: 'A trabalhar',
+  refilling: 'A reabastecer água',
+  resting: 'Em descanso',
+  grounded: 'Em terra',
+  returning: 'A regressar',
+  completed: 'Concluído',
+  cancelled: 'Cancelado',
+  failed: 'Falhou',
 };
 
 /** Display colour per organization type (map markers and lists). */

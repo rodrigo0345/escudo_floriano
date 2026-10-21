@@ -16,6 +16,7 @@ import type {
 
 export interface PlanQueryParams {
   locationId?: string;
+  scenarioId?: string;
   simulationId?: string;
   variant?: string;
   status?: PlanStatus;

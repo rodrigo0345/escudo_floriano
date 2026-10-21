@@ -48,7 +48,7 @@ export interface RunData {
   impact: Impact | null;
 }
 
-export type PanelTab = 'incident' | 'plans' | 'roads' | 'assets' | 'weather' | 'resources' | 'demo';
+export type PanelTab = 'incident' | 'plans' | 'roads' | 'assets' | 'weather' | 'resources';
 export type BaseLayer = 'satellite' | 'topo' | 'species';
 export type RescueOrigin = 'fire_brigade' | 'gnr' | 'inem' | 'any';
 export type BannerKind = 'error' | 'warn';
