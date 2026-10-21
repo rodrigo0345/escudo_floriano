@@ -200,8 +200,15 @@ export function useSimulationActions() {
       world.fire.setIgnitions(points);
       // a built-in scenario never changes, so reuse an already computed result instead of re-running it
       const previous = await simulationsApi.latestSucceeded(scenarioId);
-      if (previous) await showSimulation(async () => previous);
-      else await runSimulation({ scenarioId }, true);
+      if (previous) {
+        try {
+          await showSimulation(async () => previous, true);
+          return;
+        } catch (err) {
+          console.warn(`Simulação em cache ${previous.id} sem ficheiros no disco, a recalcular:`, err);
+        }
+      }
+      await runSimulation({ scenarioId }, true);
     },
     [world, showSimulation, runSimulation],
   );

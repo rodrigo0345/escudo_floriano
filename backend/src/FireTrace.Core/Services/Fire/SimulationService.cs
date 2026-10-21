@@ -188,8 +188,7 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
             Weather = Enumerable.Range(0, sc.DurationMinutes / sampleInterval + 1).Select(i =>
             {
                 var p = track.At(i * sampleInterval);
-                return new WeatherSample { Time = sc.Start.AddMinutes(i * sampleInterval), Source = "scenario", WindKmh = Math.Round(p.WindKmh, 1), WindFromDeg = Math.Round(p.WindFromDeg), HumidityPct = Math.Round(p.HumidityPct), TempC = Math.Round(p.TempC, 1),
-                    FineFuelMoisturePct = Math.Round(DeadFuelMoisture.EquilibriumMoisture(p.HumidityPct, p.TempC, settings.FuelMoisture) * 100, 1) };
+                return p.ToSample(sc.Start.AddMinutes(i * sampleInterval), "scenario") with { FineFuelMoisturePct = Math.Round(DeadFuelMoisture.SurfaceEquilibrium(p, settings.FuelMoisture) * 100, 1) };
             }).ToList(),
             BuildingFactor = effect.BuildingFactor,
         };

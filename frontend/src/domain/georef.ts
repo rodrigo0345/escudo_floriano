@@ -2,6 +2,7 @@ import type { Location } from '@/api';
 
 export type WorldPoint = [x: number, y: number, z: number];
 
+const EARTH_RADIUS_M = 6371000;
 const COMPASS_POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
 
 /** The 8-point compass label (Portuguese) for a bearing in degrees. */
@@ -28,7 +29,8 @@ export class Georef {
   readonly rw: number;
   readonly rh: number;
   readonly elev: Float32Array;
-  readonly exag = 1.5;
+  /** Real scale: the photoreal 3D city (true heights) has to sit on the terrain, so no vertical exaggeration. */
+  readonly exag = 1;
   readonly base: number;
   readonly gridWidth: number;
   readonly gridHeight: number;
@@ -55,6 +57,16 @@ export class Georef {
     this.rh = renderGrid.height;
     this.elev = elevations;
     this.base = location.elevationM?.min ?? 0;
+  }
+
+  /** Geographic center latitude of the terrain grid. */
+  get centerLat(): number {
+    return this.north - (this.gridHeight * this.dLat) / 2;
+  }
+
+  /** Geographic center longitude of the terrain grid. */
+  get centerLon(): number {
+    return this.west + (this.gridWidth * this.dLon) / 2;
   }
 
   /** Normalized coordinates 0..1 (u = west→east, v = north→south). */
@@ -85,15 +97,23 @@ export class Georef {
     );
   }
 
-  y(elev: number): number {
-    return ((elev - this.base) / this.unit) * this.exag;
+  /**
+   * World height of a point `elev` metres above sea level at world position (`x`, `z`). The map is a flat sheet, but the earth is not: a point `d` metres from
+   * the centre lies `d²/2R` below the tangent plane (12 m at 12 km). Bending the sheet the same way keeps it together with the 3D city tiles, which are projected
+   * on that tangent plane (`PhotorealLayer`).
+   */
+  y(elev: number, x = 0, z = 0): number {
+    const dropM = ((x * x + z * z) * this.unit * this.unit) / (2 * EARTH_RADIUS_M);
+    return ((elev - dropM - this.base) / this.unit) * this.exag;
   }
 
   /** lat/lon → world position. */
   world(lat: number, lon: number, lift = 0): WorldPoint {
     const [u, v] = this.uv(lat, lon);
     const e = this.elevAtUV(u, v);
-    return [this.x(u), this.y(e) + lift, this.z(v)];
+    const x = this.x(u);
+    const z = this.z(v);
+    return [x, this.y(e, x, z) + lift, z];
   }
 
   /** world x/z (ground plane) → lat/lon. */

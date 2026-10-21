@@ -1,8 +1,22 @@
 import { create } from 'zustand';
 
 import type { Capabilities, Location, Plan, Smoke } from '@/api';
+import { extractTimelineEventsFromSnapshot } from '@/domain/simulationForm';
 
-import type { BaseLayer, Banner, BannerKind, IgnitionPoint, Job, LocationData, PanelTab, Progress, RescueOrigin, RunData } from './types';
+import type { CitySource } from '@/engine/layers/photorealLayer';
+import type {
+  BaseLayer,
+  Banner,
+  BannerKind,
+  IgnitionPoint,
+  Job,
+  LocationData,
+  PanelTab,
+  Progress,
+  RescueOrigin,
+  RunData,
+  TimelineRangeEvent,
+} from './types';
 
 /**
  * The one client-side state container. State here is plain data; side effects (API calls,
@@ -23,6 +37,8 @@ export interface AppState {
   scenarioId: string | null;
   ignitions: IgnitionPoint[];
   run: RunData | null;
+  /** Custom range-based weather events active on the timeline and simulation form (Requirement 1 & 1.1). */
+  customEvents: TimelineRangeEvent[];
   /** The agents' plan drawn on the map (the one whose what-if run is on screen); `null` = nothing drawn. */
   activePlan: Plan | null;
   /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
@@ -45,6 +61,12 @@ export interface AppState {
   probMode: boolean;
   smokeEnabled: boolean;
   windEnabled: boolean;
+  /** The photoreal 3D city (local tiles). Off by default: nothing is loaded until the operator turns it on. */
+  cityEnabled: boolean;
+  /** Where the 3D city comes from, and (live only) the Google key the operator typed: memory only, never persisted. */
+  citySource: CitySource;
+  cityKey: string;
+  cloudsEnabled: boolean;
   windDensity: number;
   pickIgnitionSlot: 0 | 1 | null;
   helpOpen: boolean;
@@ -63,6 +85,10 @@ export interface AppState {
   addIgnition: (ignition: IgnitionPoint) => void;
   removeIgnition: (index: number) => void;
   setRun: (run: RunData | null) => void;
+  setCustomEvents: (events: TimelineRangeEvent[]) => void;
+  addCustomEvent: (event: TimelineRangeEvent) => void;
+  updateCustomEvent: (id: string, patch: Partial<TimelineRangeEvent>) => void;
+  removeCustomEvent: (id: string) => void;
   setBaseSimulationId: (simulationId: string | null) => void;
   setActivePlan: (plan: Plan | null) => void;
   setImpact: (impact: RunData['impact']) => void;
@@ -77,7 +103,11 @@ export interface AppState {
   setBaseLayer: (layer: BaseLayer) => void;
   setProbMode: (on: boolean) => void;
   setSmokeEnabled: (on: boolean) => void;
+  setCityEnabled: (on: boolean) => void;
+  setCitySource: (source: CitySource) => void;
+  setCityKey: (key: string) => void;
   setWindEnabled: (on: boolean) => void;
+  setCloudsEnabled: (on: boolean) => void;
   setWindDensity: (density: number) => void;
   setPickIgnitionSlot: (slot: 0 | 1 | null) => void;
   setHelpOpen: (open: boolean) => void;
@@ -97,6 +127,7 @@ export const useAppStore = create<AppState>((set) => ({
   scenarioId: null,
   ignitions: [],
   run: null,
+  customEvents: [],
   baseSimulationId: null,
   activePlan: null,
   job: null,
@@ -113,6 +144,10 @@ export const useAppStore = create<AppState>((set) => ({
   probMode: false,
   smokeEnabled: true,
   windEnabled: false,
+  cityEnabled: false,
+  citySource: 'live',
+  cityKey: '',
+  cloudsEnabled: true,
   windDensity: 50,
   pickIgnitionSlot: null,
   helpOpen: false,
@@ -130,7 +165,30 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({ ignitions: s.ignitions.map((ig, i) => (i === index ? { ...ig, ...patch } : ig)) })),
   addIgnition: (ignition) => set((s) => (s.ignitions.length >= 2 ? {} : { ignitions: [...s.ignitions, ignition] })),
   removeIgnition: (index) => set((s) => ({ ignitions: s.ignitions.filter((_, i) => i !== index), pickIgnitionSlot: null })),
-  setRun: (run) => set({ run }),
+  setRun: (run) =>
+    set((s) => {
+      const parsed = run
+        ? extractTimelineEventsFromSnapshot(run.simulation.scenarioSnapshot, run.durationMinutes)
+        : [];
+      return {
+        run,
+        // If the incoming run snapshot has explicit events, keep or seed them
+        customEvents: parsed.length > 0 ? parsed : s.customEvents,
+      };
+    }),
+  setCustomEvents: (customEvents) => set({ customEvents }),
+  addCustomEvent: (event) =>
+    set((s) => ({
+      customEvents: [...s.customEvents.filter((e) => e.id !== event.id), event],
+    })),
+  updateCustomEvent: (id, patch) =>
+    set((s) => ({
+      customEvents: s.customEvents.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    })),
+  removeCustomEvent: (id) =>
+    set((s) => ({
+      customEvents: s.customEvents.filter((e) => e.id !== id),
+    })),
   setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setActivePlan: (activePlan) => set({ activePlan }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
@@ -145,7 +203,11 @@ export const useAppStore = create<AppState>((set) => ({
   setBaseLayer: (baseLayer) => set({ baseLayer }),
   setProbMode: (probMode) => set({ probMode }),
   setSmokeEnabled: (smokeEnabled) => set({ smokeEnabled }),
+  setCityEnabled: (cityEnabled) => set({ cityEnabled }),
+  setCitySource: (citySource) => set({ citySource }),
+  setCityKey: (cityKey) => set({ cityKey }),
   setWindEnabled: (windEnabled) => set({ windEnabled }),
+  setCloudsEnabled: (cloudsEnabled) => set({ cloudsEnabled }),
   setWindDensity: (windDensity: number) => set({ windDensity }),
   setPickIgnitionSlot: (pickIgnitionSlot) => set({ pickIgnitionSlot }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
@@ -154,3 +216,7 @@ export const useAppStore = create<AppState>((set) => ({
   showBanner: (text, kind = 'error') => set({ banner: { text, kind } }),
   dismissBanner: () => set({ banner: null }),
 }));
+
+if (typeof window !== 'undefined') {
+  (window as any).__APP_STORE__ = useAppStore;
+}

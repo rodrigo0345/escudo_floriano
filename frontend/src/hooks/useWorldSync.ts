@@ -23,6 +23,9 @@ export function useWorldSync(): void {
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const windEnabled = useAppStore((s) => s.windEnabled);
+  const cityEnabled = useAppStore((s) => s.cityEnabled);
+  const citySource = useAppStore((s) => s.citySource);
+  const cityKey = useAppStore((s) => s.cityKey);
   const windDensity = useAppStore((s) => s.windDensity);
   const run = useAppStore((s) => s.run);
   const activePlan = useAppStore((s) => s.activePlan);
@@ -57,6 +60,18 @@ export function useWorldSync(): void {
   useEffect(() => {
     if (world) world.smoke.enabled = smokeEnabled;
   }, [world, smokeEnabled]);
+
+  // the photoreal 3D city from local tiles (only ever on when the operator asked for it)
+  useEffect(() => {
+    if (!world) return;
+    const { showBanner, setCityEnabled } = useAppStore.getState();
+    if (!world.setCity(cityEnabled, citySource, cityKey) && cityEnabled) {
+      setCityEnabled(false);
+      showBanner(citySource === 'live' ? 'Cidade 3D ao vivo: falta a chave ou já se usaram as sessões de hoje.' : 'Cidade 3D: não há tiles locais.', 'warn');
+    }
+    // a live session ends with the layer: the key is cleared from memory when it is switched off
+    if (!cityEnabled && citySource === 'live' && cityKey) useAppStore.getState().setCityKey('');
+  }, [world, cityEnabled, citySource, cityKey]);
 
   // convective-wind field: reload with the run, then follow the playback minute
   useEffect(() => {

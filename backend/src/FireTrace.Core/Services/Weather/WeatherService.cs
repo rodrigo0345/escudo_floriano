@@ -35,7 +35,7 @@ public sealed class WeatherService(IWeatherSource source, IMapReader map, FireTr
             hourly = (await source.GetHourlyAsync(locationId, point, start.AddHours(-SpinUpHours(spec) - pad.ProviderPaddingBeforeHours), start.AddMinutes(durationMinutes).AddHours(pad.ProviderPaddingAfterHours), ct)).Select(h => h.ToSample()).ToList();
         }
         else if (spec.Keyframes is not { Count: > 0 }) throw new ValidationException("Com `base: none` é preciso pelo menos um ponto-chave.", "/weather/keyframes");
-        return WeatherTimeline.Build(spec, hourly, start, durationMinutes, settings.Weather.Timeline, SpinUpHours(spec));
+        return WeatherTimeline.Build(spec, hourly, start, durationMinutes, settings.Weather.Timeline, SpinUpHours(spec), spec.Provider?.Point ?? map.Locations.Get(locationId).WeatherPoint);
     }
 
     /// <summary>Pré-visualização: a série efetiva (com eventos e humidade do combustível), sem correr o motor.</summary>
@@ -53,13 +53,7 @@ public sealed class WeatherService(IWeatherSource source, IMapReader map, FireTr
         {
             var p = track.At(i * step);
             var f = fuel[i];
-            return new WeatherSample
-            {
-                Time = req.Start.AddMinutes(i * step), Source = "scenario", WindKmh = Math.Round(p.WindKmh, 1), WindFromDeg = Math.Round(p.WindFromDeg),
-                GustKmh = p.GustKmh > 0 ? Math.Round(p.GustKmh, 1) : null, TempC = Math.Round(p.TempC, 1), HumidityPct = Math.Round(p.HumidityPct),
-                PrecipitationMmH = p.PrecipitationMmH > 0 ? Math.Round(p.PrecipitationMmH, 1) : null,
-                FuelMoisture = new FuelMoisture(Math.Round(f.M1, 1), Math.Round(f.M10, 1), Math.Round(f.M100, 1), f.Lh, f.Lw),
-            };
+            return p.ToSample(req.Start.AddMinutes(i * step), "scenario") with { FuelMoisture = new FuelMoisture(Math.Round(f.M1, 1), Math.Round(f.M10, 1), Math.Round(f.M100, 1), f.Lh, f.Lw) };
         }).ToList();
 
         var spec = ResolvedEnsemble.Of(req.Weather.Ensemble, settings.Defaults.Ensemble);

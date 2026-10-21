@@ -31,7 +31,7 @@ public static class FireJobFingerprint
     static void Member(IncrementalHash hash, MemberWeather member)
     {
         Text(hash, member.Name);
-        foreach (var p in member.Weather.Points) { Number(hash, p.Minute); Number(hash, p.WindKmh); Number(hash, p.WindFromDeg); Number(hash, p.HumidityPct); Number(hash, p.TempC); Number(hash, p.GustKmh); Number(hash, p.PrecipitationMmH); }
+        foreach (var p in member.Weather.Points) { Number(hash, p.Minute); Number(hash, p.WindKmh); Number(hash, p.WindFromDeg); Number(hash, p.HumidityPct); Number(hash, p.TempC); Number(hash, p.GustKmh); Number(hash, p.PrecipitationMmH); Number(hash, p.CloudCoverPct); Number(hash, p.SolarRadiationWm2); }
         Number(hash, member.Weather.WindScale); Number(hash, member.Weather.DirOffsetDeg); Number(hash, member.Weather.MoistScale);
         if (member.Adjustment is { } adjustment) Bytes(hash, MemoryMarshal.AsBytes<float>(adjustment));
         if (member.Wind is { } wind)

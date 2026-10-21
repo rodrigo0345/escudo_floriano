@@ -113,6 +113,7 @@ env/
 /data/engine-cache/
 /data/runs/
 /data/imagery/
+/data/tiles3d/
 /data/jobs/*
 !/data/jobs/.gitkeep
 /scratch/
