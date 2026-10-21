@@ -26,6 +26,7 @@ public sealed class OperationSimulator(
     IDocumentStore<Vehicle> vehicles,
     IDocumentStore<PersonnelPool> pools,
     IDocumentStore<Station> stations,
+    IDocumentStore<Dispatch> dispatches,
     IFireRunRepository runs,
     ArrivalEstimator arrival,
     TargetResolver targets,
@@ -155,6 +156,64 @@ public sealed class OperationSimulator(
                     perMinute,
                     vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type)));
             }
+        }
+
+        // Older plans (and plans activated through the dispatch API) carry their resources on dispatches, not on actions.
+        foreach (var dispatch in (await dispatches.ListAsync(ct)).Where(d => d.PlanId == plan.Id && d.ResourceType != ResourceType.Equipment))
+        {
+            if (demands.Any(d => d.UnitId == dispatch.ResourceId)) continue;
+            if (dispatch.Target.IsEmpty || await targets.PositionAsync(dispatch.Target, plan.LocationId, ct) is not { } site) continue;
+            var vehicle = dispatch.ResourceType == ResourceType.Vehicle ? await vehicles.GetAsync(dispatch.ResourceId, ct) : null;
+            var pool = dispatch.ResourceType == ResourceType.PersonnelPool ? await pools.GetAsync(dispatch.ResourceId, ct) : null;
+            if (vehicle is null && pool is null) continue;
+
+            var action = dispatch.ActionId is { } actionId ? plan.Actions.FirstOrDefault(a => a.Id == actionId) : null;
+            var start = Math.Max(0, action is null ? 0 : PlanTiming.StartMinutes(plan, action));
+            if (dispatch.StartAt is { } at)
+            {
+                // A dispatch created by the operator carries the wall-clock activation time. If it sits outside the
+                // scenario window (a historical exercise, for instance), anchor it to T+0 instead of hiding the unit.
+                var relative = (at - run.Start).TotalMinutes;
+                if (relative >= 0 && relative <= run.DurationMinutes) start = relative;
+            }
+            var duration = Math.Max(1, dispatch.ExpectedDurationMinutes ?? action?.ExpectedDurationMinutes ?? settings.Limits.DefaultActionWindowMinutes);
+            var origin = vehicle is not null
+                ? await arrival.OriginAsync(vehicle, dispatch.FromStationId, ct)
+                : pool?.StationId is { } stationId ? (await stations.GetAsync(stationId, ct))?.Position : null;
+            var estimate = vehicle is not null && origin is not null
+                ? await arrival.EstimateAsync(vehicle, origin, site, plan.LocationId, dispatch.StartAt, ct)
+                : null;
+            var eta = Math.Max(0, dispatch.EtaMinutes ?? estimate?.Minutes ?? 0);
+            var route = dispatch.Route ?? estimate?.Route;
+            var capacity = vehicle?.WaterCapacityL ?? 0;
+            var pump = vehicle?.PumpFlowLpm ?? 0;
+            var ruleConsumption = double.TryParse(settings.Rules.Water.ConsumptionLpm, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+            var perMinute = vehicle is not null && capacity > 0
+                ? Math.Max(1, pump > 0 ? pump : ruleConsumption) * settings.Rules.Water.DutyCycle
+                : 0;
+            var workStart = start + eta;
+
+            demands.Add(new Demand(
+                dispatch.ResourceId,
+                dispatch.ResourceType,
+                vehicle?.Callsign ?? pool?.Role.ToString(),
+                vehicle?.OrganizationId ?? pool?.OrganizationId ?? dispatch.OrganizationId,
+                dispatch.Responsibility,
+                dispatch.Personnel > 0 ? dispatch.Personnel : vehicle?.CrewCapacity ?? 1,
+                dispatch.Target,
+                site,
+                vehicle,
+                pool,
+                route,
+                origin,
+                start,
+                eta,
+                workStart,
+                workStart + duration,
+                workStart + duration + eta,
+                capacity,
+                perMinute,
+                vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type)));
         }
         return demands;
     }
