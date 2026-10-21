@@ -170,7 +170,7 @@ class TestMinimizeBurnedArea:
         [
             (FirefighterTier.HELICOPTER, "aerial_drop"),
             (FirefighterTier.TRUCK, "crew_deployment"),
-            # fuel_removal is the squad's tame-fire tool, but the live backend rejects its payload (UNSAFE_ON_WIRE)
+            # a squad builds a handline; it clears a fuel strip only when the orchestrator found one it can finish in time (Assignment.fuel_strip)
             (FirefighterTier.SQUAD, "fire_line"),
         ],
         ids=["helicopter", "truck", "squad"],

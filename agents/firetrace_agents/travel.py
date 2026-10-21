@@ -41,6 +41,8 @@ class Travel:
     drive_minutes: float = 0.0
     last_mile_m: float = 0.0
     last_mile_minutes: float = 0.0
+    geometry: dict[str, Any] | None = None
+    """The road the backend routed the unit along (GeoJSON LineString): the plan carries it so the unit is shown on the road, not across the terrain."""
 
     def describe(self) -> str:
         if not self.reachable:
@@ -73,24 +75,47 @@ def centroid(geometry: dict[str, Any] | None) -> dict[str, float] | None:
 class TravelPlanner:
     """Time to arrive for the units of one planning cycle. Routes are cached: candidates over the same forecast ask the same questions."""
 
-    def __init__(self, client: FiretraceClient, *, location_id: str, simulation_id: str, at: str | None, rules: dict[str, Any] | None, cache: dict[Any, Travel] | None = None) -> None:
-        self.client, self.location_id, self.simulation_id, self.at = client, location_id, simulation_id, at
+    def __init__(
+        self, client: FiretraceClient, *, location_id: str, simulation_id: str, at: str | None, rules: dict[str, Any] | None, cache: dict[Any, Travel] | None = None,
+        avoid_fire: bool = True,
+    ) -> None:
+        """``avoid_fire=False`` leaves the predicted fire out of the route: how long the drive takes, for a target that is itself burning."""
+        self.client, self.location_id, self.at = client, location_id, at
+        self.avoid_fire = avoid_fire
+        self.simulation_id = simulation_id if avoid_fire else ""
         movement = (rules or {}).get("movement") or {}
         helicopter = (((rules or {}).get("aerial") or {}).get("helicopter")) or {}
         self.off_road_kmh = float(movement.get("offRoadSpeedKmh") or DEFAULT_OFF_ROAD_KMH)
         self.helicopter_kmh = float(helicopter.get("cruiseSpeedKmh") or DEFAULT_HELICOPTER_KMH)
         self._cache = cache if cache is not None else {}
         self._stations: dict[str, dict[str, float] | None] = {}
+        self._org_stations: dict[str, list[tuple[str, dict[str, float]]]] = {}
         self.unavailable = False  # set once the routing endpoint failed: the cycle goes on without ETAs instead of trying every unit
 
     def eta(self, agent: FirefighterAgent, target: dict[str, Any]) -> Travel:
-        station = agent.observation.station_id
+        station = agent.observation.station_id or self._home_station(agent, target)
         key = (agent.tier.value, station, agent.observation.vehicle_type, round(float(target["lat"]), 3), round(float(target["lon"]), 3), self.simulation_id, self.at)
         if key not in self._cache:
             if len(self._cache) > CACHE_LIMIT:
                 self._cache.clear()
             self._cache[key] = self._compute(agent, target, station)
         return self._cache[key]
+
+    def _home_station(self, agent: FirefighterAgent, target: dict[str, Any]) -> str | None:
+        """A crew registered to its organization and not to a station (the generic pool) leaves from the organization's station nearest the target."""
+        organization = agent.observation.organization_id
+        if agent.observation.vehicle_id or not organization or agent.tier is FirefighterTier.HELICOPTER:
+            return None
+        if organization not in self._org_stations:
+            try:
+                found = self.client.list_stations(organization)
+            except ApiProblem:
+                found = []
+            self._org_stations[organization] = [(str(s["id"]), s["position"]) for s in found if s.get("position")]
+        stations = self._org_stations[organization]
+        if not stations:
+            return None
+        return min(stations, key=lambda s: distance_m(float(target["lat"]), float(target["lon"]), float(s[1]["lat"]), float(s[1]["lon"])))[0]
 
     # -- ways to get there -----------------------------------------------------------
     def _compute(self, agent: FirefighterAgent, target: dict[str, Any], station: str | None) -> Travel:
@@ -100,11 +125,14 @@ class TravelPlanner:
             return self._fly(station, target)
         if self.unavailable:
             return Travel(True, None, "encaminhamento indisponível", station)
-        request: dict[str, Any] = {"locationId": self.location_id, "fromStationId": station, "to": {"lat": float(target["lat"]), "lon": float(target["lon"])}, "simulationId": self.simulation_id}
+        request: dict[str, Any] = {"locationId": self.location_id, "fromStationId": station, "to": {"lat": float(target["lat"]), "lon": float(target["lon"])}}
+        if self.avoid_fire:
+            request["simulationId"] = self.simulation_id
         if self.at:
             request["at"] = self.at
         if agent.observation.vehicle_type:
-            request["vehicle"] = {"vehicleType": agent.observation.vehicle_type}
+            # the whole profile, as the backend's own checks use it (width, weight, slope...): a route that only knows the type may use a road the vehicle cannot
+            request["vehicle"] = {"vehicleType": agent.observation.vehicle_type, **(agent.observation.profile or {})}
         try:
             route = self.client.route(request)
         except ApiProblem as error:
@@ -120,7 +148,7 @@ class TravelPlanner:
             return Travel(False, None, f"a estrada mais próxima fica a {gap:.0f} m do alvo", station, drive, gap)
         speed = self.off_road_kmh if agent.observation.off_road else WALK_SPEED_KMH
         walk = gap / 1000.0 / speed * 60.0
-        return Travel(True, drive + walk, "estrada", station, drive, gap, walk)
+        return Travel(True, drive + walk, "estrada", station, drive, gap, walk, geometry=route.get("geometry"))
 
     def _fly(self, station: str, target: dict[str, Any]) -> Travel:
         base = self._station_position(station)
@@ -128,6 +156,10 @@ class TravelPlanner:
             return Travel(True, None, "posição da base desconhecida", station)
         minutes = distance_m(base["lat"], base["lon"], float(target["lat"]), float(target["lon"])) / 1000.0 / self.helicopter_kmh * 60.0
         return Travel(True, minutes, "voo directo", station, minutes)
+
+    def station_position(self, station_id: str) -> dict[str, float] | None:
+        """Where a station is (cached): the GNR agent ranks its patrols by how near their station is."""
+        return self._station_position(station_id)
 
     def _station_position(self, station_id: str) -> dict[str, float] | None:
         if station_id not in self._stations:

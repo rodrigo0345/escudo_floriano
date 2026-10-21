@@ -23,6 +23,14 @@ HELICOPTER_SHARE = 1 / 3
 TRUCK_SHARE = 2 / 3
 
 
+def bearing_to(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial bearing (degrees, 0 = north) from the first point to the second."""
+    p1, p2, dl = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
 def destination(lat: float, lon: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
     """Point ``distance_m`` from (lat, lon) along ``bearing_deg``; a negative distance goes the opposite way."""
     brg, ang = math.radians(bearing_deg), distance_m / EARTH_RADIUS_M
@@ -67,6 +75,8 @@ class Assignment:
     place: dict[str, Any] | None = None  # a threatened place/facility (`ThreatenedAsset`)
     segment_m: float | None = None  # how much line this unit can build this stage (None = the tier's fixed length)
     offset_m: float = 0.0  # where along the barrier its segment sits, from the sector's centre (laid end to end with the others)
+    reserve: bool = False  # in an initial attack, a unit the fire's outline has no room for: it keeps to the usual tactic (blocks ahead)
+    fuel_strip: Any = None  # a ``fuelbreak.Strip`` this crew can open before the fire arrives: it clears fuel ahead of the fire instead of building a handline
 
 
 def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12) -> list[Sector]:

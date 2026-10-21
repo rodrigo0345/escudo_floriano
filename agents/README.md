@@ -18,7 +18,12 @@ simulation, decide what to do with a stated reason, publish plans **A** (life fi
 | `sectors.py` | Turns the backend's predicted spread vectors into ranked **sectors** of the fire front and assigns units to them (or lays their lines end to end as one barrier). |
 | `capacity.py` | How many metres of line a unit builds in a stage. **Only one rate is the backend's** (`FireLineRateMPerHourPerPerson`, 30 m/h per person); the rest are assumptions, marked in the file. |
 | `life.py` | **Lives**: for each place in the fire's way, evacuate in time or shelter in place; vulnerable first. A model, not a backend measure (see limits). |
+| `gnr.py` | **GNR**: closes the roads `GET /simulations/{id}/road-status` says the fire cuts (or has cut), joins touching segments into one closure and puts a patrol at each end (`traffic_control_point`), the nearest unit that arrives before the fire does. Closures carry `exemptions: [emergency_vehicles]` (the backend's routing lets those through) unless the fire is above the rules' `noEffectFromKwm`. |
 | `orchestrator.py` | Builds the team from the live fleet, collects decisions, guards them (tier matrix, `/capabilities`, resource conflicts), validates with `POST /plans/validate`, publishes plans A and B. |
+| `alternatives.py` | Plans A (offensive: every unit that can work safely, plus fuel breaks ahead of the fire) and B (defensive: only what is needed, the reserve kept back, houses defended) as two real alternatives, each judged by the engine (area, buildings, units, wrong wind). |
+| `judge.py` | **The safety rule: a plan that predicts a crew casualty is never published, A or B.** Each plan is judged on the forecast and on two runs with the wind wrong by 30° either way; the crews caught have their stay cut short or are not sent. |
+| `fuelbreak.py` | Squads that are not on the fire's outline clear a fuel strip ahead of the fire (`fuel_removal`), only where they can get there, finish (15 m/h per person, the backend's rate) and be gone 20 min before the fire arrives. The engine applies a strip from minute 0, so this feasibility check is the plan's only realism guard. |
+| `adaptation.py` | **Re-planning along the fire.** Every `AGENTS_REPLAN_MINUTES` (45) the agents read the plan's what-if run: if the fire is not under control they decide again with the units that are free (the reserve, those waiting at a staging point, those whose work ended, those still on the road) on the fire as the plan left it; a wave is kept only if the engine says it helps and keeps zero casualties, first trying to attack the fire, then to defend what is in its way. |
 | `campaign.py` | The rolling-horizon loop: forecast → plan → choose → execute → next state, with a **chained control** (same chain, no response). |
 
 ## Scripts (`scripts/`), run from the repo root
@@ -51,6 +56,17 @@ Settings are the `AGENTS_*` variables listed at the top of `watcher.py` (poll in
 starts with `[lab]` (the experiments of the scripts) are left alone, and a restart never plans twice. The image is built from `agents/` (the root `.dockerignore`
 leaves it out) and reads the contract from the mounted `api-spec/`.
 
+**The map replays the plan's units** (`frontend/src/domain/planUnits.ts`): when a plan is on the map each vehicle leaves its station when its action starts, follows the road the
+backend stored for it (`resources[].route`), is on the spot at the backend's `etaMinutes`, works until its effect ends and then leaves the map. Everything comes from the plan the
+backend stored and simulated, and the playback clock moves them; a helicopter or a crew on foot (no stored route) goes straight from its station. There is no water or fatigue in it
+(the agents do not model them yet) in that fallback. The map reads the backend's own unit simulator first (`GET /simulations/{id}/units` and `/units/{unitId}/track`: route, arrival,
+water, refills, rest, return) and only falls back to the plan on a server without it.
+
+**Units arrive in waves (off by default: `OrchestratorAgent.arrival_waves`).** Measured: it helped Penha plan B (4.3 → 3.6 ha) and hurt Falperra (A 254 → 301 ha, B 340 → 424 ha), so the
+single lead stays until the placement is per unit on arrival. The fire grows while the slower units drive, so the units are split by arrival time (before the median and after) and each wave is placed on the fire
+where it will be when it gets there; a wave that arrives after the fire passed the intensity direct attack stops working at blocks ahead of the fire instead. A crew registered to
+its organization and not to a station (the generic pool) leaves from the organization's station nearest the target.
+
 ## How a plan is made
 
 1. `GET /simulations/{id}/threatened`, `/summary`, `/vectors` and `GET /rules` give the situation (never a guessed position).
@@ -67,6 +83,26 @@ leaves it out) and reads the contract from the mounted `api-spec/`.
   minute 90), across 5 scenarios; only Penha (−15%) and Santa Marinha (−25%) gain with an early start, and without trucks nothing does. Before `main` was merged
   (effects held from the start of the window) the same matrix gave −61% and −28%: those numbers are obsolete. Fire lines alone cut ~3% in a probe; a
   `fuel_removal` break cut ~12% (see proposal 1).
+* **Initial attack (`Orchestrator._initial_attack`, `_fit_on_outline`).** The backend weakens direct attack with the fire's intensity (nothing from `noEffectFromKwm`), so *when*
+  and *where* the crews go decides everything. The orchestrator times the drive of each unit (the median is the lead); if the fire is still below that intensity when they arrive,
+  crews go on the fire's own outline at that minute (not on lines ahead of it) and work as long as a crew can (`crews.maxContinuousWorkMinutes`); otherwise it blocks ahead as before.
+  The backend multiplies the effect of crews on the same ground without limit, but its rules cap one crew at `maxEffectiveness`: crews fill a zone only up to that, the outline has
+  `perimeter / (2 × zone radius)` zones, and the rest are in reserve. Measured on Penha, the same plan decided at T+0 / 15 / 30 / 45 / 60 min: **−100% / −99% / −98% / −37% / −1%**
+  burned area against the base (travel times included). One scenario, with the forecast being the real fire; the backend warns `crew_in_fire` for these crews (casualties not
+  measured), and the service now decides at T+0 (`AGENTS_AT_MINUTE`): at T+60 the same agents gain about 1%.
+* **Plans A and B (`alternatives.py`) are two plans judged by the engine, not two orderings of one.** A is the maximum attack; B is the same fire fought so that no crew is caught
+  (the backend's `CrewSafety` says a crew is caught if the ground it stands on burns while it is there: each exposed crew's stay is cut to end before the fire, or it is not sent) with
+  the spare engines defending houses. To know what a plan costs the agent publishes it, asks for its what-if, reads `stats` and `crewExposures` and deletes it. Measured, A against B:
+  Penha 3.2 ha / 12 casualties vs 3.2 ha / 0; São Sabagudo 377 ha / 12 vs 377 ha / 0; Santa Marinha identical (no casualties in either). **B was never worse than A in burned area**, so
+  in these scenarios there is no real trade-off between them: the crews taken out were redundant. A genuine second axis (robustness to a wrong forecast, or the number of units committed) is still to do.
+  The agent also sets `expectedDurationMinutes` from the crew's real stay: without it the backend counts casualties over a 30 min default window instead.
+* **Units that cannot reach the fire are not dropped**: they go as near as the routing says is safe (800 m, then 1.6, 3.2, 6.4 km out) and wait there (`stage_resources`, one per organization).
+  In São Bento that is 38 units that used to disappear. Building a pair of plans takes about 2.5 min per baseline (a candidate plan is published, simulated and deleted for each judgement).
+* **GNR closures have no effect on the fire** (the backend uses closures for routing and road status, not for the spread). Every road the fire cuts until the end of the simulation is closed (at most 60 closures, the most urgent first; a road is shut *before* the fire reaches it, by the action's trigger). A road is cut into closures of at most 1500 m whose
+  segments the fire cuts within 30 min of each other (`MAX_CLOSURE_M`, `MAX_CUT_SPREAD_MIN`), and the map draws them (orange: emergency vehicles pass, red: nobody) with the
+  control points. Known rough edges: the intensity that decides whether emergency vehicles may cross is the fire's maximum at that minute (the contract has no intensity per
+  road), many road ends are already inside the burned area by the time a patrol could arrive (at T+120 in Penha no end is reachable in time), and the firefighters' ETAs are
+  computed before the plan's closures exist (a closure without the emergency exemption would lengthen their routes once activated).
 * **Continuing from an outline is not exact**: a chained run ends ~9% larger than the uninterrupted one. Compare with the chained control, not the original run.
 * **The backend never applies an evacuation** to `populationExposed` (checked in code and by experiment), so lives are the agents' own model with
   explicit assumptions (`life.py`). Only 2 of the 6 built-in scenarios put people in the fire's way.

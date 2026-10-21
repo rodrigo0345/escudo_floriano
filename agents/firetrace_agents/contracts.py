@@ -42,11 +42,11 @@ INTERVENTION_TYPES: frozenset[str] = frozenset(
 """Types accepted by the ``Intervention`` oneOf (aerial_drop, fire_line, fuel_removal,
 backfire, crew_deployment, structure_protection, road_closure, evacuation)."""
 
-UNSAFE_ON_WIRE: frozenset[str] = frozenset({"fuel_removal"})
-"""Interventions the spec lists and ``/capabilities`` calls supported, but that the live backend
-rejects with HTTP 400: its ``FuelRemovalIntervention`` requires a ``removal`` field and has no
-``effectiveness``, while the spec's ``InterventionFuelRemoval`` has the opposite. Until spec and backend
-are reconciled (a contract proposal, not an agents decision) the agents do not emit them."""
+UNSAFE_ON_WIRE: frozenset[str] = frozenset()
+"""Interventions the spec lists but the live backend rejects. ``fuel_removal`` was one: the backend's ``FuelRemovalIntervention`` *requires* a ``removal``
+(``trees`` | ``understory`` | ``all``) that the spec's ``InterventionFuelRemoval`` does not have (it has ``effectiveness``, which the backend ignores). The agents send both
+(an extra property is not an error for the spec, and the backend accepts it: checked with ``POST /plans/validate``), so it is no longer dropped. Reconciling the two
+is still a proposal for the spec and backend owners."""
 
 ACTION_TYPES: frozenset[str] = frozenset(
     {

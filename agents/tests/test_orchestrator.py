@@ -243,7 +243,7 @@ class TestOrchestratorGuards:
         orchestrator._guard_decisions(result)
         assert any("fire_line" in issue.problem for issue in result.issues)
 
-    def test_fuel_removal_is_dropped_while_spec_and_backend_disagree_on_its_shape(self):
+    def test_fuel_removal_is_kept_now_that_the_backend_takes_it_with_its_removal_field(self):
         orchestrator = _orchestrator(THREATENED_ISOLATED, SUMMARY_MEDIUM)  # /capabilities says it is supported
         message = DecisionMessage(
             agent_id="pp-x",
@@ -262,7 +262,7 @@ class TestOrchestratorGuards:
         )
         result = CycleResult(simulation_id="sim-penanet", decisions=[message])
         orchestrator._guard_decisions(result)
-        assert any("fuel_removal" in issue.problem and "backend" in issue.problem for issue in result.issues)
+        assert not any("fuel_removal" in issue.problem and "backend" in issue.problem for issue in result.issues)
 
     def test_vehicle_conflict_keeps_the_life_first_action(self):
         orchestrator = _orchestrator(THREATENED_TOWN, SUMMARY_RAGING)

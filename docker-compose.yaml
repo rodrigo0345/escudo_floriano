@@ -100,7 +100,7 @@ services:
       FIRETRACE_BASE_URL: http://backend:8080/api/v1
       FIRETRACE_SPEC: /app/api-spec/openapi.json
       AGENTS_POLL_SECONDS: "${AGENTS_POLL_SECONDS:-10}"
-      AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-60}"
+      AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
     volumes:
       - ./api-spec:/app/api-spec:ro
