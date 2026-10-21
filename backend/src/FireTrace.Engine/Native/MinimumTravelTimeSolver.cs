@@ -101,7 +101,10 @@ public sealed class MinimumTravelTimeSolver(FireBehaviorModel model)
                 if (dest.MaxRosMPerMin <= 1e-9) continue;
                 double bearing = Math.Atan2(dx, -dy) * 180 / Math.PI; // direção desta ligação (0 = norte)
                 double ros = dest.MaxRosMPerMin * FireBehaviorModel.EllipseFactor(bearing, dest.DirectionDeg, dest.LengthToWidth) * adjustment[nc];
-                ros *= suppression.Factor(nc, t, here.IntensityKwm);
+                // Byram's intensity is proportional to the spread rate, so the fire coming this way is the source's head intensity scaled by its ellipse:
+                // crews on a flank face a fraction of what the head burns at (the head of a crown run cannot be fought, its flanks can).
+                double facing = here.IntensityKwm * FireBehaviorModel.EllipseFactor(bearing, here.DirectionDeg, here.LengthToWidth);
+                ros *= suppression.Factor(nc, t, facing);
                 if (ros <= 1e-9) continue;
                 float arrive = t + (float)(distCells * grid.CellM / ros);
                 if (arrive <= job.Minutes && arrive < arrival[nc]) { arrival[nc] = arrive; frontier.Enqueue(nc, arrive); }

@@ -15,8 +15,11 @@ public sealed record NativeEngineSettings(
     double CrownFireRosFactor,
     double CriticalCrownRosFactor,
     double CrownHeatContentKjKg,
-    double PassiveCrownFuelFraction,
+    double PassiveCrownFuelFraction, // no longer used: the crown fraction burned is continuous now (CrownFractionBurnedRate)
     double DefaultFoliarMoisturePct,
     double RainStartMmH,
     double RainExtinctionMmH,
-    double GustFactor);
+    double GustFactor,
+    double CrownFractionBurnedRate = 0.23,
+    double MaxCanopyFuelLoadKgM2 = 1.5,
+    int PhysicsRevision = 2); // part of the result cache's key: bump it when the physics code changes, so runs cached under the old code are not reused

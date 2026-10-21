@@ -50,8 +50,8 @@ public sealed class FireBehaviorModel(NativeEngineSettings settings, FuelMoistur
         double midflameFtMin = Math.Max(0, wind) * KmhToTwentyFootFtPerMin * waf;
 
         double slopeTan = slopeDeg >= 0.5 ? Math.Tan(Math.Min(slopeDeg, 80) * DegreesToRadians) : 0;
-        var surface = RothermelSurfaceFire.Compute(fuel, m1, m10, m100, liveHerb, liveWoody, midflameFtMin, slopeTan,
-            Angles.Normalize(windFromDeg + 180), Angles.Normalize(aspect + 180), settings.MaxLengthToWidthRatio);
+        double windTo = Angles.Normalize(windFromDeg + 180), upslope = Angles.Normalize(aspect + 180);
+        var surface = RothermelSurfaceFire.Compute(fuel, m1, m10, m100, liveHerb, liveWoody, midflameFtMin, slopeTan, windTo, upslope, settings.MaxLengthToWidthRatio);
 
         double rain = RainFactor(precipMmH, surface.IntensityKwm);
         double ros = surface.MaxRosMPerMin * settings.SpreadCalibration * rain;
@@ -71,12 +71,20 @@ public sealed class FireBehaviorModel(NativeEngineSettings settings, FuelMoistur
             if (intensity >= initiation)
             {
                 crown = true;
-                double activeRos = settings.CrownFireRosFactor * ros;
+                // How much of the crown burns grows with how far the surface fire is past initiation (Van Wagner 1993; the FBP System's crown fraction burned,
+                // CFB = 1 − e^(−k·(R − R0))): a fire just past the threshold torches a few trees, one well past it takes the whole canopy. R0 is the surface rate
+                // at initiation; for the same surface fuel Byram's intensity is proportional to the rate, so R0 = R × I0 / I.
+                double surfaceRos = ros;
+                double r0 = surfaceRos * initiation / intensity;
+                double cfb = 1 - Math.Exp(-settings.CrownFractionBurnedRate * Math.Max(0, surfaceRos - r0));
+                double activeRos = settings.CrownFireRosFactor * surfaceRos;
                 double criticalRos = settings.CriticalCrownRosFactor / canopyBulk;
                 active = activeRos >= criticalRos;
-                if (active) ros = Math.Max(ros, activeRos);
-                double crownLoad = canopyBulk * (canopyHeightM - canopyBaseM); // kg/m²
-                double crownIntensity = settings.CrownHeatContentKjKg * crownLoad * (active ? 1.0 : settings.PassiveCrownFuelFraction) * ros / 60;
+                if (active) ros = surfaceRos + cfb * Math.Max(0, activeRos - surfaceRos); // FBP: ROS = RSS + CFB × (RSC − RSS)
+                // The canopy fuel a crown fire can burn (foliage and fine twigs): bulk density × crown length, capped at what stands really carry
+                // (peak bulk density over the whole crown length overstates it several times; Scott & Reinhardt 2001 put stands at ~0.5–2 kg/m²).
+                double crownLoad = Math.Min(canopyBulk * (canopyHeightM - canopyBaseM), settings.MaxCanopyFuelLoadKgM2); // kg/m²
+                double crownIntensity = settings.CrownHeatContentKjKg * crownLoad * cfb * ros / 60;
                 intensity += Math.Max(0, crownIntensity);
             }
         }
