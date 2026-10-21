@@ -735,3 +735,192 @@
   color: #93c5fd;
   line-height: 1.3;
 }
+
+/* ---- combat timeline of a plan (AttackTimeline) */
+.attack {
+  --gantt-label: 38%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.attackFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--mut);
+}
+
+.attackFacts b {
+  color: var(--fg);
+}
+
+.curve {
+  position: relative;
+  height: 56px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.curve svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.curve path {
+  fill: color-mix(in srgb, #33e06a 45%, transparent);
+  stroke: #33e06a;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ticks {
+  position: relative;
+  height: 13px;
+  font-size: 9.5px;
+  color: var(--mut);
+}
+
+.ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.ticks span:first-child {
+  transform: none;
+}
+
+.attackFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.attackFilters button {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
+.gantt {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 420px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.ganttRow {
+  display: grid;
+  grid-template-columns: minmax(0, var(--gantt-label)) minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.ganttRow:hover,
+.ganttOn {
+  background: color-mix(in srgb, var(--acc) 18%, transparent);
+}
+
+.ganttLabel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 6px 0 5px;
+  border-left: 3px solid transparent;
+  font-size: 11px;
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ganttLabel small {
+  font-size: 9.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ganttLabel em {
+  font-style: normal;
+  font-size: 9px;
+  color: #93c5fd;
+}
+
+.ganttTrack {
+  position: relative;
+  height: 16px;
+}
+
+.travel {
+  position: absolute;
+  top: 7px;
+  height: 0;
+  border-top: 2px dotted;
+  opacity: 0.8;
+}
+
+.work {
+  position: absolute;
+  top: 3px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.late {
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  font-size: 9px;
+  color: #ffb4a8 !important;
+}
+
+.attackDetail {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--acc);
+  border-radius: var(--radius);
+  background: var(--panel2);
+  font-size: 11.5px;
+}
+
+.attackDetail dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  margin: 0;
+}
+
+.attackDetail dt {
+  color: var(--mut);
+}
+
+.attackDetail dd {
+  margin: 0;
+}

@@ -114,9 +114,14 @@ export function tracksFromPlan(plan: Plan, run: { startMs: number; durationMinut
       const eta = typeof r.etaMinutes === 'number' ? r.etaMinutes : Number.isFinite(startOffset) ? Math.max(0, startOffset - leaves) : total / 1000 / Math.max(speed, 1) * 60;
       const arrives = Math.min(minutes - 1, Math.round(leaves + eta));
       const window = num(effect?.durationMinutes, num(effect?.effectDurationMinutes, DEFAULT_WORK_MINUTES));
+      // a crew's work can be several stretches (refills, rest): it stays on the map until the last one ends
+      const lastEnd = Math.max(
+        ...((action.simulationEffects as Json[] | undefined) ?? []).map((e) => num((e.start as Json | undefined)?.offsetMinutes, Number.NaN) + num(e.durationMinutes, Number.NaN)).filter(Number.isFinite),
+        -1,
+      );
       const closes = (action.until as { offsetMinutes?: number } | undefined)?.offsetMinutes;
       const leavesAt = Math.min(minutes - 1, Math.round(leaves));
-      const worksUntil = Math.min(minutes - 1, closes !== undefined ? decided + closes : arrives + window);
+      const worksUntil = Math.min(minutes - 1, closes !== undefined ? decided + closes : lastEnd > arrives ? lastEnd : arrives + window);
 
       const lat = new Float32Array(minutes);
       const lon = new Float32Array(minutes);
