@@ -452,7 +452,7 @@ export function SimulationForm() {
                         {ev.type === 'storm' && '⛈️ Trovoada'}
                         {ev.type === 'clouds' && '🌫️ Neblina'}
                         {ev.type === 'wind_shift' && '💨 Vento'}
-                        {ev.type === 'wind_scale' && '🌪️ Rajadas'}
+                        {ev.type === 'wind_scale' && '🌪️ Vento'}
                         {ev.type === 'heat_dry' && '☀️ Calor'}
                       </span>
                       <span className={styles.eventTimePill}>
@@ -579,6 +579,9 @@ export function SimulationForm() {
                                 onChange={(e) => updateCustomRangeEvent(ev.id, { radiusKm: +e.target.value })}
                               />
                             </label>
+                            <div style={{ fontSize: '0.78em', color: '#94a3b8', marginTop: 4, lineHeight: 1.3 }}>
+                              ℹ️ Foco visual 3D (precursor Epic D3): nuvens e precipitação concentradas neste raio no mapa; o motor de simulação atual calcula a meteorologia à escala do concelho.
+                            </div>
                           </div>
                         )}
 
@@ -646,6 +649,43 @@ export function SimulationForm() {
                             </label>
                           )}
 
+                          {(ev.type === 'rain' || ev.type === 'storm' || ev.type === 'clouds') && (
+                            <>
+                              <label>
+                                <span>
+                                  Construção Prévia: <b>{ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)} min</b>
+                                  <small style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted, #8e9bb0)', marginTop: '2px' }}>
+                                    nuvens começam a armar em T+{Math.max(0, ev.startMinute - (ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)))} min
+                                  </small>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={45}
+                                  step={5}
+                                  value={ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20)}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { buildupMinutes: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Dissipação Posterior: <b>{ev.dissipationMinutes ?? 20} min</b>
+                                  <small style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted, #8e9bb0)', marginTop: '2px' }}>
+                                    nuvens dissipam até T+{ev.endMinute + (ev.dissipationMinutes ?? 20)} min
+                                  </small>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={5}
+                                  max={45}
+                                  step={5}
+                                  value={ev.dissipationMinutes ?? 20}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { dissipationMinutes: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
                           {ev.type === 'wind_shift' && (
                             <>
                               <label>
@@ -678,19 +718,29 @@ export function SimulationForm() {
                           )}
 
                           {ev.type === 'wind_scale' && (
-                            <label>
-                              <span>
-                                Multiplicador Vento: <b>{ev.windFactor ?? 1.7}x</b>
-                              </span>
-                              <input
-                                type="range"
-                                min={1.1}
-                                max={3.0}
-                                step={0.1}
-                                value={ev.windFactor ?? 1.7}
-                                onChange={(e) => updateCustomRangeEvent(ev.id, { windFactor: +e.target.value })}
-                              />
-                            </label>
+                            <>
+                              <label>
+                                <span>
+                                  Multiplicador Vento: <b>{ev.windFactor ?? 1.7}x</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={1.1}
+                                  max={3.0}
+                                  step={0.1}
+                                  value={ev.windFactor ?? 1.7}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windFactor: +e.target.value })}
+                                />
+                              </label>
+                              <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer', marginTop: 4 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={ev.applyToGusts ?? false}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { applyToGusts: e.target.checked })}
+                                />
+                                <span>Incluir rajadas</span>
+                              </label>
+                            </>
                           )}
 
                           {ev.type === 'heat_dry' && (

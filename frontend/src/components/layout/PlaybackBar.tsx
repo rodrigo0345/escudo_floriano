@@ -78,6 +78,9 @@ export function PlaybackBar() {
   const [popoverWindFactor, setPopoverWindFactor] = useState(1.7);
   const [popoverTempDelta, setPopoverTempDelta] = useState(6);
   const [popoverHumDelta, setPopoverHumDelta] = useState(-20);
+  const [popoverApplyToGusts, setPopoverApplyToGusts] = useState(false);
+  const [popoverBuildupMin, setPopoverBuildupMin] = useState(20);
+  const [popoverDissipationMin, setPopoverDissipationMin] = useState(20);
 
   const flags = useMemo(() => {
     if (!run) return [];
@@ -158,8 +161,11 @@ export function PlaybackBar() {
     if (ev.windKmh != null) setPopoverWindKmh(ev.windKmh);
     if (ev.windFromDeg != null) setPopoverWindDeg(ev.windFromDeg);
     if (ev.windFactor != null) setPopoverWindFactor(ev.windFactor);
+    setPopoverApplyToGusts(ev.applyToGusts ?? true);
     if (ev.tempDeltaC != null) setPopoverTempDelta(ev.tempDeltaC);
     if (ev.humidityDeltaPct != null) setPopoverHumDelta(ev.humidityDeltaPct);
+    setPopoverBuildupMin(ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
+    setPopoverDissipationMin(ev.dissipationMinutes ?? 20);
   };
 
   // Quick "+ Evento" button: opens popover for current minute
@@ -211,8 +217,11 @@ export function PlaybackBar() {
       windKmh: popoverType === 'wind_shift' || popoverType === 'storm' ? popoverWindKmh : undefined,
       windFromDeg: popoverType === 'wind_shift' ? popoverWindDeg : undefined,
       windFactor: popoverType === 'wind_scale' ? popoverWindFactor : undefined,
+      applyToGusts: popoverType === 'wind_scale' ? popoverApplyToGusts : undefined,
       tempDeltaC: popoverType === 'heat_dry' || popoverType === 'storm' ? popoverTempDelta : undefined,
       humidityDeltaPct: popoverType === 'heat_dry' || popoverType === 'clouds' ? popoverHumDelta : undefined,
+      buildupMinutes: (popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') ? popoverBuildupMin : undefined,
+      dissipationMinutes: (popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') ? popoverDissipationMin : undefined,
     };
   };
 
@@ -417,24 +426,19 @@ export function PlaybackBar() {
 
             {/* Specific parameter controls depending on event type */}
             {popoverType === 'rain' && (
-              <>
-                <label className={styles.popoverField}>
-                  <span>
-                    Intensidade da Chuva: <b>{popoverRainMmH} mm/h</b>
-                  </span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={30}
-                    step={0.5}
-                    value={popoverRainMmH}
-                    onChange={(e) => setPopoverRainMmH(+e.target.value)}
-                  />
-                </label>
-                <div className={styles.popoverNote}>
-                  ☁️ <b>Formação realista:</b> As nuvens de chuva acumulam-se no céu 40 min antes de T+{selection.startMin} min (a partir de T+{Math.max(0, selection.startMin - 40)} min).
-                </div>
-              </>
+              <label className={styles.popoverField}>
+                <span>
+                  Intensidade da Chuva: <b>{popoverRainMmH} mm/h</b>
+                </span>
+                <input
+                  type="range"
+                  min={1}
+                  max={30}
+                  step={0.5}
+                  value={popoverRainMmH}
+                  onChange={(e) => setPopoverRainMmH(+e.target.value)}
+                />
+              </label>
             )}
 
             {popoverType === 'storm' && (
@@ -465,29 +469,55 @@ export function PlaybackBar() {
                     onChange={(e) => setPopoverWindKmh(+e.target.value)}
                   />
                 </label>
-                <div className={styles.popoverNote}>
-                  ⚡ <b>Trovoada:</b> Nuvens escuras, relâmpagos ativos e rajadas intensas durante o intervalo.
-                </div>
               </>
             )}
 
             {popoverType === 'clouds' && (
+              <label className={styles.popoverField}>
+                <span>
+                  Neblina / Cobertura: <b>{popoverCloudPct}%</b>
+                </span>
+                <input
+                  type="range"
+                  min={20}
+                  max={100}
+                  step={5}
+                  value={popoverCloudPct}
+                  onChange={(e) => setPopoverCloudPct(+e.target.value)}
+                />
+              </label>
+            )}
+
+            {(popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') && (
               <>
                 <label className={styles.popoverField}>
                   <span>
-                    Neblina / Cobertura: <b>{popoverCloudPct}%</b>
+                    Construção Prévia: <b>{popoverBuildupMin} min</b>
                   </span>
                   <input
                     type="range"
-                    min={20}
-                    max={100}
+                    min={5}
+                    max={45}
                     step={5}
-                    value={popoverCloudPct}
-                    onChange={(e) => setPopoverCloudPct(+e.target.value)}
+                    value={popoverBuildupMin}
+                    onChange={(e) => setPopoverBuildupMin(+e.target.value)}
+                  />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Dissipação Posterior: <b>{popoverDissipationMin} min</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={5}
+                    max={45}
+                    step={5}
+                    value={popoverDissipationMin}
+                    onChange={(e) => setPopoverDissipationMin(+e.target.value)}
                   />
                 </label>
                 <div className={styles.popoverNote}>
-                  🌫️ Aumenta a humidade relativa e cobre o vale com nevoeiro orográfico denso.
+                  ☁️ <b>Ciclo realista:</b> As nuvens armam-se a partir de T+{Math.max(0, selection.startMin - popoverBuildupMin)} min ({popoverBuildupMin} min antes); a chuva cessa às T+{selection.endMin} min e as nuvens dissipam até T+{selection.endMin + popoverDissipationMin} min.
                 </div>
               </>
             )}
@@ -524,19 +554,29 @@ export function PlaybackBar() {
             )}
 
             {popoverType === 'wind_scale' && (
-              <label className={styles.popoverField}>
-                <span>
-                  Multiplicador de Rajada: <b>{popoverWindFactor}x</b>
-                </span>
-                <input
-                  type="range"
-                  min={1.1}
-                  max={3.0}
-                  step={0.1}
-                  value={popoverWindFactor}
-                  onChange={(e) => setPopoverWindFactor(+e.target.value)}
-                />
-              </label>
+              <>
+                <label className={styles.popoverField}>
+                  <span>
+                    Multiplicador de Vento: <b>{popoverWindFactor}x</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={1.1}
+                    max={3.0}
+                    step={0.1}
+                    value={popoverWindFactor}
+                    onChange={(e) => setPopoverWindFactor(+e.target.value)}
+                  />
+                </label>
+                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={popoverApplyToGusts}
+                    onChange={(e) => setPopoverApplyToGusts(e.target.checked)}
+                  />
+                  <span>Incluir rajadas</span>
+                </label>
+              </>
             )}
 
             {popoverType === 'heat_dry' && (
