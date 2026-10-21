@@ -4,14 +4,16 @@ using FireTrace.Core.Domain.Errors;
 using FireTrace.Core.Domain.Weather;
 using FireTrace.Core.Models.Fire;
 using FireTrace.Core.Models.Map;
+using FireTrace.Core.Models.Operations;
 using FireTrace.Core.Services.Fire;
+using FireTrace.Core.Services.Operations;
 using FireTrace.ExternalData.Store;
 
 namespace FireTrace.Core.Controllers;
 
 /// <summary>O que uma simulação deu: resumo, perímetros, impacto, estradas cortadas, acessos, fumo, meteorologia e as grelhas brutas.</summary>
 [Route("/api/v1/simulations/{id}")]
-public sealed class SimulationResultsController(FireResults results, SmokeService smoke, DefaultsSettings defaults) : ApiController
+public sealed class SimulationResultsController(FireResults results, SmokeService smoke, DefaultsSettings defaults, OperationQueries operations) : ApiController
 {
     [HttpGet("summary")]
     public async Task<ActionResult<SimulationSummary>> Summary(string id, [FromQuery] Query q, CancellationToken ct) =>
@@ -61,10 +63,12 @@ public sealed class SimulationResultsController(FireResults results, SmokeServic
         return GridFile(new GridData(result.Bytes, result.Width, result.Height, result.CellM, result.DType));
     }
 
-    /// <summary>O movimento dos meios (viaturas, água, cansaço) ainda não está implementado.</summary>
+    /// <summary>Onde está cada meio do plano (ou dos despachos) que a simulação aplicou, e o que faz, ao minuto `tMin`: a viagem, a chegada, o trabalho com água e cansaço, o regresso.</summary>
     [HttpGet("units")]
-    public IActionResult Units(string id) => throw new UnsupportedException("units");
+    public async Task<ActionResult<UnitStateList>> Units(string id, [FromQuery] Query q, CancellationToken ct) =>
+        Ok(await operations.StatesAsync(id, q.RequiredInt("tMin"), q.Str("organizationId"), q.Str("responsibility"), ct));
 
     [HttpGet("units/{unitId}/track")]
-    public IActionResult UnitTrack(string id, string unitId) => throw new UnsupportedException("units");
+    public async Task<ActionResult<UnitTrack>> UnitTrack(string id, string unitId, [FromQuery] Query q, CancellationToken ct) =>
+        Ok(await operations.TrackAsync(id, unitId, q.Int("stepMin") ?? 1, ct));
 }
