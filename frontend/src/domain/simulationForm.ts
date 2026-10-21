@@ -5,6 +5,9 @@ import { weatherMeans, type WeatherBaseStats } from './weather';
 /** Weather edits to the real series also apply during the fuel warm-up window before the start. */
 const WHOLE_RUN_PADDING_MIN = 720;
 
+/** Minutes the fire's extent is marked on the map and listed in the incident panel (up to the 12 h maximum run). */
+export const MILESTONE_MINUTES = [15, 30, 60, 120, 180, 360, 540, 720];
+
 export type WeatherMode = 'provider' | 'manual';
 
 /** @deprecated DEADCODE: Sistema legado de presets meteorológicos fixos; substituído por TimelineRangeEvent / customEvents */

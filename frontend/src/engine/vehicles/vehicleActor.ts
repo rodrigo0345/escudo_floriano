@@ -1,24 +1,28 @@
 import * as THREE from 'three';
 
 import { StatusTag } from './statusTag';
+import { VehicleMarker } from './vehicleMarker';
 import { buildVehicle, isAircraft, liveryOf, type ModelClass, type VehicleModel } from './vehicleModels';
 
-/** Below this distance (world units) a vehicle is drawn at its real size; farther away it grows so it stays a readable shape on screen. */
-const TRUE_SIZE_DISTANCE = 40;
-const MAX_ENLARGE = 22;
+/** Base scale factor so vehicles are comfortably visible on the regional wildfire terrain map. */
+export const BASE_VEHICLE_SCALE = 2.4;
 
 /**
- * One vehicle on the map: its 3D model (real size close up, enlarged far away so it never shrinks to a speck), its status tag, emergency lights that flash while it
+ * One vehicle on the map: its 3D model at constant dimension (comfortably visible, never enlarged when zooming out or in),
+ * an overhead identifier marker showing organization crest + vehicle type icon, its status tag, emergency lights that flash while it
  * responds, a spinning rotor for helicopters, and a hover tooltip.
  */
 export class VehicleActor {
   readonly group = new THREE.Group();
   readonly model: VehicleModel;
+  readonly marker: VehicleMarker;
   readonly tag: StatusTag;
   readonly air: boolean;
-  /** How much the model is enlarged right now (1 = real size). */
+  /** Constant dimension: 1 = real size at any camera zoom. */
   enlarge = 1;
   heading = 0;
+  /** Set by the map pointer while the cursor is over this vehicle (or its tag): the layers only show the status tag then. */
+  hovered = false;
   private readonly inner = new THREE.Group();
   private tip = '';
 
@@ -30,27 +34,48 @@ export class VehicleActor {
     tagAlwaysOnTop: boolean,
   ) {
     this.model = buildVehicle(cls, liveryOf(orgType, cls), callsign);
-    this.inner.scale.setScalar(1 / unit); // model metres → scene units
+    // Scale vehicle to comfortable readable size at constant dimension
+    this.inner.scale.setScalar(BASE_VEHICLE_SCALE / unit);
     this.inner.add(this.model.root);
     this.group.add(this.inner);
+
+    // Overhead dual-identifier marker: Organization Logo/Color + Vector Vehicle Type Icon
+    this.marker = new VehicleMarker(cls, orgType, callsign, this.model.heightM, unit, BASE_VEHICLE_SCALE);
+    this.marker.setOwnerActor(this);
+    this.marker.sprite.position.set(0, ((this.model.heightM * BASE_VEHICLE_SCALE) + 1.8) / unit, 0);
+    this.group.add(this.marker.sprite);
+
     this.tag = new StatusTag(tagAlwaysOnTop);
     this.air = isAircraft(cls);
+    // lets a raycast hit (any mesh of the model, marker, or the tag) find its vehicle
+    this.group.userData.actor = this;
+    this.tag.sprite.userData.actor = this;
     if (this.model.bucket) this.model.bucket.visible = false;
   }
 
-  /** Puts the vehicle at `pos` facing `heading` (radians, 0 = east, counter-clockwise seen from above), sized for the camera distance. */
-  place(pos: THREE.Vector3, heading: number, camera: THREE.Camera, maxEnlarge = MAX_ENLARGE): void {
+  /** Puts the vehicle at `pos` facing `heading` (radians, 0 = east), keeping constant dimensions. */
+  place(pos: THREE.Vector3, heading: number, _camera?: THREE.Camera, _maxEnlarge?: number): void {
     this.heading = heading;
-    const distance = camera.position.distanceTo(pos);
-    this.enlarge = Math.min(maxEnlarge, Math.max(1, distance / TRUE_SIZE_DISTANCE));
+    this.enlarge = 1;
     this.group.position.copy(pos);
     this.group.rotation.y = heading;
-    this.group.scale.setScalar(this.enlarge);
+    this.group.scale.setScalar(1);
+    this.marker.draw(this.hovered);
   }
 
-  /** World height (scene units) of the top of the model, where the tag sits. */
+  /** Constant dimensions: vehicle never gets bigger when zooming out or in. */
+  enlargeAt(_pos?: THREE.Vector3, _camera?: THREE.Camera, _maxEnlarge?: number): number {
+    return 1;
+  }
+
+  /** Ground footprint (scene units) of the model at `pos`: constant real size. */
+  footprintAt(_pos: THREE.Vector3, _camera: THREE.Camera, unit: number, _maxEnlarge?: number): number {
+    return (this.model.lengthM * BASE_VEHICLE_SCALE) / unit;
+  }
+
+  /** World height (scene units) of the top of the vehicle marker, where the status tag sits. */
   topY(unit: number): number {
-    return this.group.position.y + ((this.model.heightM + 1.2) * this.enlarge) / unit;
+    return this.group.position.y + ((this.model.heightM * BASE_VEHICLE_SCALE) + 6.0) / unit;
   }
 
   /** Emergency lights: alternate left/right while responding, dim otherwise. */
@@ -82,6 +107,7 @@ export class VehicleActor {
   }
 
   dispose(): void {
+    this.marker.dispose();
     this.tag.dispose();
     for (const m of this.model.own) {
       (m as THREE.MeshBasicMaterial).map?.dispose();

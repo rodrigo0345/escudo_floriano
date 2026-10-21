@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type { Facility, Location, Place, RoadCollection, VegetationInfo, WaterPoint } from '@/api';
 import type { Georef } from '@/domain/georef';
 
+import { AftermathLayer } from './layers/aftermathLayer';
 import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
 import { burnStyles, burnStyleTexture } from './burnShader';
@@ -53,6 +54,8 @@ export class World {
   readonly city: PhotorealLayer;
   /** The flames, in 3D, where the fire is burning at the minute shown. */
   readonly flames: FlameLayer;
+  /** After the flames: smoke wisps, embers, ash or smoke columns by what burned, fading over the following hour or so. */
+  readonly aftermath: AftermathLayer;
   /** Every registered vehicle not in a replayed operation: parked at its station, or where the API says it is. */
   readonly fleet: FleetLayer;
   readonly rain: RainLayer;
@@ -80,6 +83,8 @@ export class World {
     this.flames = new FlameLayer(geo);
     this.fleet = new FleetLayer(geo);
     this.flames.setStyles(styles);
+    this.aftermath = new AftermathLayer(geo);
+    this.aftermath.setStyles(styles);
     // while the city draws, the terrain sinks just under it (it fills any gap) and the overlays get their own pass, so buildings and trees never hide them
     this.city.onVisibleChange = (visible) => {
       this.terrain.setCityMode(visible);
@@ -94,6 +99,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.aftermath.points,
       this.fleet.group,
       this.roads.mesh,
       this.assets.group,
@@ -147,6 +153,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.aftermath.points,
       this.fleet.group,
       this.roads.mesh,
       this.assets.group,
@@ -166,6 +173,7 @@ export class World {
     this.engine.setOverlayPass(null);
     this.city.dispose();
     this.flames.dispose();
+    this.aftermath.dispose();
     this.fleet.clear();
     this.terrain.dispose();
     this.roads.mesh.geometry.dispose();

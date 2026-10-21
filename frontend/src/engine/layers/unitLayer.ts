@@ -5,6 +5,7 @@ import type { Georef } from '@/domain/georef';
 import { DISPATCH_STATUS_LABEL } from '@/domain/resourceLabels';
 
 import type { Pickable } from '../picking';
+import { spreadPositions } from '../vehicles/declutter';
 import type { Activity } from '../vehicles/statusTag';
 import { headingBetween, VehicleActor } from '../vehicles/vehicleActor';
 import { modelClassOf } from '../vehicles/vehicleModels';
@@ -44,6 +45,17 @@ interface Entry {
   orgColor: string;
   target: LatLon | null;
   targetLabel: string | undefined;
+}
+
+/** A unit located for this frame: its track samples around now, its status, position (moved by the spreading) and heading. */
+interface Placed {
+  e: Entry;
+  a: UnitTrack['points'][number];
+  b: UnitTrack['points'][number];
+  f: number;
+  status: DispatchStatus;
+  pos: THREE.Vector3;
+  heading: number;
 }
 
 const roleOf = (state: UnitState): UnitRole => {
@@ -138,31 +150,43 @@ export class UnitLayer {
   /** Places, animates and labels every unit at fractional minute `tf`, interpolating between the backend's one-minute samples. */
   update(tf: number, camera?: THREE.PerspectiveCamera, timeS = 0, viewportHeightPx = 1000): void {
     this.water.begin();
-    for (const e of this.entries) this.updateOne(e, tf, camera, timeS);
+    // first where every unit is on its track, then spread the ones sharing a point, then draw them
+    const placed: Placed[] = [];
+    for (const e of this.entries) {
+      const p = this.locate(e, tf);
+      if (p) placed.push(p);
+      else {
+        e.actor.group.visible = false;
+        e.actor.tag.sprite.visible = false;
+      }
+    }
+    if (camera) {
+      spreadPositions(
+        placed.map((p) => ({ id: p.e.unit.state.unitId, pos: p.pos, footprint: p.e.actor.footprintAt(p.pos, camera, this.geo.unit), air: p.e.actor.air })),
+        this.geo,
+      );
+    }
+    for (const p of placed) this.draw(p, camera, timeS);
     if (camera) this.water.end(timeS, camera, viewportHeightPx);
   }
 
-  private updateOne(e: Entry, tf: number, camera: THREE.PerspectiveCamera | undefined, timeS: number): void {
+  /** Where a unit is at fractional minute `tf` on its track, and which way it is heading; null when it is not on the map. */
+  private locate(e: Entry, tf: number): Placed | null {
     const { unit, actor } = e;
     const geo = this.geo;
     const sample = sampleAt(unit.track.points, tf);
-    const hide = () => {
-      actor.group.visible = false;
-      actor.tag.sprite.visible = false;
-    };
-    if (!sample) return hide();
+    if (!sample) return null;
     const { a, b, f } = sample;
     const status = f >= 0.5 ? b.status : a.status;
     const here = pointAt(a.position, b.position, f);
-    if (GONE.has(status) || !here) return hide();
+    if (GONE.has(status) || !here) return null;
 
-    const pos = this.tmpA.set(...geo.world(here.lat, here.lon, 0));
-    const groundY = pos.y;
+    const pos = new THREE.Vector3(...geo.world(here.lat, here.lon, 0));
     if (actor.air) {
       const alt = status === 'working' || status === 'on_scene' ? AIR_WORK_M : status === 'refilling' ? AIR_FILL_M : status === 'grounded' ? 0 : AIR_CRUISE_M;
       pos.y += (alt + (alt ? 20 * actor.enlarge : 0)) / geo.unit;
     }
-    // heading: where it is going; on scene, towards its target
+    // heading: where it is going (on scene it turns towards its target once spread out, in `draw`)
     let heading = actor.heading;
     const ahead = sampleAt(unit.track.points, tf + 0.25);
     const next = ahead ? pointAt(ahead.a.position, ahead.b.position, ahead.f) : null;
@@ -171,9 +195,18 @@ export class UnitLayer {
       aheadPos.y = pos.y;
       heading = headingBetween(pos, aheadPos) ?? heading;
     }
+    return { e, a, b, f, status, pos, heading };
+  }
+
+  private draw(p: Placed, camera: THREE.PerspectiveCamera | undefined, timeS: number): void {
+    const { e, a, b, f, status, pos } = p;
+    const { unit, actor } = e;
+    const geo = this.geo;
+    const groundY = geo.y(geo.elevAtUV(pos.x / geo.W + 0.5, pos.z / geo.H + 0.5), pos.x, pos.z);
+    let heading = p.heading;
     if ((status === 'working' || status === 'on_scene') && e.target) {
       const t = geo.world(e.target.lat, e.target.lon, 0);
-      heading = headingBetween(pos, new THREE.Vector3(t[0], pos.y, t[2])) ?? heading;
+      heading = headingBetween(pos, this.tmpA.set(t[0], pos.y, t[2])) ?? heading;
     }
     if (camera) actor.place(pos, heading, camera);
     else actor.group.position.copy(pos);
@@ -200,18 +233,22 @@ export class UnitLayer {
 
     const people = unit.state.personnel ?? 0;
     const callsign = unit.state.callsign ?? unit.state.unitId;
-    actor.tag.set({
-      callsign,
-      org: e.org,
-      orgColor: e.orgColor,
-      activity: activityOf(status, e.role),
-      detail: e.targetLabel && (status === 'en_route' || status === 'on_scene' || status === 'working' || status === 'ordered') ? e.targetLabel : undefined,
-      water: capacity && water != null ? water / capacity : undefined,
-      people: `${people} p${fatigue != null && fatigue >= 1 ? ` · cansaço ${Math.round(fatigue)}%` : ''}`,
-      casualties: unit.state.crew?.casualties || undefined,
-    });
-    actor.tag.sprite.position.set(pos.x, actor.topY(geo.unit), pos.z);
-    actor.tag.sprite.visible = true;
+    // the status tag only while the cursor is on the vehicle
+    actor.tag.sprite.visible = actor.hovered;
+    if (actor.hovered) {
+      actor.tag.set({
+        callsign,
+        org: e.org,
+        orgColor: e.orgColor,
+        vehicleType: actor.cls,
+        activity: activityOf(status, e.role),
+        detail: e.targetLabel && (status === 'en_route' || status === 'on_scene' || status === 'working' || status === 'ordered') ? e.targetLabel : undefined,
+        water: capacity && water != null ? water / capacity : undefined,
+        people: `${people} p${fatigue != null && fatigue >= 1 ? ` · cansaço ${Math.round(fatigue)}%` : ''}`,
+        casualties: unit.state.crew?.casualties || undefined,
+      });
+      actor.tag.sprite.position.set(pos.x, actor.topY(geo.unit), pos.z);
+    }
     actor.setTip(
       `${callsign} · ${e.org} · ${DISPATCH_STATUS_LABEL[status] ?? status} · ${people} pessoas` +
         (water != null ? ` · água ${Math.round(water)}${capacity ? `/${Math.round(capacity)}` : ''} L` : '') +
@@ -219,8 +256,9 @@ export class UnitLayer {
     );
   }
 
+  /** The vehicles, plus the tag of a hovered one so the cursor can rest on the tag without it disappearing. */
   get pickables(): Pickable[] {
-    return this.entries.map((e) => e.actor.group as Pickable);
+    return this.entries.flatMap((e) => (e.actor.tag.sprite.visible ? [e.actor.group, e.actor.tag.sprite] : [e.actor.group]) as Pickable[]);
   }
 
   /** Current world position of a unit (for focusing the camera on it), or null if it is not on the map. */

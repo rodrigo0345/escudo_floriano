@@ -1,10 +1,10 @@
 import { Row } from '@/components/common/StatCard';
+import { MILESTONE_MINUTES } from '@/domain/simulationForm';
 import { formatTime } from '@/domain/weather';
 import { useAppStore } from '@/store/appStore';
 
 import { SimulationForm } from './SimulationForm';
 
-const MILESTONE_MINUTES = [15, 30, 60, 120, 180];
 const nf = (n: number) => n.toLocaleString('pt-PT');
 const minutesLabel = (m: number) => (m >= 60 ? `${m / 60} h` : `${m} min`);
 

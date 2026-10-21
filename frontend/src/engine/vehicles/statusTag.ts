@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 
-/** What a unit is doing, for its tag: one of a small set of activities, each with its own icon and colour so the map reads at a glance. */
+import { getOrgLogo } from '@/domain/organizationLogos';
+import { drawVehicleIconOnCanvas } from '@/domain/vehicleIcons';
+
+/** What a unit is doing, for its tag: one of a small set of activities, each with its own colour so the map reads at a glance. */
 export type Activity =
   | 'parked'
   | 'ordered'
@@ -18,29 +21,38 @@ export type Activity =
   | 'grounded'
   | 'out_of_service';
 
-const ACTIVITY: Record<Activity, { icon: string; text: string; color: string }> = {
-  parked: { icon: '🏠', text: 'No quartel', color: '#9aa4ae' },
-  ordered: { icon: '📟', text: 'Ordem recebida', color: '#ffd166' },
-  en_route: { icon: '🚨', text: 'A caminho', color: '#4cc3ff' },
-  attacking: { icon: '🔥', text: 'Em combate', color: '#ff6b3d' },
-  air_drop: { icon: '💧', text: 'Largada de água', color: '#5ab8ff' },
-  traffic: { icon: '🚧', text: 'Controlo de trânsito', color: '#ffd166' },
-  medical: { icon: '✚', text: 'Assistência médica', color: '#ff5d73' },
-  command: { icon: '📡', text: 'Posto de comando', color: '#c39bff' },
-  to_water: { icon: '💧', text: 'A caminho da água', color: '#5ab8ff' },
-  filling: { icon: '🚰', text: 'A carregar água', color: '#5ab8ff' },
-  returning: { icon: '↩', text: 'A regressar', color: '#9aa4ae' },
-  refueling: { icon: '⛽', text: 'A abastecer', color: '#ffd166' },
-  resting: { icon: '😴', text: 'Equipa a descansar', color: '#9aa4ae' },
-  grounded: { icon: '⛔', text: 'Em terra (vento, fumo ou noite)', color: '#ffb347' },
-  out_of_service: { icon: '⛔', text: 'Fora de serviço', color: '#7a838c' },
+const ACTIVITY: Record<Activity, { text: string; color: string }> = {
+  parked: { text: 'No quartel', color: '#9aa4ae' },
+  ordered: { text: 'Ordem recebida', color: '#ffd166' },
+  en_route: { text: 'A caminho', color: '#4cc3ff' },
+  attacking: { text: 'Em combate', color: '#ff6b3d' },
+  air_drop: { text: 'Largada de água', color: '#5ab8ff' },
+  traffic: { text: 'Controlo de trânsito', color: '#ffd166' },
+  medical: { text: 'Assistência médica', color: '#ff5d73' },
+  command: { text: 'Posto de comando', color: '#c39bff' },
+  to_water: { text: 'A caminho da água', color: '#5ab8ff' },
+  filling: { text: 'A carregar água', color: '#5ab8ff' },
+  returning: { text: 'A regressar', color: '#9aa4ae' },
+  refueling: { text: 'A abastecer', color: '#ffd166' },
+  resting: { text: 'Equipa a descansar', color: '#9aa4ae' },
+  grounded: { text: 'Em terra (vento, fumo ou noite)', color: '#ffb347' },
+  out_of_service: { text: 'Fora de serviço', color: '#7a838c' },
 };
+
+/** The activity's status dot (in place of an icon), centred at (x, y). */
+function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
 
 export interface TagState {
   callsign: string;
   org: string;
   orgColor: string;
   activity: Activity;
+  vehicleType?: string;
   /** Free detail after the activity (e.g. the target's name). */
   detail?: string;
   /** 0..1, or undefined when the unit carries none. */
@@ -52,9 +64,10 @@ export interface TagState {
 
 const W = 560;
 const H = 150;
+const TAG_LOGO_CACHE = new Map<string, HTMLImageElement>();
 
 /**
- * The floating tag over a unit: callsign and organization, what it is doing now (icon + words, coloured by activity), crew, water and fuel, and casualties in red.
+ * The floating tag over a unit: callsign and organization, what it is doing now (status dot + words, coloured by activity), crew, water and fuel, and casualties in red.
  * It keeps the same size on screen at any zoom and is only redrawn when its content changes.
  */
 export class StatusTag {
@@ -103,14 +116,38 @@ export class StatusTag {
       ctx.beginPath();
       ctx.roundRect(4, 4, 12, 56, [12, 0, 0, 12]);
       ctx.fill();
+
+      let textX = 26;
+      if (state.vehicleType) {
+        drawVehicleIconOnCanvas(ctx, state.vehicleType, 24, 18, 28, '#ffffff');
+        textX = 58;
+      }
+
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#ffffff';
       ctx.font = '700 28px system-ui, sans-serif';
-      ctx.fillText(state.callsign, 28, 33);
+      ctx.fillText(state.callsign, textX, 33);
       const cw = ctx.measureText(state.callsign).width;
+      dot(ctx, textX + cw + 18, 33, 7, a.color);
       ctx.fillStyle = a.color;
-      ctx.font = '600 26px system-ui, "Segoe UI Emoji", sans-serif';
-      ctx.fillText(`  ${a.icon} ${a.text}`, 28 + cw, 33);
+      ctx.font = '600 26px system-ui, sans-serif';
+      ctx.fillText(a.text, textX + cw + 32, 33);
+
+      const logoUrl = getOrgLogo(state.org);
+      if (logoUrl) {
+        const cached = TAG_LOGO_CACHE.get(logoUrl);
+        if (cached && cached.complete) {
+          ctx.drawImage(cached, W - 52, 12, 40, 40);
+        } else if (!cached) {
+          const img = new Image();
+          img.src = logoUrl;
+          img.onload = () => {
+            TAG_LOGO_CACHE.set(logoUrl, img);
+            this.key = '';
+          };
+        }
+      }
+
       this.texture.needsUpdate = true;
       return;
     }
@@ -131,19 +168,41 @@ export class StatusTag {
     ctx.roundRect(4, 4, 14, H - 30, [14, 0, 0, 14]);
     ctx.fill();
 
+    let textX = 32;
+    if (state.vehicleType) {
+      drawVehicleIconOnCanvas(ctx, state.vehicleType, 28, 14, 32, '#ffffff');
+      textX = 66;
+    }
+
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 30px system-ui, sans-serif';
-    ctx.fillText(state.callsign, 32, 30);
+    ctx.fillText(state.callsign, textX, 30);
     const cw = ctx.measureText(state.callsign).width;
     ctx.fillStyle = '#a9b4bf';
     ctx.font = '500 24px system-ui, sans-serif';
-    ctx.fillText(` · ${state.org}${state.people ? ` · ${state.people}` : ''}`, 32 + cw, 31);
+    ctx.fillText(` · ${state.org}${state.people ? ` · ${state.people}` : ''}`, textX + cw, 31);
 
+    const logoUrl = getOrgLogo(state.org);
+    if (logoUrl) {
+      const cached = TAG_LOGO_CACHE.get(logoUrl);
+      if (cached && cached.complete) {
+        ctx.drawImage(cached, W - 60, 14, 44, 44);
+      } else if (!cached) {
+        const img = new Image();
+        img.src = logoUrl;
+        img.onload = () => {
+          TAG_LOGO_CACHE.set(logoUrl, img);
+          this.key = '';
+        };
+      }
+    }
+
+    dot(ctx, 41, 72, 9, a.color);
     ctx.fillStyle = a.color;
-    ctx.font = '700 30px system-ui, "Segoe UI Emoji", sans-serif';
-    const line = `${a.icon} ${a.text}${state.detail ? ` · ${state.detail}` : ''}`;
-    ctx.fillText(line.length > 34 ? `${line.slice(0, 33)}…` : line, 32, 72);
+    ctx.font = '700 30px system-ui, sans-serif';
+    const line = `${a.text}${state.detail ? ` · ${state.detail}` : ''}`;
+    ctx.fillText(line.length > 32 ? `${line.slice(0, 31)}…` : line, 60, 72);
 
     let x = 32;
     const bar = (value: number, color: string, label: string) => {
@@ -160,9 +219,16 @@ export class StatusTag {
     if (state.water !== undefined) bar(state.water, '#3fa9ff', 'água');
     if (state.fuel !== undefined) bar(state.fuel, state.fuel < 0.25 ? '#ff5d5d' : '#f0b429', 'comb.');
     if (state.casualties) {
-      ctx.fillStyle = '#ff4d4d';
-      ctx.font = '800 20px system-ui, sans-serif';
-      ctx.fillText(`⚠ ${state.casualties} baixa${state.casualties > 1 ? 's' : ''}`, x, 104);
+      // a red pill: "N baixas"
+      const text = `${state.casualties} baixa${state.casualties > 1 ? 's' : ''}`;
+      ctx.font = '800 18px system-ui, sans-serif';
+      const tw = ctx.measureText(text).width;
+      ctx.fillStyle = '#d4504c';
+      ctx.beginPath();
+      ctx.roundRect(x, 92, tw + 18, 24, 12);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(text, x + 9, 105);
     }
     this.texture.needsUpdate = true;
   }

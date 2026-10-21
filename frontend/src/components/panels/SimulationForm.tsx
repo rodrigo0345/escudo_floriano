@@ -1,6 +1,8 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 
 import { weatherApi, type WeatherSample } from '@/api';
+import { Icon, WEATHER_EVENT_ICON } from '@/components/common/Icon';
+import { SegmentedControl } from '@/components/common/SegmentedControl';
 import { WindRosePicker } from '@/components/common/WindRosePicker';
 import { ProgressBar } from '@/components/common/StatCard';
 import { compass } from '@/domain/georef';
@@ -30,6 +32,18 @@ const MEMBER_OPTIONS = [
 ];
 
 const round1 = (v: number) => Math.round(v * 10) / 10;
+
+const EVENT_TYPE_LABEL: Record<CustomWeatherEventType, string> = {
+  rain: 'Chuva',
+  storm: 'Trovoada',
+  clouds: 'Neblina',
+  wind_shift: 'Vento',
+  wind_scale: 'Rajada',
+  heat_dry: 'Calor',
+};
+
+/** One-click run lengths; the minutes field below still takes any value up to the server's limit. */
+const DURATION_PRESETS = [60, 180, 360, 720];
 
 /** "Simulate with other weather": interactive range-based events, provider base, ignitions and ensemble. */
 export function SimulationForm() {
@@ -63,8 +77,6 @@ export function SimulationForm() {
 
   const set = <K extends keyof SimulationFormValues>(key: K, value: SimulationFormValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }));
-  const num = (key: keyof SimulationFormValues) => (e: ChangeEvent<HTMLInputElement>) =>
-    set(key, (e.target.value === '' ? 0 : +e.target.value) as never);
   const setWeather = (
     key: 'windKmh' | 'windFromDeg' | 'humPct' | 'tempC' | 'precipitationMmH' | 'cloudCoverPct',
     value: number,
@@ -212,9 +224,23 @@ export function SimulationForm() {
           </label>
           <label>
             Duração (min)
-            <input type="number" min={15} max={maxDuration} step={15} value={values.duration} onChange={num('duration')} />
+            <input
+              type="number"
+              min={15}
+              max={maxDuration}
+              step={15}
+              value={values.duration}
+              onChange={(e) => set('duration', e.target.value === '' ? 0 : Math.min(maxDuration, +e.target.value))}
+              onBlur={() => set('duration', Math.max(15, Math.min(maxDuration, values.duration)))}
+            />
           </label>
         </div>
+        <SegmentedControl
+          title="Duração da simulação"
+          options={DURATION_PRESETS.filter((m) => m <= maxDuration).map((m) => ({ value: String(m), label: `${m / 60} h` }))}
+          value={String(values.duration)}
+          onChange={(m) => set('duration', +m)}
+        />
 
         <label>
           Meteorologia
@@ -336,7 +362,7 @@ export function SimulationForm() {
               onClick={() => addCustomRangeEvent('rain')}
               title="Adicionar intervalo com chuva"
             >
-              + 🌧️ Chuva
+              <Icon name="rain" /> Chuva
             </button>
             <button
               type="button"
@@ -344,7 +370,7 @@ export function SimulationForm() {
               onClick={() => addCustomRangeEvent('storm')}
               title="Adicionar trovoada com vento e chuva"
             >
-              + ⛈️ Trovoada
+              <Icon name="storm" /> Trovoada
             </button>
             <button
               type="button"
@@ -352,7 +378,7 @@ export function SimulationForm() {
               onClick={() => addCustomRangeEvent('clouds')}
               title="Adicionar neblina / nuvens densas"
             >
-              + 🌫️ Neblina
+              <Icon name="cloud" /> Neblina
             </button>
             <button
               type="button"
@@ -360,7 +386,7 @@ export function SimulationForm() {
               onClick={() => addCustomRangeEvent('wind_shift')}
               title="Adicionar rotação do vento"
             >
-              + 💨 Vento
+              <Icon name="wind" /> Vento
             </button>
             <button
               type="button"
@@ -368,7 +394,7 @@ export function SimulationForm() {
               onClick={() => addCustomRangeEvent('heat_dry')}
               title="Adicionar calor e seca"
             >
-              + ☀️ Calor
+              <Icon name="sun" /> Calor
             </button>
             <button
               type="button"
@@ -377,7 +403,7 @@ export function SimulationForm() {
               disabled={ignitions.length >= maxIgnitions}
               title="Adicionar foco secundário"
             >
-              + 🔥 2.º Foco
+              <Icon name="flame" /> 2.º Foco
             </button>
           </div>
 
@@ -448,12 +474,7 @@ export function SimulationForm() {
                         onClick={() => setExpandedEventId(isExpanded ? null : ev.id)}
                         title="Clique para expandir/recolher"
                       >
-                        {ev.type === 'rain' && '🌧️ Chuva'}
-                        {ev.type === 'storm' && '⛈️ Trovoada'}
-                        {ev.type === 'clouds' && '🌫️ Neblina'}
-                        {ev.type === 'wind_shift' && '💨 Vento'}
-                        {ev.type === 'wind_scale' && '🌪️ Vento'}
-                        {ev.type === 'heat_dry' && '☀️ Calor'}
+                        <Icon name={WEATHER_EVENT_ICON[ev.type] ?? 'cloud'} /> {EVENT_TYPE_LABEL[ev.type]}
                       </span>
                       <span className={styles.eventTimePill}>
                         T+{ev.startMinute}–{ev.endMinute}m
@@ -475,8 +496,9 @@ export function SimulationForm() {
                           className={styles.eventDeleteBtn}
                           onClick={() => removeCustomRangeEvent(ev.id)}
                           title="Remover evento"
+                          aria-label="Remover evento"
                         >
-                          ✕
+                          <Icon name="close" size={12} />
                         </button>
                       </div>
                     </div>
@@ -522,7 +544,7 @@ export function SimulationForm() {
                               onClick={() => updateCustomRangeEvent(ev.id, { scope: 'global' })}
                               title="Aplica-se em todo o território do concelho"
                             >
-                              🌍 Concelho Todo
+                              <Icon name="globe" /> Concelho todo
                             </button>
                             <button
                               type="button"
@@ -538,7 +560,7 @@ export function SimulationForm() {
                               }}
                               title="Concentrado num foco ou zona com dimensão ajustável"
                             >
-                              📍 Localizado
+                              <Icon name="pin" /> Localizado
                             </button>
                           </div>
                         </div>
@@ -560,7 +582,7 @@ export function SimulationForm() {
                                 }}
                                 title="Centrar no foco de incêndio ativo"
                               >
-                                🎯 No Foco de Incêndio
+                                <Icon name="target" /> No foco de incêndio
                               </button>
                               <span className={styles.spotCoord}>
                                 {ev.centerLat != null ? `${ev.centerLat.toFixed(3)}, ${ev.centerLon?.toFixed(3)}` : 'Centro concelho'}
@@ -580,7 +602,7 @@ export function SimulationForm() {
                               />
                             </label>
                             <div style={{ fontSize: '0.78em', color: '#94a3b8', marginTop: 4, lineHeight: 1.3 }}>
-                              ℹ️ Foco visual 3D (precursor Epic D3): nuvens e precipitação concentradas neste raio no mapa; o motor de simulação atual calcula a meteorologia à escala do concelho.
+                              <Icon name="info" size={12} /> Foco visual 3D (precursor Epic D3): nuvens e precipitação concentradas neste raio no mapa; o motor de simulação atual calcula a meteorologia à escala do concelho.
                             </div>
                           </div>
                         )}

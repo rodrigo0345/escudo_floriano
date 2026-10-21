@@ -211,6 +211,8 @@ function CityBox() {
 function OverlayBox() {
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const setSmokeEnabled = useAppStore((s) => s.setSmokeEnabled);
+  const aftermathEnabled = useAppStore((s) => s.aftermathEnabled);
+  const setAftermathEnabled = useAppStore((s) => s.setAftermathEnabled);
   const windEnabled = useAppStore((s) => s.windEnabled);
   const setWindEnabled = useAppStore((s) => s.setWindEnabled);
   const cloudsEnabled = useAppStore((s) => s.cloudsEnabled);
@@ -235,6 +237,13 @@ function OverlayBox() {
             <span className={styles.legendNote}>estradas sem visibilidade a castanho</span>
           </div>
         ) : null}
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow} title="Depois das chamas: fumo fino na floresta, brasas e fumo leve no mato, cinza levada pelo vento nos campos, colunas de fumo escuro nas casas. Desvanece com o tempo.">
+          <input type="checkbox" checked={aftermathEnabled} onChange={(e) => setAftermathEnabled(e.target.checked)} />
+          <span>Rescaldo</span>
+          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
+        </label>
       </div>
       <div className={styles.toggleGroup}>
         <label className={styles.overlayRow}>

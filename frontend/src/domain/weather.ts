@@ -216,7 +216,7 @@ export function detectWeatherEvents(series: WeatherSample[], startMs: number): T
         minute: m,
         timeStr,
         type: 'rule30',
-        title: '🚨 Entrada na Regra 30-30-30',
+        title: 'Entrada na Regra 30-30-30',
         detail: `T: ${Math.round(w.tempC)}°C · HR: ${Math.round(w.humidityPct)}% · V: ${Math.round(w.windKmh)} km/h`,
         badgeColor: '#ef4444',
       });
