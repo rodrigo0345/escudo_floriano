@@ -163,7 +163,9 @@ export function PlansPanel() {
     if (!silent) setLoading(true); // a background refresh must not flash "A carregar…"
     setError(null);
     try {
-      const [baseline, listed] = await Promise.all([simulationsApi.get(baseId), plansApi.listForSimulation(baseId)]);
+      const baseline = await simulationsApi.get(baseId);
+      const bySim = await plansApi.listForSimulation(baseId);
+      const listed = bySim.length > 0 ? bySim : (baseline.scenarioId ? await plansApi.all({ scenarioId: baseline.scenarioId }) : []);
       const ordered = [...listed].sort((a, b) => String(a.variant ?? '').localeCompare(String(b.variant ?? '')) || String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
       setBase(baseline);
       setPlans(ordered);
