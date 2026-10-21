@@ -29,10 +29,10 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
 
     public async Task<Plan> CreateAsync(Plan input, CancellationToken ct = default)
     {
-        input = await router.ApplyAsync(input, ct);
+        (input, var routed) = await router.ApplyWithKeysAsync(input, ct);
         var plan = input with
         {
-            Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = await validator.ValidateAsync(input, ct),
+            Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = await validator.ValidateAsync(input, ct, routed),
             ActivatedAt = null, CompletedAt = null,
         };
         return await plans.CreateAsync(plan, ct);
@@ -55,8 +55,8 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
 
         // o que o servidor gere não se altera por PATCH
         var merged = MergePatch.Apply(plan, patch) with { Status = plan.Status, StatusHistory = plan.StatusHistory, Author = plan.Author, ActivatedAt = plan.ActivatedAt, CompletedAt = plan.CompletedAt };
-        merged = await router.ApplyAsync(merged, ct);
-        merged = merged with { Validation = await validator.ValidateAsync(merged, ct) };
+        (merged, var routedMerged) = await router.ApplyWithKeysAsync(merged, ct);
+        merged = merged with { Validation = await validator.ValidateAsync(merged, ct, routedMerged) };
         if (merged.Validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(merged.Validation.Issues);
         return await plans.SaveAsync(merged, ct);
     }
