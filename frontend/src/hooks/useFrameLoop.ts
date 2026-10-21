@@ -87,7 +87,15 @@ export function useFrameLoop(): void {
             } else if (tf <= tEnd) {
               // 2. Active event phase:
               cloudFactor = 1.0;
-              precipFactor = 1.0;
+              const dur = Math.max(1, tEnd - tStart);
+              const rainRamp = Math.min(ev.type === 'storm' ? 10 : 8, Math.max(2, dur * 0.15));
+              if (tf < tStart + rainRamp) {
+                precipFactor = (tf - tStart) / rainRamp;
+              } else if (tf > tEnd - rainRamp) {
+                precipFactor = Math.max(0, (tEnd - tf) / rainRamp);
+              } else {
+                precipFactor = 1.0;
+              }
             } else {
               // 3. Post-event dissipation phase AFTER endMinute:
               const v = (tf - tEnd) / (tFinish - tEnd);

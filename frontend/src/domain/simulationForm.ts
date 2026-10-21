@@ -400,21 +400,23 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
     };
 
     if (ce.type === 'rain') {
+      const rainRamp = Math.min(8, Math.max(2, Math.round(dur * 0.15)));
       events.push({
         type: 'precipitation',
         enabled: true,
         window: win,
         intensityMmH: ce.intensityMmH ?? 6.0,
-        rampMinutes: ce.buildupMinutes ?? Math.min(10, Math.round(dur * 0.2)),
+        rampMinutes: rainRamp,
       });
     } else if (ce.type === 'storm') {
+      const rainRamp = Math.min(10, Math.max(3, Math.round(dur * 0.15)));
       events.push(
         {
           type: 'precipitation',
           enabled: true,
           window: win,
           intensityMmH: ce.intensityMmH ?? 15.0,
-          rampMinutes: ce.buildupMinutes ?? 10,
+          rampMinutes: rainRamp,
         },
         {
           type: 'wind_scale',
