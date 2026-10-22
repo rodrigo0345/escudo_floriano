@@ -26,8 +26,10 @@ const WGS84_E2 = 0.00669437999014;
 /** Height of the WGS84 ellipsoid above the sea-level geoid in Portugal (EGM96, ~52 m). The tiles are ellipsoidal, the terrain model is above sea level. */
 const GEOID_UNDULATION_M = 52;
 /** Screen-space error (pixels) a tile may have before it is refined: lower = sharper, more tiles. Live tiles go all the way down to photographic detail near the camera. */
-const ERROR_TARGET_PX = { live: 6, local: 14 };
-const TILE_CACHE = { min: 400, max: 900, maxBytes: 700 * 2 ** 20 };
+const ERROR_TARGET_PX = { live: 18, local: 18 }; // Google's own recommendation is ~20: sharper (6) fetched several times more tiles for detail nobody could see
+const TILE_CACHE = { min: 200, max: 500, maxBytes: 400 * 2 ** 20 };
+/** Only tiles within this many metres of where the camera looks are fetched (a multiple of the camera's distance to its target, between the two limits): the rest of the map stays terrain. */
+const LOAD_RADIUS = { perCameraMetre: 1.6, minM: 1500, maxM: 5000 };
 /** Starting a live session is the one request Google bills (~$0.006). A browser may start this many a day: a runaway toggle cannot run up the bill. */
 export const LIVE_STARTS_PER_DAY = 40;
 const LIVE_STARTS_KEY = 'firetrace.city3d.starts';
@@ -84,6 +86,10 @@ export class PhotorealLayer {
   private readonly base: string;
   /** Where the camera looks (set every frame): the height check samples the city around it. */
   private readonly target = new THREE.Vector3();
+  /** The load region (tile frame, metres): the camera target and how far around it tiles are fetched. */
+  private readonly loadCenter = new THREE.Vector3();
+  private loadRadiusM = Infinity;
+  private readonly toTileFrame = new THREE.Matrix4();
 
   constructor(
     private readonly geo: Georef,
@@ -100,7 +106,7 @@ export class PhotorealLayer {
       const response = await fetch(`${this.base}/manifest.json`, { cache: 'no-store' });
       if (!response.ok) return null;
       this.manifest = (await response.json()) as CityManifest;
-      this.attribution = this.manifest.attribution?.length ? this.manifest.attribution.join(' · ') : 'Google';
+      this.attribution = this.manifest.attribution?.length ? this.manifest.attribution.join(' Â· ') : 'Google';
       return this.manifest;
     } catch {
       return null;
@@ -157,6 +163,9 @@ export class PhotorealLayer {
     if (!tiles || !this.enabled) return;
     this.target.copy(target);
     camera.updateMatrixWorld();
+    this.toTileFrame.copy(tiles.group.matrixWorld).invert();
+    this.loadCenter.copy(target).applyMatrix4(this.toTileFrame);
+    this.loadRadiusM = Math.min(LOAD_RADIUS.maxM, Math.max(LOAD_RADIUS.minM, camera.position.distanceTo(target) * this.geo.unit * LOAD_RADIUS.perCameraMetre));
     tiles.setResolutionFromRenderer(camera, renderer);
     tiles.update();
   }
@@ -180,6 +189,14 @@ export class PhotorealLayer {
     tiles.lruCache.minSize = TILE_CACHE.min;
     tiles.lruCache.maxSize = TILE_CACHE.max;
     (tiles.lruCache as unknown as { maxBytesSize: number }).maxBytesSize = TILE_CACHE.maxBytes;
+    // a tile counts as in view only if it is also near where the camera looks: the tiles renderer then neither downloads nor refines the rest of the map
+    const hook = tiles as unknown as { tileInView: (tile: unknown) => boolean };
+    const inFrustum = hook.tileInView.bind(tiles);
+    hook.tileInView = (tile) => {
+      if (!inFrustum(tile)) return false;
+      const volume = (tile as { cached?: { boundingVolume?: { distanceToPoint: (point: THREE.Vector3) => number } } }).cached?.boundingVolume;
+      return !volume || volume.distanceToPoint(this.loadCenter) <= this.loadRadiusM;
+    };
     tiles.setCamera(camera);
     tiles.setResolutionFromRenderer(camera, renderer);
     tiles.group.matrixAutoUpdate = false;
@@ -243,7 +260,7 @@ export class PhotorealLayer {
   private updateLiveAttribution(tiles: TilesRenderer): void {
     const credits: { type: string; value: string }[] = [];
     (tiles as unknown as { getAttributions: (target: unknown[]) => void }).getAttributions(credits);
-    const text = credits.filter((c) => c.type === 'string').map((c) => c.value).join(' · ');
+    const text = credits.filter((c) => c.type === 'string').map((c) => c.value).join(' Â· ');
     this.attribution = text || 'Google';
   }
 
@@ -305,7 +322,7 @@ export class PhotorealLayer {
     differences.sort((a, b) => a - b);
     const ground = differences[Math.floor(differences.length * 0.25)];
     const spread = differences[Math.floor(differences.length * 0.75)] - differences[Math.floor(differences.length * 0.25)];
-    console.info(`cidade 3D: ${differences.length} raios em tiles de erro ${finest.toFixed(1)} m: chão ${ground.toFixed(1)} m acima do terreno (dispersão ${spread.toFixed(1)} m)`);
+    console.info(`cidade 3D: ${differences.length} raios em tiles de erro ${finest.toFixed(1)} m: chÃ£o ${ground.toFixed(1)} m acima do terreno (dispersÃ£o ${spread.toFixed(1)} m)`);
     if (spread > MAX_SPREAD_M || Math.abs(ground) > MAX_CALIBRATION_M || Math.abs(ground) < 0.75) return;
     this.heightOffsetM -= ground;
     this.applyAlignment(tiles);
