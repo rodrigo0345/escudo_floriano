@@ -43,8 +43,11 @@ public sealed class OpenMeteoSource(HttpClient http, NpgsqlDataSource db, OpenMe
     async Task<List<HourlyWeather>> FetchAsync(string baseUrl, string provider, LatLon p, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
     {
         var inv = CultureInfo.InvariantCulture;
+        // ERA5 rejects unknown variables with HTTP 400; unavailable forecast fields must not be requested there.
+        var variables = "wind_speed_10m,wind_direction_10m,relative_humidity_2m,temperature_2m,wind_gusts_10m,precipitation,cloud_cover,is_day";
+        if (provider == ForecastProvider) variables += ",visibility,cape";
         var url = $"{baseUrl}?latitude={p.Lat.ToString(inv)}&longitude={p.Lon.ToString(inv)}&start_date={from.UtcDateTime:yyyy-MM-dd}&end_date={to.UtcDateTime:yyyy-MM-dd}" +
-                  "&hourly=wind_speed_10m,wind_direction_10m,relative_humidity_2m,temperature_2m,wind_gusts_10m,precipitation,cloud_cover,visibility,cape,is_day&wind_speed_unit=kmh&timezone=UTC";
+                  $"&hourly={variables}&wind_speed_unit=kmh&timezone=UTC";
         using var doc = JsonDocument.Parse(await http.GetStringAsync(url, ct));
         var hourly = doc.RootElement.GetProperty("hourly");
         var times = hourly.GetProperty("time").EnumerateArray().ToArray();

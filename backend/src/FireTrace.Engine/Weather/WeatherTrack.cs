@@ -37,12 +37,14 @@ public sealed class WeatherTrack
         {
             var a = _points[hi - 1]; var b = _points[hi];
             double f = (minute - a.Minute) / (b.Minute - a.Minute);
+            var nearest = f < 0.5 ? a : b;
             var (ax, ay) = Vector(a); var (bx, by) = Vector(b);
             double vx = ax + (bx - ax) * f, vy = ay + (by - ay) * f;
             r = new WeatherPoint(minute, a.WindKmh + (b.WindKmh - a.WindKmh) * f, double.Hypot(vx, vy) < 0.1 ? a.WindFromDeg : Angles.Normalize(Math.Atan2(vx, vy) * 180 / Math.PI),
                 a.HumidityPct + (b.HumidityPct - a.HumidityPct) * f, a.TempC + (b.TempC - a.TempC) * f, a.GustKmh + (b.GustKmh - a.GustKmh) * f,
                 a.PrecipitationMmH + (b.PrecipitationMmH - a.PrecipitationMmH) * f, a.CloudCoverPct + (b.CloudCoverPct - a.CloudCoverPct) * f,
-                a.SolarRadiationWm2 + (b.SolarRadiationWm2 - a.SolarRadiationWm2) * f);
+                a.SolarRadiationWm2 + (b.SolarRadiationWm2 - a.SolarRadiationWm2) * f,
+                nearest.VisibilityM, nearest.CapeJkg, nearest.IsDay);
         }
         return r with { Minute = minute, WindKmh = Math.Max(0, r.WindKmh * WindScale), GustKmh = Math.Max(0, r.GustKmh * WindScale), WindFromDeg = Angles.Normalize(r.WindFromDeg + DirOffsetDeg) };
     }

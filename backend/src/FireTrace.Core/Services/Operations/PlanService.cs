@@ -22,7 +22,7 @@ namespace FireTrace.Core.Services.Operations;
 /// Também guarda a execução de cada ação por quem as cumpre.
 /// </summary>
 public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator, DispatchService dispatching, CrudService<Dispatch> dispatches, CrudService<RoadClosure> closures,
-    PlanRouter router, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock)
+    PlanRouter router, PlanInterventions interventions, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock)
 {
     // ===================================================================================================== criar e alterar
     public Task<PlanValidation> ValidateAsync(Plan input, CancellationToken ct = default) => validator.ValidateAsync(input, ct);
@@ -56,6 +56,7 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
         // o que o servidor gere não se altera por PATCH
         var merged = MergePatch.Apply(plan, patch) with { Status = plan.Status, StatusHistory = plan.StatusHistory, Author = plan.Author, ActivatedAt = plan.ActivatedAt, CompletedAt = plan.CompletedAt };
         (merged, var routedMerged) = await router.ApplyWithKeysAsync(merged, ct);
+        merged = await interventions.RefreshResourceEffectsAsync(plan, merged, ct);
         merged = merged with { Validation = await validator.ValidateAsync(merged, ct, routedMerged) };
         if (merged.Validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(merged.Validation.Issues);
         return await plans.SaveAsync(merged, ct);

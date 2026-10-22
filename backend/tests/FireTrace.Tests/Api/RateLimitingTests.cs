@@ -12,16 +12,19 @@ public class RateLimitingTests : IClassFixture<ApiFactory>
     [Fact]
     public async Task Exceeding_rate_limit_returns_429_with_problem_and_retry_after()
     {
-        const string clientIp = "192.168.1.100";
+        // A direct caller cannot select its bucket through XFF. Use an isolated server so exhausting
+        // the direct-client bucket does not affect other tests sharing this class's fixture.
+        using var factory = new ApiFactory();
+        using var http = factory.CreateClient();
         HttpResponseMessage? lastResponse = null;
 
         // RateLimitPermitLimit is 300 in appsettings.json.
-        // Send requests with X-Forwarded-For until rate limited.
+        // Even rotating spoofed XFF values must still exhaust the same direct-client bucket.
         for (int i = 0; i < 310; i++)
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/health");
-            req.Headers.Add("X-Forwarded-For", clientIp);
-            lastResponse = await _http.SendAsync(req);
+            req.Headers.Add("X-Forwarded-For", $"192.168.{i / 256}.{i % 256}");
+            lastResponse = await http.SendAsync(req);
             if (lastResponse.StatusCode == HttpStatusCode.TooManyRequests)
                 break;
         }

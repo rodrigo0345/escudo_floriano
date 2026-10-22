@@ -52,6 +52,7 @@ services:
       FIRETRACE_DB: Host=db;Port=5432;Database=${POSTGRES_DB:-firetrace};Username=${POSTGRES_USER:-firetrace};Password=${POSTGRES_PASSWORD:-firetrace}
       ENGINE_URL: http://engine:9000   # only used when FireTrace:Engine:Provider is "elmfire"
       FIRETRACE_JOBS: /app/data/jobs
+      FireTrace__Limits__RateLimitTrustedProxies: "${FIRETRACE_PROXY_IP:-172.30.250.10}"
     ports:
       - "${PORT_API:-8080}:8080"
     volumes:
@@ -70,6 +71,7 @@ services:
       start_interval: 1s
     networks:
       - default
+      - proxy
 
   # Loads the third-party data of a location: docker compose --profile ingest run --rm ingest --location guimaraes
   ingest:
@@ -136,11 +138,17 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - default
+      proxy:
+        ipv4_address: "${FIRETRACE_PROXY_IP:-172.30.250.10}"
 
 networks:
   default:
     name: firetrace-network
+  proxy:
+    name: firetrace-proxy
+    ipam:
+      config:
+        - subnet: "${FIRETRACE_PROXY_SUBNET:-172.30.250.0/24}"
 
 volumes:
   pgdata:
