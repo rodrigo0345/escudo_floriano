@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { Action } from '@/api';
-import { triggerStartMinute } from '@/domain/planEdit';
+import { alertStartMinute } from '@/domain/planEdit';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './viewport.module.css';
@@ -31,6 +31,8 @@ const MAX_VISIBLE = 2;
 export function AlertToast() {
   const activePlan = useAppStore((s) => s.activePlan);
   const t = useAppStore((s) => s.t);
+  const run = useAppStore((s) => s.run);
+  const data = useAppStore((s) => s.data);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const lastT = useRef<number | null>(null);
   const lastPlanId = useRef<string | null>(null);
@@ -47,25 +49,29 @@ export function AlertToast() {
   );
 
   useEffect(() => {
-    const planId = activePlan?.id ?? null;
+    const planId = activePlan && run ? `${activePlan.id}:${run.id}` : null;
     if (lastPlanId.current !== planId) {
-      // A different plan is now on the map: drop the previous plan's toasts and re-baseline —
-      // only real forward crossings fire, never "everything already past" on a plan switch.
+      // A different plan/run is on the map: discard old toasts. At T+0 include immediate alerts;
+      // a switch halfway through the run does not replay alerts already in the past.
       lastPlanId.current = planId;
-      lastT.current = t;
+      lastT.current = t === 0 ? -1 : t;
       timers.current.forEach((id) => window.clearTimeout(id));
       timers.current.clear();
       setToasts([]);
-      return;
     }
     const prev = lastT.current;
     lastT.current = t;
-    if (prev == null || t <= prev || !activePlan) return;
+    if (prev != null && t < prev) {
+      // Rewinding to the start re-arms immediate/T+0 alerts for the next forward tick.
+      if (t === 0) lastT.current = -1;
+      return;
+    }
+    if (prev == null || t <= prev || !activePlan || !run || !data || run.simulation.planId !== activePlan.id) return;
     // Which `public_alert` actions did we just cross (prev < start <= t)? The latest wins on a big jump.
     let fired: { action: AlertAction; start: number } | null = null;
     for (const action of activePlan.actions ?? []) {
       if (action.type !== 'public_alert') continue;
-      const start = triggerStartMinute(action); // `at_time` trigger → `at.offsetMinutes`; conditional/manual → null
+      const start = alertStartMinute(action, run, data);
       if (start == null || !(prev < start && t >= start)) continue;
       if (!fired || start > fired.start) fired = { action, start };
     }
@@ -90,7 +96,7 @@ export function AlertToast() {
       setToasts((current) => current.filter((x) => x.key !== toast.key));
     }, DISMISS_MS);
     timers.current.set(toast.key, timer);
-  }, [t, activePlan]);
+  }, [t, activePlan, run, data]);
 
   if (!toasts.length) return null;
   return (

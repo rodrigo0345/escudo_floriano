@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { Capabilities, Location, Plan, Smoke } from '@/api';
-import { extractTimelineEventsFromSnapshot, extractTimelineKeyframesFromSnapshot } from '@/domain/simulationForm';
+import { extractTimelineEventsFromSnapshot, extractTimelineKeyframesFromSnapshot, updateTimelineRangeEvent } from '@/domain/simulationForm';
 
 import type { CitySource } from '@/engine/layers/photorealLayer';
 import type {
@@ -208,7 +208,7 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   updateCustomEvent: (id, patch) =>
     set((s) => ({
-      customEvents: s.customEvents.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+      customEvents: s.customEvents.map((e) => (e.id === id ? updateTimelineRangeEvent(e, patch) : e)),
     })),
   removeCustomEvent: (id) =>
     set((s) => ({

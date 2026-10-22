@@ -1,4 +1,5 @@
-import type { Action, LatLon, Responsibility, ResourceAssignment, Vehicle } from '@/api';
+import type { Action, LatLon, Responsibility, ResourceAssignment, Trigger, Vehicle } from '@/api';
+import type { LocationData, RunData } from '@/store/types';
 
 /**
  * The operator's edit of an agent plan (Epic A6): pure functions over the `Action` JSON, so the plan editor does not have to know
@@ -13,10 +14,40 @@ const number = (value: unknown): number | null => (typeof value === 'number' && 
 export const cloneAction = (action: Action): Action => JSON.parse(JSON.stringify(action)) as Action;
 
 /** The minute an `at_time` trigger starts, or null for a conditional/manual trigger (which the engine does not time yet — J3). */
-export function triggerStartMinute(action: Action): number | null {
+export function timeSpecMinute(value: unknown, startMs?: number): number | null {
+  const at = object(value);
+  const offset = number(at?.offsetMinutes);
+  if (offset != null) return offset;
+  if (typeof at?.time !== 'string' || startMs == null) return null;
+  const absolute = Date.parse(at.time);
+  return Number.isFinite(absolute) ? (absolute - startMs) / 60_000 : null;
+}
+
+export function triggerStartMinute(action: Action, startMs?: number): number | null {
   const trigger = object((action as Json).trigger);
   if (!trigger || trigger.kind !== 'at_time') return null;
-  return number(object(trigger.at)?.offsetMinutes);
+  return timeSpecMinute(trigger.at, startMs);
+}
+
+/** Alert timing on the displayed run: immediate, clock-scheduled, or forecast arrival at its target. */
+export function alertStartMinute(action: Action, run: RunData, data: LocationData): number | null {
+  const trigger = action.trigger as Trigger | undefined;
+  if (!trigger) return 0;
+  if (trigger.kind === 'at_time') return triggerStartMinute(action, run.startMs);
+  if (trigger.kind !== 'on_fire_arrival') return null;
+  const target = trigger.target;
+  const points: LatLon[] = [];
+  collectLatLons(target.position ?? target.geometry ??
+    data.places.find((p) => p.id === target.placeId)?.position ??
+    data.facilities.find((p) => p.id === target.facilityId)?.position ??
+    data.waterPoints.find((p) => p.id === target.waterPointId)?.position, points);
+  if (!points.length) return null;
+  const lat = points.reduce((sum, p) => sum + p.lat, 0) / points.length;
+  const lon = points.reduce((sum, p) => sum + p.lon, 0) / points.length;
+  const [u, v] = data.geo.uv(lat, lon);
+  if (u < 0 || u >= 1 || v < 0 || v >= 1) return null;
+  const arrival = run.ign[Math.floor(v * run.gridHeight) * run.gridWidth + Math.floor(u * run.gridWidth)];
+  return arrival >= 0 ? Math.max(0, arrival - (trigger.leadTimeMinutes ?? 0)) : null;
 }
 
 export function triggerKind(action: Action): string {
@@ -28,8 +59,8 @@ export function triggerKind(action: Action): string {
  * if it was conditional (fire arrival / another action), the windows start at the chosen minute, so re-simulating the plan actually
  * reflects the change instead of silently keeping the old window.
  */
-export function setTriggerMinute(action: Action, minute: number): Action {
-  const previous = triggerStartMinute(action);
+export function setTriggerMinute(action: Action, minute: number, startMs?: number): Action {
+  const previous = action.trigger ? triggerStartMinute(action, startMs) : 0;
   const next = cloneAction(action) as Json;
   next.trigger = { kind: 'at_time', at: { offsetMinutes: Math.max(0, Math.round(minute)) } };
   const delta = previous == null ? null : Math.round(minute) - previous;
@@ -38,12 +69,10 @@ export function setTriggerMinute(action: Action, minute: number): Action {
     for (const raw of effects) {
       const effect = object(raw);
       if (!effect) continue;
-      const start = object(effect.start);
-      const end = object(effect.end);
-      const s = number(start?.offsetMinutes);
-      const e = number(end?.offsetMinutes);
-      if (start && s != null) start.offsetMinutes = delta == null ? Math.max(0, Math.round(minute)) : s + delta;
-      if (end && e != null) end.offsetMinutes = delta == null ? Math.max(1, Math.round(minute) + Math.max(1, e - (s ?? e))) : e + delta;
+      const s = timeSpecMinute(effect.start, startMs);
+      const e = timeSpecMinute(effect.end, startMs);
+      if (s != null) effect.start = { offsetMinutes: delta == null ? Math.max(0, Math.round(minute)) : Math.round(s + delta) };
+      if (e != null) effect.end = { offsetMinutes: delta == null ? Math.max(1, Math.round(minute) + Math.max(1, e - (s ?? e))) : Math.round(e + delta) };
     }
   }
   if (number(object(next.startBy)?.offsetMinutes) != null) (next.startBy as Json).offsetMinutes = Math.max(0, Math.round(minute));
@@ -141,14 +170,14 @@ export function shiftAction(action: Action, dLat: number, dLon: number): Action 
 }
 
 /** `T+15–45` for the action's what-if interventions, so the operator sees what changing the trigger moved. */
-export function effectWindows(action: Action): { start: number; end: number }[] {
+export function effectWindows(action: Action, startMs?: number): { start: number; end: number }[] {
   const effects = (action as Json).simulationEffects;
   if (!Array.isArray(effects)) return [];
   const windows: { start: number; end: number }[] = [];
   for (const raw of effects) {
     const effect = object(raw);
-    const start = number(object(effect?.start)?.offsetMinutes);
-    const end = number(object(effect?.end)?.offsetMinutes);
+    const start = timeSpecMinute(effect?.start, startMs);
+    const end = timeSpecMinute(effect?.end, startMs);
     if (start != null) windows.push({ start, end: end ?? start });
   }
   return windows;

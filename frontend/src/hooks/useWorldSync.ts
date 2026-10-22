@@ -148,68 +148,55 @@ export function useWorldSync(): void {
       return;
     }
 
-    if (playing) {
-      if (inFlightDetail.current) return;
+    const applyDetail = (targetT: number, detail: [PerimeterCollection, SpreadVectorCollection]) => {
+      if (useAppStore.getState().run?.id === run.id && Math.floor(latestDetailT.current) === targetT) {
+        world.fire.setPerimeter(detail[0]);
+        world.fire.setArrows(detail[1]);
+        if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
+      }
+    };
 
-      const fetchNext = async (wantedT: number) => {
-        const intT = Math.floor(wantedT);
-        inFlightDetail.current = true;
-        try {
-          // asking for the p10/p50/p90 quantiles in the same request keeps one fetch per minute
-          // (the backend splits the single comma-joined `percentile` query value)
-          const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, intT, ['p10', 'p50', 'p90']),
-            simulationsApi.vectors(run.id, intT),
-          ]);
-          detailCache.current.set(`${run.id}:${intT}`, detail);
-          if (useAppStore.getState().run?.id === run.id) {
-            world.fire.setPerimeter(detail[0]);
-            world.fire.setArrows(detail[1]);
-            if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
-          }
-        } catch (e) {
-          console.warn('detalhe do fogo:', (e as Error).message);
-        } finally {
-          inFlightDetail.current = false;
-          const currentT = Math.floor(latestDetailT.current);
-          const currentRun = useAppStore.getState().run;
-          const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== intT) {
-            const nextKey = `${run.id}:${currentT}`;
-            if (detailCache.current.has(nextKey)) {
-              const nextCached = detailCache.current.get(nextKey)!;
-              world.fire.setPerimeter(nextCached[0]);
-              world.fire.setArrows(nextCached[1]);
-              if (ensembleEnabled) world.ensemble.setCollections(nextCached[0]);
-            } else {
-              void fetchNext(currentT);
-            }
+    const fetchDetail = async (wantedT: number) => {
+      const intT = Math.floor(wantedT);
+      inFlightDetail.current = true;
+      try {
+        // asking for the p10/p50/p90 quantiles in the same request keeps one fetch per minute
+        // (the backend splits the single comma-joined `percentile` query value)
+        const detail = await Promise.all([
+          simulationsApi.perimeter(run.id, intT, ['p10', 'p50', 'p90']),
+          simulationsApi.vectors(run.id, intT),
+        ]);
+        detailCache.current.set(`${run.id}:${intT}`, detail);
+        applyDetail(intT, detail);
+      } catch (e) {
+        console.warn('detalhe do fogo:', (e as Error).message);
+      } finally {
+        inFlightDetail.current = false;
+        const currentT = Math.floor(latestDetailT.current);
+        const currentRun = useAppStore.getState().run;
+        if (currentRun?.id === run.id && currentT !== intT) {
+          const nextKey = `${run.id}:${currentT}`;
+          if (detailCache.current.has(nextKey)) {
+            applyDetail(currentT, detailCache.current.get(nextKey)!);
+          } else {
+            void fetchDetail(currentT);
           }
         }
-      };
+      }
+    };
 
-      void fetchNext(minute);
+    if (playing) {
+      if (!inFlightDetail.current) {
+        void fetchDetail(minute);
+      }
     } else {
-      let cancelled = false;
-      const timer = setTimeout(async () => {
-        try {
-          const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, minute, ['p10', 'p50', 'p90']),
-            simulationsApi.vectors(run.id, minute),
-          ]);
-          detailCache.current.set(key, detail);
-          if (!cancelled && useAppStore.getState().run?.id === run.id) {
-            world.fire.setPerimeter(detail[0]);
-            world.fire.setArrows(detail[1]);
-            if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
-          }
-        } catch (e) {
-          console.warn('detalhe do fogo:', (e as Error).message);
+      const timer = setTimeout(() => {
+        if (!inFlightDetail.current) {
+          void fetchDetail(minute);
         }
       }, DETAIL_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
       };
     }
@@ -234,52 +221,47 @@ export function useWorldSync(): void {
       return;
     }
 
-    if (playing) {
-      if (inFlightSmoke.current) return;
+    const applySmoke = (targetT: number, info: Smoke) => {
+      if (useAppStore.getState().run?.id === run.id && latestSmokeT.current === targetT) {
+        useAppStore.getState().setSmokeInfo(info);
+      }
+    };
 
-      const fetchNextSmoke = async (wantedT: number) => {
-        inFlightSmoke.current = true;
-        try {
-          const info = await simulationsApi.smoke(run.id, wantedT);
-          smokeCache.current.set(`${run.id}:${wantedT}`, info);
-          if (useAppStore.getState().run?.id === run.id) {
-            useAppStore.getState().setSmokeInfo(info);
-          }
-        } catch (e) {
-          console.warn('fumo:', (e as Error).message);
-        } finally {
-          inFlightSmoke.current = false;
-          const currentT = latestSmokeT.current;
-          const currentRun = useAppStore.getState().run;
-          const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
-            const nextKey = `${run.id}:${currentT}`;
-            if (smokeCache.current.has(nextKey)) {
-              useAppStore.getState().setSmokeInfo(smokeCache.current.get(nextKey)!);
-            } else {
-              void fetchNextSmoke(currentT);
-            }
+    const fetchSmoke = async (wantedT: number) => {
+      inFlightSmoke.current = true;
+      try {
+        const info = await simulationsApi.smoke(run.id, wantedT);
+        smokeCache.current.set(`${run.id}:${wantedT}`, info);
+        applySmoke(wantedT, info);
+      } catch (e) {
+        console.warn('fumo:', (e as Error).message);
+      } finally {
+        inFlightSmoke.current = false;
+        const currentT = latestSmokeT.current;
+        const currentRun = useAppStore.getState().run;
+        if (currentRun?.id === run.id && currentT !== wantedT) {
+          const nextKey = `${run.id}:${currentT}`;
+          if (smokeCache.current.has(nextKey)) {
+            applySmoke(currentT, smokeCache.current.get(nextKey)!);
+          } else {
+            void fetchSmoke(currentT);
           }
         }
-      };
+      }
+    };
 
-      void fetchNextSmoke(t);
+    if (playing) {
+      if (!inFlightSmoke.current) {
+        void fetchSmoke(t);
+      }
     } else {
-      let cancelled = false;
-      const timer = setTimeout(async () => {
-        try {
-          const info = await simulationsApi.smoke(run.id, t);
-          smokeCache.current.set(key, info);
-          if (!cancelled && useAppStore.getState().run?.id === run.id) {
-            useAppStore.getState().setSmokeInfo(info);
-          }
-        } catch (e) {
-          console.warn('fumo:', (e as Error).message);
+      const timer = setTimeout(() => {
+        if (!inFlightSmoke.current) {
+          void fetchSmoke(t);
         }
       }, DETAIL_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
       };
     }

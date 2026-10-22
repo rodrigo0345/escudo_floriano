@@ -19,6 +19,7 @@ import {
   updateAssignment,
 } from '@/domain/planEdit';
 import { useResourcesStore } from '@/store/resourcesStore';
+import { useAppStore } from '@/store/appStore';
 
 import styles from './panels.module.css';
 
@@ -45,6 +46,7 @@ const issueKind = (severity: string): 'ok' | 'warn' | 'bad' => (severity === 'er
  * (merge-patch, `actions` replaced as a whole), then re-simulated, so the plan next to A and B always has a what-if that matches it.
  */
 export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }: PlanEditorProps) {
+  const startMs = useAppStore((s) => s.run?.startMs);
   const vehicles = useResourcesStore((s) => s.vehicles);
   const organizations = useResourcesStore((s) => s.organizations);
   const [title, setTitle] = useState(plan.title);
@@ -154,7 +156,7 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
             actions.flatMap((a) => ((a.resources ?? []) as ResourceAssignment[]).map((r) => `${r.resourceType}:${r.resourceId}`)),
           );
           const choices = vehicles.filter((v) => !assigned.has(`vehicle:${v.id}`));
-          const windows = effectWindows(action);
+          const windows = effectWindows(action, startMs);
           // Every handler reads the ref: two quick edits must compose, not overwrite each other from a stale render closure.
           const mutate = (fn: (current: Action) => Action) => {
             const current = actionsRef.current[index];
@@ -182,10 +184,10 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
                     type="number"
                     min={0}
                     step={1}
-                    value={triggerStartMinute(action) ?? 0}
-                    onChange={(e) => mutate((current) => setTriggerMinute(current, Number(e.target.value) || 0))}
+                    value={triggerStartMinute(action, startMs) ?? 0}
+                    onChange={(e) => mutate((current) => setTriggerMinute(current, Number(e.target.value) || 0, startMs))}
                   />
-                  {triggerStartMinute(action) == null && triggerKind(action) !== 'imediato' ? (
+                  {triggerStartMinute(action, startMs) == null && triggerKind(action) !== 'imediato' ? (
                     <small className="note">Gatilho condicional convertido em hora: o motor só simula `at_time`.</small>
                   ) : null}
                 </label>

@@ -110,6 +110,9 @@ export interface TimelineRangeEvent {
   precipitationMmH?: number; // for front_passage
   pressureDeltaHpa?: number; // for front_passage
   deltaDeg?: number;         // for wind_shift without an absolute target
+  holdMinutes?: number | null; // wind_shift: null preserves the contract's indefinite hold
+  returnRampMinutes?: number;
+  rotation?: 'shortest_arc' | 'clockwise' | 'counter_clockwise';
 }
 
 /**
@@ -448,6 +451,17 @@ export function resizeCustomEvents(events: TimelineRangeEvent[], duration: numbe
   });
 }
 
+/** Editing the visible interval also changes a finite wind hold; an indefinite hold stays indefinite. */
+export function updateTimelineRangeEvent(event: TimelineRangeEvent, patch: Partial<TimelineRangeEvent>): TimelineRangeEvent {
+  const next = { ...event, ...patch };
+  if (next.type === 'wind_shift' && next.holdMinutes != null &&
+      ['startMinute', 'endMinute', 'rampMinutes', 'returnRampMinutes'].some((key) => key in patch)) {
+    const ramp = next.rampMinutes ?? 0;
+    next.holdMinutes = Math.max(1, next.endMinute - next.startMinute - ramp - (next.returnRampMinutes ?? ramp));
+  }
+  return next;
+}
+
 /** @deprecated DEADCODE: Validação de disponibilidade de presets meteorológicos legados */
 export const presetAvailable = (id: PresetId, duration: number, baseWindKmh?: number | null): boolean => {
   if (id === 'second_ignition') return true;
@@ -608,8 +622,9 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
       );
     } else if (ce.type === 'wind_shift') {
       const dur = Math.max(5, ce.endMinute - ce.startMinute);
-      const ramp = ce.rampMinutes ?? Math.min(15, Math.max(3, Math.round(dur * 0.2)));
-      const hold = Math.max(1, dur - ramp);
+      const ramp = ce.rampMinutes ?? Math.min(15, Math.max(1, Math.floor((dur - 1) / 2)), Math.max(3, Math.round(dur * 0.2)));
+      const back = ce.returnRampMinutes ?? ramp;
+      const hold = ce.holdMinutes === null ? undefined : ce.holdMinutes ?? Math.max(1, dur - ramp - back);
       events.push({
         type: 'wind_shift',
         enabled: true,
@@ -618,7 +633,8 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
         deltaDeg: ce.windFromDeg == null ? (ce.deltaDeg ?? 90) : undefined,
         rampMinutes: ramp,
         holdMinutes: hold,
-        returnRampMinutes: ramp,
+        returnRampMinutes: hold == null ? ce.returnRampMinutes : back,
+        ...(ce.rotation ? { rotation: ce.rotation } : {}),
       });
       // `wind_shift` changes direction only; the speed field of the same event needs its own `wind_set`.
       if (ce.windKmh != null) {
@@ -808,20 +824,23 @@ export function extractTimelineEventsFromSnapshot(
         const start = minutes(e.start) ?? 0;
         if (start < -10) continue;
         const safeStart = Math.max(0, start);
-        const ramp = typeof e.rampMinutes === 'number' ? e.rampMinutes : 15;
+        const ramp = typeof e.rampMinutes === 'number' ? e.rampMinutes : 0;
         // `holdMinutes` omitted means "until the end of the run".
-        const hold = typeof e.holdMinutes === 'number' ? e.holdMinutes : duration;
-        const back = typeof e.returnRampMinutes === 'number' ? e.returnRampMinutes : 0;
+        const hold = typeof e.holdMinutes === 'number' ? e.holdMinutes : null;
+        const back = typeof e.returnRampMinutes === 'number' ? e.returnRampMinutes : hold == null ? 0 : ramp;
         result.push({
           id: `ev_wind_${idx++}`,
           type: 'wind_shift',
           label: `Rotação Vento (T+${safeStart})`,
           enabled: true,
           startMinute: safeStart,
-          endMinute: Math.min(duration, safeStart + ramp + hold + back),
+          endMinute: hold == null ? duration : Math.min(duration, safeStart + ramp + hold + back),
           windFromDeg: typeof e.toDeg === 'number' ? e.toDeg : undefined,
           deltaDeg: typeof e.toDeg !== 'number' && typeof e.deltaDeg === 'number' ? e.deltaDeg : undefined,
           rampMinutes: ramp,
+          holdMinutes: hold,
+          returnRampMinutes: back,
+          rotation: e.rotation,
         });
         break;
       }

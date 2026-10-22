@@ -15,6 +15,7 @@ import {
   defaultFormValues,
   eventCapabilityNote,
   resizeCustomEvents,
+  updateTimelineRangeEvent,
   type CustomWeatherEventType,
   type SimulationFormValues,
   type TimelineKeyframe,
@@ -247,7 +248,7 @@ export function SimulationForm() {
 
   const updateCustomRangeEvent = (id: string, patch: Partial<TimelineRangeEvent>) => {
     setPreview(null);
-    const next = values.customEvents.map((e) => (e.id === id ? { ...e, ...patch } : e));
+    const next = values.customEvents.map((e) => (e.id === id ? updateTimelineRangeEvent(e, patch) : e));
     setValues((v) => ({ ...v, customEvents: next }));
     setCustomEvents(next);
   };

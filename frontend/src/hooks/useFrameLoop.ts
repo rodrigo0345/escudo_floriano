@@ -88,7 +88,7 @@ export function useFrameLoop(): void {
 
             const targetPrecip =
               ev.type === 'storm' ? (ev.intensityMmH ?? 15)
-              : ev.type === 'front_passage' ? (ev.intensityMmH ?? 4)
+              : ev.type === 'front_passage' ? (ev.precipitationMmH ?? 0)
               : ev.type === 'rain' ? (ev.intensityMmH ?? 6)
               : 0;
             const targetCloud =
