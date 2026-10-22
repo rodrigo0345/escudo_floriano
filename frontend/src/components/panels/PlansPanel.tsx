@@ -284,11 +284,14 @@ export function PlansPanel() {
     }
   };
 
-  const toggleActions = async (plan: PlanSummary) => {
+  /** "Ver plano": the plan's what-if goes on the map and its actions open below, so the map and the list are always the same plan. */
+  const togglePlan = async (plan: PlanSummary) => {
     setFocusedAction(null);
     if (open?.id === plan.id) return setOpen(null);
     try {
       setOpen(await plansApi.get(plan.id as string));
+      const sim = runs.get(plan.id as string);
+      if (sim && run?.simulation.id !== sim.id) void showSimulationById(sim.id as string);
     } catch (e) {
       // a plan can disappear under the list (the agents replace or withdraw one): say so and show the list as it is now
       showBanner(`Plano ${plan.variant ?? plan.title}: já não existe (a lista foi atualizada). ${(e as Error).message}`);
@@ -350,16 +353,14 @@ export function PlansPanel() {
             {sim ? <StatsRows stats={sim.stats} base={base?.stats} /> : <small className="note">Ainda sem simulação deste plano.</small>}
             <AgentRows m={metricsOf(full.get(id))} />
             <div className={styles.two}>
-              {sim ? (
-                <button className={showing?.id === sim.id ? 'on' : ''} onClick={() => void showSimulationById(sim.id as string)}>
-                  {showing?.id === sim.id ? 'No mapa' : 'Ver no mapa'}
-                </button>
-              ) : (
+              <button className={open?.id === id ? 'on' : ''} onClick={() => void togglePlan(plan)}>
+                {open?.id === id ? 'Esconder plano' : 'Ver plano'}
+              </button>
+              {!sim ? (
                 <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)}>
                   {busy === `sim:${id}` ? 'A simular…' : 'Simular o plano'}
                 </button>
-              )}
-              <button onClick={() => void toggleActions(plan)}>{open?.id === id ? 'Esconder ações' : 'Ver ações'}</button>
+              ) : null}
               {status === 'proposed' ? (
                 <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
                   {busy === `select:${id}` ? 'A selecionar…' : 'Selecionar'}
