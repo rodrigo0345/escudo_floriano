@@ -1207,7 +1207,9 @@
   margin-top: 3px;
 }
 
-.linkButton {
+/* the plan editor's small actions: quiet until hovered; removing turns red so it reads as destructive */
+.ghostButton,
+.removeButton {
   padding: 2px 6px !important;
   border: 1px solid transparent !important;
   background: transparent !important;
@@ -1216,9 +1218,14 @@
   white-space: nowrap;
 }
 
-.linkButton:hover {
+.ghostButton:hover {
   border-color: var(--line) !important;
   color: var(--fg) !important;
+}
+
+.removeButton:hover {
+  border-color: color-mix(in srgb, var(--bad) 55%, transparent) !important;
+  color: var(--bad) !important;
 }
 
 .editorField {
@@ -1401,8 +1408,7 @@
   opacity: 0.9;
 }
 
-/* "Ver no mapa" beside the base note: a link, not the editor's muted `.linkButton` */
-.baseLinkButton {
+.linkButton {
   margin-left: auto;
   border: 0;
   background: transparent;

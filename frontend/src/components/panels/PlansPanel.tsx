@@ -488,7 +488,7 @@ export function PlansPanel() {
         <p className={styles.baseNote}>
           <span>Sem resposta:</span> <b>{nf(Math.round((baseStats.burnedHa ?? 0) * 10) / 10)} ha</b> · <b>{nf(baseStats.buildingsAffected ?? 0)}</b> edifícios
           {showing?.id !== baseId ? (
-            <button className={styles.baseLinkButton} onClick={() => void showSimulationById(baseId)}>
+            <button className={styles.linkButton} onClick={() => void showSimulationById(baseId)}>
               ver no mapa
             </button>
           ) : (

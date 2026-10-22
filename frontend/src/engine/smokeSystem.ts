@@ -201,8 +201,7 @@ export class SmokeSystem {
       this.size[j] = (34 + 5.5 * age) / geo.unit; // ~34 m at birth, ~190 m at end of life
       const fadeIn = Math.min(age / 1.5, 1);
       this.alpha[j] = 0.5 * Math.pow(1 - k, 0.7) * fadeIn * Math.min(0.5 + intensity / 3000, 1) * densityScale;
-      // dark column, not pale grey: a light plume washed the black scar grey and read as soot over the burn
-      const shade = 0.12 + 0.14 * Math.min(k * 1.4, 1);
+      const shade = 0.52 + 0.33 * Math.min(k * 1.4, 1);
       const warm = (1 - Math.min(k * 3, 1)) * 0.08;
       this.color[o] = shade + warm;
       this.color[o + 1] = shade;
