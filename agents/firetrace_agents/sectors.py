@@ -11,7 +11,7 @@ is where the fire is heading to.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -21,6 +21,7 @@ EARTH_RADIUS_M = 6_371_008.8
 # take the slower flanks (and every tier falls back to all sectors when there are few).
 HELICOPTER_SHARE = 1 / 3
 TRUCK_SHARE = 2 / 3
+WORKABILITY_FLOOR = 0.35  # a stretch crews can barely work still counts for this share of its danger: a fast fire is not ignored because its ground is bad
 
 
 def bearing_to(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -57,6 +58,7 @@ class Sector:
     intensity_kwm: float  # what the crews here face: the fire's intensity in the direction this stretch spreads (see `plan_sectors`)
     crown: bool = False
     head_intensity_kwm: float = 0.0  # what its cells burn at in their head direction (the vector's own figure)
+    workability: float = 1.0  # how much of their work a crew on foot does on this stretch's ground (``terrain.py``): 1 = flat and easy, less on steep, wooded ground
 
     @property
     def position(self) -> dict[str, float]:
@@ -64,7 +66,8 @@ class Sector:
 
     @property
     def danger(self) -> float:
-        return self.speed_mmin * max(self.intensity_kwm, 1.0)
+        """How urgent the stretch is: how fast and how hard it burns, discounted where crews can do little (sending them there wastes them and puts them at risk)."""
+        return self.speed_mmin * max(self.intensity_kwm, 1.0) * (WORKABILITY_FLOOR + (1.0 - WORKABILITY_FLOOR) * self.workability)
 
 
 @dataclass(frozen=True)
@@ -85,8 +88,22 @@ class Assignment:
     start_after: float | None = None  # minutes after the decision before which its effect does not start (an aircraft cooling the ground just before a crew goes in)
 
 
-def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12) -> list[Sector]:
-    """Rank the spread vectors by danger and keep them at least two work-zones apart (a unit covers one zone)."""
+COVER_MIN_SPEED_MMIN = 0.3  # a stretch spreading slower than this (m/min) is not a front anyone needs to hold yet
+OCTANTS = 8
+
+
+def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit: int = 12, workability_of: Callable[[Sector], float] | None = None,
+                 all_around: bool = True) -> list[Sector]:
+    """Rank the spread vectors by danger and keep them at least two work-zones apart (a unit covers one zone).
+
+    ``workability_of`` says how workable a stretch's ground is for a crew (``terrain.py``); it discounts the stretch's danger, so crews are not piled onto ground
+    where they can do little while an easier stretch burns just as hard.
+
+    ``all_around``: before filling by danger, the most dangerous stretch in each of the eight directions around the fire (where it is still spreading) is kept,
+    one work-zone apart. A fire is not only its head: the flanks and the back grow too (a flank becomes a head when the wind turns), and the doctrine is to
+    anchor and work the whole perimeter (anchor, flank and pinch), the slower stretches to the crews on foot (``assign_units`` gives them the lower share).
+    Without it every unit went to the one stretch where the fire was fastest at the decision and nobody watched the other side.
+    """
     candidates: list[Sector] = []
     for feature in (vectors or {}).get("features", []):
         geometry, props = feature.get("geometry") or {}, feature.get("properties") or {}
@@ -101,14 +118,28 @@ def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit
     head = max((s.speed_mmin for s in candidates), default=0.0)
     if head > 0:
         candidates = [replace(s, intensity_kwm=s.intensity_kwm * min(1.0, s.speed_mmin / head), head_intensity_kwm=s.intensity_kwm) for s in candidates]
+    if workability_of is not None:
+        candidates = [replace(s, workability=max(0.0, min(1.0, workability_of(s)))) for s in candidates]
     candidates.sort(key=lambda s: s.danger, reverse=True)
     kept: list[Sector] = []
+    if all_around and len(candidates) > 1:
+        lat0 = sum(s.lat for s in candidates) / len(candidates)
+        lon0 = sum(s.lon for s in candidates) / len(candidates)
+        covered: set[int] = set()
+        for sector in candidates:  # by danger: the first of each direction is its most dangerous stretch
+            octant = int(((bearing_to(lat0, lon0, sector.lat, sector.lon) + 180.0 / OCTANTS) % 360.0) // (360.0 / OCTANTS))
+            if octant in covered or sector.speed_mmin < COVER_MIN_SPEED_MMIN:
+                continue
+            if all(distance_m(sector.lat, sector.lon, other.lat, other.lon) >= zone_radius_m for other in kept):
+                kept.append(sector)
+                covered.add(octant)
     for sector in candidates:
-        if all(distance_m(sector.lat, sector.lon, other.lat, other.lon) >= 2 * zone_radius_m for other in kept):
-            kept.append(sector)
         if len(kept) >= limit:
             break
-    return kept
+        if sector not in kept and all(distance_m(sector.lat, sector.lon, other.lat, other.lon) >= 2 * zone_radius_m for other in kept):
+            kept.append(sector)
+    kept.sort(key=lambda s: s.danger, reverse=True)  # the tiers take their share of the list by danger (`assign_units`)
+    return kept[:limit]
 
 
 def slot_shift(slot: int, step_m: float) -> float:
@@ -142,6 +173,53 @@ def assign_units(
         agent_id: Assignment(a.sector, a.slot, a.place, segment_m=budgets.get(agent_id), offset_m=slot_shift(a.slot, budgets.get(agent_id) or 0.0))
         for agent_id, a in assigned.items()
     }
+
+
+def with_preferences(
+    assigned: dict[str, Assignment],
+    units: Sequence[tuple[str, str]],
+    sectors: Sequence[Sector],
+    preferred: dict[str, int],
+    *,
+    budgets: dict[str, float] | None = None,
+    concentration: int | None = None,
+) -> dict[str, Assignment]:
+    """``assigned`` with the units in ``preferred`` (unit id → index into ``sectors``) moved to the sector they were asked for, and every sector's units laid out again.
+
+    A commander (``advisor.py``) may know better than the rules' round-robin where a unit is worth most (a crew on foot on the easy flank, an engine on the road above the
+    slope), but the layout stays the rules' business: units of a sector are laid side by side (``slot``), or end to end as one barrier when ``concentration`` is set, in
+    the same order as ``assign_units`` uses (helicopters, then trucks, then squads, stable by id). Units not in ``preferred`` keep the sector the rules gave them.
+    """
+    if not preferred:
+        return assigned
+    order = {"helicopter": 0, "truck": 1, "squad": 2}
+    ranked = sorted(units, key=lambda u: (order.get(u[1], 9), u[0]))
+    chosen: dict[str, Sector | None] = {}
+    for agent_id, _tier in ranked:
+        previous = assigned.get(agent_id)
+        index = preferred.get(agent_id)
+        chosen[agent_id] = sectors[index] if index is not None and 0 <= index < len(sectors) else (previous.sector if previous is not None else None)
+    members: dict[Sector | None, list[str]] = {}
+    for agent_id, _tier in ranked:
+        members.setdefault(chosen[agent_id], []).append(agent_id)
+    out: dict[str, Assignment] = {}
+    barriers = budgets is not None and bool(concentration)
+    for sector, group in members.items():
+        total = sum((budgets or {}).get(a) or 0.0 for a in group) if barriers else 0.0
+        cumulative = 0.0
+        for slot, agent_id in enumerate(group):
+            place = assigned[agent_id].place if agent_id in assigned else None
+            segment = (budgets or {}).get(agent_id) or 0.0
+            if sector is None:
+                out[agent_id] = assigned.get(agent_id, Assignment(place=place))
+            elif barriers:
+                out[agent_id] = Assignment(sector, slot, place, segment_m=segment, offset_m=cumulative + segment / 2 - total / 2)
+                cumulative += segment
+            elif budgets is not None:
+                out[agent_id] = Assignment(sector, slot, place, segment_m=budgets.get(agent_id), offset_m=slot_shift(slot, segment))
+            else:
+                out[agent_id] = Assignment(sector, slot, place)
+    return out
 
 
 def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], budgets: dict[str, float], concentration: int) -> dict[str, Assignment]:

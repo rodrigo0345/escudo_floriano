@@ -32,6 +32,11 @@ The API has no event channel (see the contract's description), so this is a poll
     AGENTS_MAX_ATTEMPTS         tries per baseline before giving up    (3)
     AGENTS_SIMULATE_TIMEOUT     seconds to follow a what-if run        (900)
     AGENTS_NAME                 who claims the operator's requests     (firetrace-agents; shown in the UI)
+    AGENTS_TERRAIN             scale each crew's effect by its ground: slope, fuel, the fire running uphill (1; 0 = off; see terrain.py)
+    AGENTS_REAL_REFILL          an engine's refill trip is the real drive to water, not the backend's generic shuttle (1; 0 = off)
+    AGENTS_JUDGE_CENTRAL_ONLY   the wrong-wind what-ifs run the central member only: same casualties and area, far less engine time (1; 0 = off)
+    AGENTS_COMMANDER            rules (default) or llm: an LLM commander (Bombeiros, Proteção Civil, GNR, INEM) makes one more candidate plan that the
+                                engine judges against the rules'; needs OPENAI_API_KEY and AGENTS_LLM_MODEL (see llm/config.py for the rest)
     AGENTS_SEED_DEMO            on start, register the demo resources of a maximum-alert day: aircraft, crews pre-positioned in the forest and
                                 reinforcement groups (1; 0 = off). Runs ``scripts/seed_reinforcements.py`` and ``scripts/seed_air_and_prepositioning.py``,
                                 which skip what is already there, so a ``docker compose up`` from scratch gets the same fleet the plans were tuned on.
@@ -53,6 +58,7 @@ from typing import Any, Callable
 from .alternatives import HOUSE_ZONES_FOR_B, build_alternatives
 from .client import ApiProblem, FiretraceClient, NotReady
 from .commander import commander_from_env
+from .llm import build_advisor
 from .orchestrator import OrchestratorAgent
 from .revision import Reviser
 
@@ -73,8 +79,8 @@ class WatcherSettings:
     stage_minutes: int = 30
     concentration: int = 6
     building_zones: int = 0
-    replan_minutes: int = 45
-    max_waves: int = 3
+    replan_minutes: int = 30  # re-plan along the fire every half hour, moving the crews to where it burns now (see adaptation.py)
+    max_waves: int = 6
     candidates: int = 1  # 2 judges a second candidate per plan: better plans, but each costs a few backend validations (~75 s each, measured)
     revise_selected: bool = True
     skip_label_prefix: str = "[lab]"
@@ -368,7 +374,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request would bury the watcher's own
 
     client = FiretraceClient(base_url=args.base_url)
-    watcher = Watcher(client, OrchestratorAgent(client), WatcherSettings.from_env())
+    orchestrator = OrchestratorAgent(client)
+    orchestrator.advisor = build_advisor()  # the LLM commander if it was asked for and answers; else the rules decide everything (never stops the service from starting)
+    watcher = Watcher(client, orchestrator, WatcherSettings.from_env())
     stopping = False
 
     def _stop(*_: Any) -> None:

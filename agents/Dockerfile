@@ -8,7 +8,8 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY firetrace_agents ./firetrace_agents
-RUN pip install --no-cache-dir .
+# the [llm] extra is the LLM commander (LangChain + LangGraph); the service only uses it when AGENTS_COMMANDER=llm, and runs on the rules if the key or model is missing
+RUN pip install --no-cache-dir ".[llm]"
 # the demo resources the service registers on start (AGENTS_SEED_DEMO), and the scripts for `docker compose exec agents python scripts/...`
 COPY scripts ./scripts
 ENV PYTHONUNBUFFERED=1 \

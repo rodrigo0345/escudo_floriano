@@ -107,10 +107,15 @@ public static class ServiceCollectionExtensions
             {
                 context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
                 context.HttpContext.Response.ContentType = "application/problem+json";
-                if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+                var hasWindow = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
+                if (hasWindow)
                     context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Max(1, Math.Ceiling(retryAfter.TotalSeconds))).ToString(CultureInfo.InvariantCulture);
                 else
-                    context.HttpContext.Response.Headers.RetryAfter = limits.RateLimitWindowSeconds.ToString(CultureInfo.InvariantCulture);
+                    // a fila de um limite de simultaneidade esgotou-se: tentar de novo daqui a pouco chega, não é preciso esperar uma janela inteira
+                    context.HttpContext.Response.Headers.RetryAfter = "2";
+                // diz qual dos limites recusou (janela por IP ou fila de um endpoint de planos): sem isto um 429 não se explica
+                context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("RateLimiting")
+                    .LogWarning("429 {Method} {Path}: {Limiter}", context.HttpContext.Request.Method, context.HttpContext.Request.Path, hasWindow ? "janela por IP" : "fila de simultaneidade do endpoint");
 
                 var problem = new Problem(
                     "Demasiados pedidos: por favor aguarde antes de tentar novamente.",
@@ -135,10 +140,18 @@ public static class ServiceCollectionExtensions
                 });
             });
 
+            // criar, validar, simular e corrigir planos: caros (rotas e fumo por ação), por isso limitados, mas vários em simultâneo
             options.AddConcurrencyLimiter("planning", o =>
             {
-                o.PermitLimit = 1;
+                o.PermitLimit = limits.PlanningPermitLimit;
                 o.QueueLimit = limits.PlanningQueueLimit;
+                o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+            });
+            // pedidos de planos aos agentes: baratos, nunca esperam atrás de uma validação
+            options.AddConcurrencyLimiter("planning-light", o =>
+            {
+                o.PermitLimit = limits.PlanRequestPermitLimit;
+                o.QueueLimit = limits.PlanRequestQueueLimit;
                 o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             });
         });

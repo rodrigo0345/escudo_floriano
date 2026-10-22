@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Common;
 using FireTrace.Core.Domain.Errors;
@@ -139,6 +140,7 @@ public sealed class FireResults(IFireRunRepository runs, IDocumentStore<Simulati
         var burn = BurnMinutes(await map.GetTerrainAsync(run.LocationId, ct));
         var members = run.Ensemble.Select((ign, i) => CutsOf(run, net, burn, ign, run.Members.Length == 0 ? "rep" : $"m{i}")).ToList();
         var rep = CutsOf(run, net, burn, run.Ignition, "rep");
+        var active = (await closures.ListAsync(ct)).Where(c => c.LocationId == run.LocationId && c.Status == ClosureStatus.Active).ToList(); // uma consulta, não uma por troço
         var roads = new List<RoadStatusEntry>();
         for (int i = 0; i < net.Edges.Count; i++)
         {
@@ -147,14 +149,12 @@ public sealed class FireResults(IFireRunRepository runs, IDocumentStore<Simulati
             var cutting = members.Where(m => m.From[i] >= 0).ToList();
             double p = (double)cutting.Count / members.Count;
             if (p < minProbability && rep.From[i] < 0) continue;
-            roads.Add(new RoadStatusEntry(MapIds.Road(e.Id), e.Highway, e.Name, FireAnalytics.Quantiles(cutting.Select(m => (double)m.From[i]).ToList()),
-                FireAnalytics.Quantiles(cutting.Select(m => (double)m.Until[i]).ToList()), Math.Round(p, 2), await ActiveClosure(run.LocationId, e.Id, ct)));
+            string road = MapIds.Road(e.Id);
+            roads.Add(new RoadStatusEntry(road, e.Highway, e.Name, FireAnalytics.Quantiles(cutting.Select(m => (double)m.From[i]).ToList()),
+                FireAnalytics.Quantiles(cutting.Select(m => (double)m.Until[i]).ToList()), Math.Round(p, 2), active.FirstOrDefault(c => c.RoadIds?.Contains(road) == true)?.Id));
         }
         return new RoadStatusTimeline(id, run.DurationMinutes, roads);
     }
-
-    async Task<string?> ActiveClosure(string loc, int edgeId, CancellationToken ct) =>
-        (await closures.ListAsync(ct)).FirstOrDefault(c => c.LocationId == loc && c.Status == ClosureStatus.Active && c.RoadIds?.Contains(MapIds.Road(edgeId)) == true)?.Id;
 
     /// <summary>Origens de socorro (instalações) por tipo de meio: `fire_brigade`, `gnr`, `inem` (inclui hospitais) ou `any`.</summary>
     public async Task<IReadOnlyList<Facility>> OriginsAsync(string loc, string origin, CancellationToken ct = default) =>
@@ -181,7 +181,10 @@ public sealed class FireResults(IFireRunRepository runs, IDocumentStore<Simulati
             var rep = CutsOf(run, net, burn, run.Pick(percentile), percentile ?? "rep");
             var members = run.Members.Select((m, i) => CutsOf(run, net, burn, m, $"m{i}")).ToList();
             var memo = new ConcurrentDictionary<string, double?[]>();
-            double?[] Access(RoadCuts c, int t) => memo.GetOrAdd(string.Join(',', Enumerable.Range(0, net.Edges.Count).Where(e => c.IsCut(e, t))), _ => graph.AccessTimes(origins, targets, profile, e => c.IsCut(e, t)));
+            // só os troços que o fogo corta alguma vez podem estar cortados: a chave de cada instante lê esses (por ordem de troço, como antes) e não a rede toda
+            var everCut = new ConditionalWeakTable<RoadCuts, int[]>();
+            int[] Ever(RoadCuts c) => everCut.GetValue(c, k => Enumerable.Range(0, net.Edges.Count).Where(e => k.From[e] >= 0).ToArray());
+            double?[] Access(RoadCuts c, int t) => memo.GetOrAdd(string.Join(',', Ever(c).Where(e => c.IsCut(e, t))), _ => graph.AccessTimes(origins, targets, profile, e => c.IsCut(e, t)));
 
             var times = Enumerable.Range(0, run.DurationMinutes / Math.Max(1, stepMin) + 1).Select(i => i * stepMin).ToList();
             var minutes = places.Select(_ => new List<double?>()).ToArray(); var iso = places.Select(_ => new List<double>()).ToArray(); var status = places.Select(_ => new List<string>()).ToArray();

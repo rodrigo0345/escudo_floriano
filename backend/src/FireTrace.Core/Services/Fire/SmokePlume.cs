@@ -21,13 +21,12 @@ public sealed class SmokePlume(SmokeSettings smoke)
     {
         var puffs = new List<SmokePuff>();
         var (width, cellM, block) = (run.Spec.Width, run.Spec.CellM, smoke.BlockCells);
+        var burning = BurningCells(run, burnMinutes);
         for (int m = tMin; m >= Math.Max(0, tMin - D.PuffLifetimeMinutes); m -= D.PuffStepMinutes)
         {
             var sources = new Dictionary<(int, int), (double Q, double MaxI, bool Crown, double X, double Y, int N)>();
-            for (int c = 0; c < run.Ignition.Length; c++)
+            foreach (int c in m < burning.Length ? burning[m] : Array.Empty<int>())
             {
-                int t0 = run.Ignition[c];
-                if (t0 < 0 || t0 > m || m >= t0 + Math.Min(burnMinutes[c], D.FlameMinutes)) continue; // só a frente em chamas emite
                 int x = c % width, y = c / width; var key = (x / block, y / block);
                 double intensity = run.IntensityKwm[c], q = intensity * cellM / D.HeatOfCombustionKjKg * D.EmissionFactorGPerKg; // g/s
                 var s = sources.GetValueOrDefault(key);
@@ -43,6 +42,47 @@ public sealed class SmokePlume(SmokeSettings smoke)
             }
         }
         return puffs;
+    }
+
+    /// <summary>
+    /// As células em chamas a cada minuto (a frente que emite: do minuto em que ardem até `FlameMinutes` ou ao fim do seu tempo de queima), por ordem de célula.
+    /// Percorrer a grelha inteira por cada minuto de cada consulta era o que tornava a validação de planos lenta; assim faz-se uma vez por corrida e cada consulta só
+    /// vê as células que ardem. A ordem das células é a mesma de antes, por isso as somas (e o resultado) são idênticos.
+    /// </summary>
+    int[][] BurningCells(FireRun run, int[] burnMinutes)
+    {
+        var entry = _burning.GetValue(run, r => new BurningIndex(burnMinutes, new Lazy<int[][]>(() => IndexBurning(r, burnMinutes))));
+        return ReferenceEquals(entry.Burn, burnMinutes) ? entry.Cells.Value : IndexBurning(run, burnMinutes); // outro tempo de queima para a mesma corrida: não se reaproveita
+    }
+
+    readonly System.Runtime.CompilerServices.ConditionalWeakTable<FireRun, BurningIndex> _burning = new();
+    sealed record BurningIndex(int[] Burn, Lazy<int[][]> Cells);
+
+    int[][] IndexBurning(FireRun run, int[] burnMinutes)
+    {
+        int last = -1;
+        for (int c = 0; c < run.Ignition.Length; c++)
+        {
+            int t0 = run.Ignition[c], len = Math.Min(burnMinutes[c], D.FlameMinutes);
+            if (t0 >= 0 && len > 0) last = Math.Max(last, t0 + len - 1);
+        }
+        var counts = new int[last + 1];
+        for (int c = 0; c < run.Ignition.Length; c++)
+        {
+            int t0 = run.Ignition[c], len = Math.Min(burnMinutes[c], D.FlameMinutes);
+            if (t0 < 0 || len <= 0) continue;
+            for (int m = t0; m < t0 + len; m++) counts[m]++;
+        }
+        var cells = new int[last + 1][];
+        for (int m = 0; m <= last; m++) cells[m] = new int[counts[m]];
+        var filled = new int[last + 1];
+        for (int c = 0; c < run.Ignition.Length; c++) // por ordem de célula: cada minuto fica ordenado como a varredura antiga o via
+        {
+            int t0 = run.Ignition[c], len = Math.Min(burnMinutes[c], D.FlameMinutes);
+            if (t0 < 0 || len <= 0) continue;
+            for (int m = t0; m < t0 + len; m++) cells[m][filled[m]++] = c;
+        }
+        return cells;
     }
 
     static SmokePuff Place(double x, double y, double mass, double height, double east, double north, double age, double spacing) =>
