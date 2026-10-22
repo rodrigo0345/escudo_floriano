@@ -108,8 +108,6 @@ export function PlaybackBar() {
   // Keyframe editing: a point on the curve is dragged along the axis and opens its editor on click.
   const keyframeDragRef = useRef<{ id: string; moved: boolean } | null>(null);
   const [keyframeEditId, setKeyframeEditId] = useState<string | null>(null);
-  // H2-lite: the "Vento roda agora" inject is running (event → re-simulation → plan request)
-  const [injecting, setInjecting] = useState(false);
 
   // Popover form values
   const [popoverType, setPopoverType] = useState<CustomWeatherEventType>('rain');
@@ -155,7 +153,7 @@ export function PlaybackBar() {
     if (!activePlan) return [];
     const out: { at: number; label: string; color: string }[] = [];
     for (const action of activePlan.actions ?? []) {
-      const at = triggerStartMinute(action);
+      const at = triggerStartMinute(action, run?.startMs);
       if (at == null || at < 0 || at > duration) continue; // conditional/manual triggers have no timed start
       const org = organizations.find((o) => o.id === action.organizationId);
       out.push({
@@ -165,7 +163,7 @@ export function PlaybackBar() {
       });
     }
     return out;
-  }, [activePlan, organizations, duration]);
+  }, [activePlan, organizations, duration, run?.startMs]);
 
   // G4: the first minute each road appears cut in the baseline's impact timeline, grouped per minute
   const roadCutMarkers = useMemo(() => {
@@ -304,7 +302,7 @@ export function PlaybackBar() {
       editingEventId: ev.id,
     });
     setPopoverType(ev.type);
-    if (ev.intensityMmH != null) setPopoverRainMmH(ev.intensityMmH);
+    setPopoverRainMmH(ev.type === 'front_passage' ? ev.precipitationMmH ?? 0 : ev.intensityMmH ?? 6);
     if (ev.cloudCoverPct != null) setPopoverCloudPct(ev.cloudCoverPct);
     if (ev.windKmh != null) setPopoverWindKmh(ev.windKmh);
     if (ev.windFromDeg != null) setPopoverWindDeg(ev.windFromDeg);
@@ -338,6 +336,8 @@ export function PlaybackBar() {
     const { startMin, endMin, editingEventId } = selection;
     const id = editingEventId ?? `ev_${popoverType}_${Date.now()}`;
     const dur = endMin - startMin;
+    const previous = customEvents.find((event) => event.id === editingEventId && event.type === popoverType);
+    const sameWindow = previous?.startMinute === startMin && previous?.endMinute === endMin;
 
     let label = '';
     switch (popoverType) {
@@ -391,13 +391,17 @@ export function PlaybackBar() {
       enabled: true,
       startMinute: startMin,
       endMinute: endMin,
-      intensityMmH: hasRain ? popoverRainMmH : undefined,
+      intensityMmH: hasRain && popoverType !== 'front_passage' ? popoverRainMmH : undefined,
+      precipitationMmH: popoverType === 'front_passage' ? popoverRainMmH : undefined,
       cloudCoverPct: popoverType === 'clouds' ? popoverCloudPct : undefined,
       windKmh: hasWind ? popoverWindKmh : undefined,
       windFromDeg: hasDir ? popoverWindDeg : undefined,
       windFactor: popoverType === 'wind_scale' ? popoverWindFactor : undefined,
       applyToGusts: popoverType === 'wind_scale' ? popoverApplyToGusts : undefined,
-      rampMinutes: popoverType === 'wind_set' || isInstantShift ? popoverRampMin : undefined,
+      rampMinutes: popoverType === 'wind_shift' ? previous?.rampMinutes : popoverType === 'wind_set' || isInstantShift ? popoverRampMin : undefined,
+      holdMinutes: popoverType === 'wind_shift' && sameWindow ? previous?.holdMinutes : undefined,
+      returnRampMinutes: popoverType === 'wind_shift' ? previous?.returnRampMinutes : undefined,
+      rotation: popoverType === 'wind_shift' ? previous?.rotation : undefined,
       peakGustKmh: popoverType === 'gust_burst' ? popoverPeakGustKmh : undefined,
       periodMinutes: popoverType === 'gust_burst' ? popoverGustPeriodMin : undefined,
       setMode: isInstantShift ? popoverSetMode : undefined,
@@ -451,48 +455,6 @@ export function PlaybackBar() {
     if (ev) rerunWith([...customEvents.filter((x) => x.id !== ev.id), ev]);
   };
 
-  /** H2-lite "inject" moment: rotate the wind ~90° now (10 min ramp), re-run the baseline and ask the agents for fresh plans A/B. */
-  const handleInjectWindTurn = async () => {
-    if (!run || !locationId || !ignitions.length || busy) return;
-    setPlaying(false);
-    setSelection(null);
-    const beforeId = run.id;
-    const w = sampleWeatherAt(run.weather, run.startMs, t);
-    const kmh = Math.round(w?.windKmh ?? popoverWindKmh);
-    const toDeg = (Math.round(w?.windFromDeg ?? popoverWindDeg) + 90) % 360;
-    const start = Math.min(t, Math.max(0, duration - 15));
-    const end = Math.min(duration, start + 15);
-    const ev: TimelineRangeEvent = {
-      id: `ev_wind_shift_${Date.now()}`,
-      type: 'wind_shift',
-      label: `Vento roda → ${compass(toDeg)} ${kmh} km/h (T+${start}–${end})`,
-      enabled: true,
-      startMinute: start,
-      endMinute: end,
-      windKmh: kmh,
-      windFromDeg: toDeg,
-      rampMinutes: 10,
-    };
-    setInjecting(true);
-    try {
-      // same commit path as the popover's "Simular com este Evento" (keeps the other custom events)
-      const started = rerunWith([...customEvents.filter((x) => x.id !== ev.id), ev]);
-      if (!started) return;
-      await started;
-      const after = useAppStore.getState().run;
-      if (!after || after.id === beforeId) return; // the re-run did not start; showSimulation already said why
-      useAppStore.getState().setHint('A pedir novos planos (A e B) aos agentes…');
-      await planRequestsApi.create(after.id);
-      useAppStore
-        .getState()
-        .setHint('Vento rodado e linha base re-simulada — novos planos A/B pedidos aos agentes (veja o painel Planos).');
-    } catch (e) {
-      useAppStore.getState().showBanner(`Erro ao pedir planos aos agentes: ${(e as Error).message}`);
-    } finally {
-      setInjecting(false);
-    }
-  };
-
   // Highlight interval for drag or selection
   const activeStart = dragState ? Math.min(dragState.startMin, dragState.currentMin) : selection?.startMin;
   const activeEnd = dragState ? Math.max(dragState.startMin, dragState.currentMin) : selection?.endMin;
@@ -522,14 +484,6 @@ export function PlaybackBar() {
           onClick={handleQuickAddAtCurrentTime}
         >
           + Evento T+{t}
-        </button>
-        <button
-          className={styles.injectBtn}
-          disabled={busy || injecting || !run}
-          title="Injetar agora: rodar o vento 90° a partir do minuto atual, re-simular a linha base e pedir novos planos A/B aos agentes"
-          onClick={() => void handleInjectWindTurn()}
-        >
-          🚨 Vento roda agora
         </button>
         <button
           className={styles.addKeyframeBtn}

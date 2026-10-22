@@ -1,13 +1,18 @@
 .panel {
   background: var(--panel);
   border-left: 1px solid var(--line);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
   padding: 14px;
 }
 
 .form {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .form label {
@@ -15,6 +20,7 @@
   gap: 3px;
   font-size: 12px;
   color: var(--mut);
+  min-width: 0;
 }
 
 .form input,
@@ -24,6 +30,8 @@
   border-radius: var(--radius);
   padding: 6px 9px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .form label b {
@@ -51,8 +59,9 @@
 
 .two {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 
 .compareCard {
@@ -240,20 +249,23 @@
 
 .roseRow {
   display: grid;
-  grid-template-columns: minmax(100px, 0.9fr) 1.1fr;
+  grid-template-columns: minmax(90px, 0.9fr) minmax(0, 1.1fr);
   gap: 10px;
   align-items: center;
+  min-width: 0;
 }
 
 .roseMeta {
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 
 .presets {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
 }
 
 .form .preset,
@@ -638,6 +650,8 @@
   font-size: 11px !important;
   line-height: 1 !important;
   min-height: 26px !important;
+  min-width: 0 !important;
+  width: 100%;
 }
 
 .eventCheckbox {
@@ -699,6 +713,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
   text-align: right;
   padding-right: 2px;
   line-height: 1 !important;
