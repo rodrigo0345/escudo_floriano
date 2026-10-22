@@ -42,6 +42,25 @@ const PLAN_STATUS_KIND: Record<PlanStatus, 'ok' | 'warn' | 'bad'> = {
   cancelled: 'bad',
 };
 
+/** The newest plan of each variant (A, B): what the operator is shown. Without variants, the newest plan alone. */
+function latestPair(plans: PlanSummary[]): PlanSummary[] {
+  const newest = (a: PlanSummary, b: PlanSummary) => (String(b.createdAt ?? '') > String(a.createdAt ?? '') ? b : a);
+  const byVariant = new Map<string, PlanSummary>();
+  for (const plan of plans) {
+    const key = String(plan.variant ?? '');
+    const known = byVariant.get(key);
+    byVariant.set(key, known ? newest(known, plan) : plan);
+  }
+  const pair = ['A', 'B'].flatMap((v) => (byVariant.has(v) ? [byVariant.get(v)!] : []));
+  if (pair.length) return pair;
+  return plans.length ? [plans.reduce(newest)] : [];
+}
+
+const PLAN_STYLE: Record<string, { name: string; hint: string }> = {
+  A: { name: 'Ofensivo', hint: 'parar o fogo' },
+  B: { name: 'Defensivo', hint: 'proteger pessoas e casas' },
+};
+
 type Stats = NonNullable<Simulation['stats']>;
 const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed' | 'crewCasualties'; label: string; unit: string }[] = [
   { key: 'burnedHa', label: 'Área ardida', unit: ' ha' },
@@ -231,7 +250,7 @@ export function PlansPanel() {
       const listed = bySim.length > 0
         ? bySim
         : (baseline.scenarioId ? await plansApi.all({ locationId: locationId ?? undefined, scenarioId: baseline.scenarioId }) : []);
-      const ordered = [...listed].sort((a, b) => String(a.variant ?? '').localeCompare(String(b.variant ?? '')) || String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+      const ordered = latestPair(listed); // only the newest A and the newest B: older plans are never offered
       setBase(baseline);
       setPlans(ordered);
       setRuns(ordered.length ? await plansApi.whatIfRuns(ordered.map((p) => p.id as string)) : new Map());
@@ -323,8 +342,9 @@ export function PlansPanel() {
 
   const toggleActions = async (plan: PlanSummary) => {
     setFocusedAction(null);
+    const wasEditing = editingId === plan.id;
     setEditingId(null);
-    if (open?.id === plan.id) return setOpen(null);
+    if (open?.id === plan.id) return wasEditing ? undefined : setOpen(null); // from the editor, "Ver ações" goes back to the actions
     try {
       setOpen(await plansApi.get(plan.id as string));
     } catch (e) {
@@ -356,115 +376,174 @@ export function PlansPanel() {
     void showSimulationById(simulation.id as string);
   };
 
+  // a vehicle clicked on the map: open the plan on the map so its actions list can show what that vehicle is doing
+  const selectedUnitId = useAppStore((s) => s.selectedUnitId);
+  useEffect(() => {
+    if (!selectedUnitId) return;
+    const planId = run?.simulation.kind === 'what_if' ? run.simulation.planId : null;
+    const shown = plans.find((p) => p.id === planId);
+    if (shown && open?.id !== shown.id) void toggleActions(shown);
+    else if (!shown) useAppStore.getState().selectUnit(null);
+  }, [selectedUnitId, run, plans, open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!baseId) return <p className="note">Escolha um cenário para ver os planos que os agentes propuseram.</p>;
 
   const showing = run?.simulation;
-  const showingPlan = showing?.kind === 'what_if' ? plans.find((p) => p.id === showing.planId) : null;
   const edited = new Set(
     [...full.values()].filter((p) => (p.metadata as Record<string, unknown> | undefined)?.['operator.editedAt']).map((p) => p.id as string),
   );
+  const baseStats = base?.stats;
+
+  /** One of the two plans, as a card: what it does to the fire at a glance, and the buttons. */
+  const card = (plan: PlanSummary) => {
+    const id = plan.id as string;
+    const sim = runs.get(id);
+    const status = (plan.status ?? 'proposed') as PlanStatus;
+    const variant = String(plan.variant ?? '');
+    const look = PLAN_STYLE[variant];
+    const m = metricsOf(full.get(id));
+    const onMap = !!sim && showing?.id === sim.id;
+    const stats = sim?.stats;
+    const tile = (label: string, value: number | undefined, baseValue: number | undefined, unit = '') => (
+      <div className={styles.planTile}>
+        <small>{label}</small>
+        <b>{value == null ? '—' : `${nf(Math.round(value * 10) / 10)}${unit}`}</b>
+        <Delta value={value} base={baseValue} />
+      </div>
+    );
+    return (
+      <div key={id} className={`${styles.planCard} ${onMap ? styles.planCardOn : ''} ${variant === 'B' ? styles.planCardB : ''}`}>
+        <div className={styles.planCardHead}>
+          <span className={styles.planLetter}>{variant ? `${variant}${edited.has(id) ? '′' : ''}` : '·'}</span>
+          <div>
+            <b>{look?.name ?? plan.title}</b>
+            <small className="note">{look?.hint ?? plan.strategy}</small>
+          </div>
+          <div>
+            <Tag kind={PLAN_STATUS_KIND[status] ?? 'warn'}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>{' '}
+            {edited.has(id) ? <span title="Ajustado pelo operador (A6); o what-if ao lado é deste ajuste"><Tag kind="warn">ajustado</Tag></span> : null}
+          </div>
+        </div>
+        {sim ? (
+          <div className={styles.planTiles}>
+            {tile('Área ardida', stats?.burnedHa, baseStats?.burnedHa, ' ha')}
+            {tile('Edifícios', stats?.buildingsAffected, baseStats?.buildingsAffected)}
+            {tile('Baixas', stats?.crewCasualties, undefined)}
+            {tile('Meios', m?.units.committed, undefined)}
+          </div>
+        ) : (
+          <small className="note">Ainda sem simulação deste plano.</small>
+        )}
+        <div className={styles.planButtons}>
+          {sim ? (
+            <button className={onMap ? 'on' : ''} onClick={() => void showSimulationById(sim.id as string)}>
+              {onMap ? 'No mapa' : 'Ver no mapa'}
+            </button>
+          ) : (
+            <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)}>
+              {busy === `sim:${id}` ? 'A simular…' : 'Simular'}
+            </button>
+          )}
+          <button className={open?.id === id ? 'on' : ''} onClick={() => void toggleActions(plan)}>
+            {open?.id === id && editingId !== id ? 'Esconder ações' : 'Ver ações'}
+          </button>
+          {status === 'proposed' || status === 'selected' || status === 'active' ? (
+            <button className={editingId === id ? 'on' : ''} onClick={() => void editPlan(plan)}>
+              {editingId === id ? 'A ajustar…' : 'Editar plano'}
+            </button>
+          ) : null}
+          {status === 'proposed' ? (
+            <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
+              {busy === `select:${id}` ? '…' : 'Selecionar'}
+            </button>
+          ) : null}
+          {status === 'selected' ? (
+            <button disabled={busy === `activate:${id}`} onClick={() => void transition(plan, 'activate')}>
+              {busy === `activate:${id}` ? '…' : 'Ativar'}
+            </button>
+          ) : null}
+          {status === 'active' ? (
+            <button disabled={busy === `complete:${id}`} onClick={() => void transition(plan, 'complete')}>
+              {busy === `complete:${id}` ? '…' : 'Encerrar'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const openPlan = open && plans.some((p) => p.id === open.id) ? open : null;
+  const openSim = openPlan ? runs.get(openPlan.id as string) : undefined;
+  const openOnMap = !!openSim && showing?.id === openSim.id;
+  const showOpenOnMap = () => openSim && void showSimulationById(openSim.id as string);
 
   return (
     <>
-      <h3>Planos dos agentes</h3>
-      <p className="note">
-        A mostrar no mapa:{' '}
-        <b>{showing?.kind === 'what_if' ? `o plano ${showingPlan?.variant ?? ''} (${showingPlan?.title ?? showing.planId})` : 'a simulação base, sem resposta'}</b>{' '}
-        <small>{showing?.id}</small>
-      </p>
+      <div className={styles.plansHead}>
+        <h3>Planos dos agentes</h3>
+        <PlanRequestBox baseId={baseId} onPlans={refreshSilently} />
+      </div>
 
-      <h3>Sem resposta (base)</h3>
-      <StatsRows stats={base?.stats} />
-      {showing?.id !== baseId ? (
-        <button className={styles.spaced} onClick={() => void showSimulationById(baseId)}>
-          Ver a base no mapa
-        </button>
-      ) : null}
-
-      <PlanRequestBox baseId={baseId} onPlans={refreshSilently} />
-
-      <CompareTable base={base ?? undefined} plans={plans} runs={runs} edited={edited} />
-
-      {loading ? <p className="note">A carregar planos…</p> : null}
-      {error ? <p className="note">Erro: {error}</p> : null}
-      {!loading && !error && !plans.length ? (
-        <p className="note">
-          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho poucos minutos depois de a base terminar
-          (avalia cada plano com o motor antes de o publicar), ou quando os pede acima; esta lista atualiza-se.
+      {baseStats ? (
+        <p className={styles.baseNote}>
+          <span>Sem resposta:</span> <b>{nf(Math.round((baseStats.burnedHa ?? 0) * 10) / 10)} ha</b> · <b>{nf(baseStats.buildingsAffected ?? 0)}</b> edifícios
+          {showing?.id !== baseId ? (
+            <button className={styles.linkButton} onClick={() => void showSimulationById(baseId)}>
+              ver no mapa
+            </button>
+          ) : (
+            <Tag kind="warn">no mapa</Tag>
+          )}
         </p>
       ) : null}
 
-      {plans.map((plan) => {
-        const id = plan.id as string;
-        const sim = runs.get(id);
-        const status = (plan.status ?? 'proposed') as PlanStatus;
-        const statusKind = PLAN_STATUS_KIND[status] ?? 'warn';
-        return (
-          <div key={id} className={`${styles.group} ${styles.spaced}`}>
-            <div>
-              <b>{plan.title}</b> {plan.variant ? <Tag kind="warn">{plan.variant}{edited.has(id) ? '′' : ''}</Tag> : null}{' '}
-              {edited.has(id) ? <span title="Ajustado pelo operador (A6); o what-if ao lado é deste ajuste"><Tag kind="warn">ajustado</Tag></span> : null}
-              <Tag kind={statusKind}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>
+      {loading ? <p className="note">A carregar planos…</p> : null}
+      {error ? <p className="note">Erro: {error}</p> : null}
+      {!loading && !error && !plans.length ? <p className="note">Ainda não há planos para esta simulação: peça-os acima.</p> : null}
+
+      <div className={styles.planPair}>{plans.map(card)}</div>
+
+      {openPlan && editingId === openPlan.id ? (
+        <PlanEditor plan={openPlan} baseId={baseId} orgName={orgName} onCancel={() => setEditingId(null)} onSaved={savedEdit} onError={showBanner} />
+      ) : null}
+
+      {openPlan && editingId !== openPlan.id ? (
+        <div className={styles.actionGroups}>
+          <h3>
+            Plano {openPlan.variant ?? ''}: o que se passa
+          </h3>
+          <PlanActionsNow
+            key={openPlan.id as string}
+            plan={openPlan}
+            onMap={openOnMap}
+            showOnMap={showOpenOnMap}
+            busyActionId={busy?.startsWith('act:') ? busy.slice(4) : null}
+            onProgress={(action, status) => void patchAction(openPlan.id as string, action, { status })}
+          />
+          <details className={styles.moreDetails}>
+            <summary>Linha do tempo do combate ao fogo</summary>
+            <AttackTimeline plan={openPlan} onMap={openOnMap} showOnMap={showOpenOnMap} />
+          </details>
+        </div>
+      ) : null}
+
+      {plans.length ? (
+        <details className={styles.moreDetails}>
+          <summary>Comparação e detalhes</summary>
+          <CompareTable base={base ?? undefined} plans={plans} runs={runs} edited={edited} />
+          {plans.map((plan) => (
+            <div key={plan.id as string} className={`${styles.group} ${styles.spaced}`}>
+              <b>{plan.title}</b>
               <br />
               <small className="note">
-                {plan.strategy} · {plan.actionCounts?.total ?? '?'} ações · {plan.alertLevel ?? '—'}
+                {plan.strategy}
                 {plan.createdAt ? ` · ${new Date(plan.createdAt).toLocaleString('pt-PT')}` : ''}
               </small>
+              <AgentRows m={metricsOf(full.get(plan.id as string))} />
             </div>
-            {sim ? <StatsRows stats={sim.stats} base={base?.stats} /> : <small className="note">Ainda sem simulação deste plano.</small>}
-            <AgentRows m={metricsOf(full.get(id))} />
-            <div className={styles.two}>
-              {sim ? (
-                <button className={showing?.id === sim.id ? 'on' : ''} onClick={() => void showSimulationById(sim.id as string)}>
-                  {showing?.id === sim.id ? 'No mapa' : 'Ver no mapa'}
-                </button>
-              ) : (
-                <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)}>
-                  {busy === `sim:${id}` ? 'A simular…' : 'Simular o plano'}
-                </button>
-              )}
-              <button onClick={() => void toggleActions(plan)}>{open?.id === id ? 'Esconder ações' : 'Ver ações'}</button>
-              {status === 'proposed' || status === 'selected' || status === 'active' ? (
-                <button className={editingId === id ? 'on' : ''} onClick={() => void editPlan(plan)}>
-                  {editingId === id ? 'A ajustar…' : 'Editar plano'}
-                </button>
-              ) : null}
-              {status === 'proposed' ? (
-                <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
-                  {busy === `select:${id}` ? 'A selecionar…' : 'Selecionar'}
-                </button>
-              ) : null}
-              {status === 'selected' ? (
-                <button disabled={busy === `activate:${id}`} onClick={() => void transition(plan, 'activate')}>
-                  {busy === `activate:${id}` ? 'A ativar…' : 'Ativar'}
-                </button>
-              ) : null}
-              {status === 'active' ? (
-                <button disabled={busy === `complete:${id}`} onClick={() => void transition(plan, 'complete')}>
-                  {busy === `complete:${id}` ? 'A encerrar…' : 'Encerrar'}
-                </button>
-              ) : null}
-            </div>
-            {open?.id === id && editingId === id ? (
-              <PlanEditor plan={open} baseId={baseId} orgName={orgName} onCancel={() => setEditingId(null)} onSaved={savedEdit} onError={showBanner} />
-            ) : null}
-            {open?.id === id && editingId !== id ? (
-              <div className={styles.actionGroups}>
-                <h3>Combate ao fogo</h3>
-                <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
-                <PlanActionsNow
-                  key={id}
-                  plan={open}
-                  onMap={!!sim && showing?.id === sim.id}
-                  showOnMap={() => sim && void showSimulationById(sim.id as string)}
-                  busyActionId={busy?.startsWith('act:') ? busy.slice(4) : null}
-                  onProgress={(action, status) => void patchAction(id, action, { status })}
-                />
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
+          ))}
+        </details>
+      ) : null}
     </>
   );
 }

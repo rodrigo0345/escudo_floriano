@@ -1,7 +1,7 @@
 """What each agent of the LLM commander answers: ids it was given and the reason, nothing else.
 
-Every field is required (the structured-output mode of the OpenAI models is strict: no optional fields), and every free-text field is a reason in Portuguese
-that goes into the plan for the operator to read. The agents never write coordinates, action JSON or ids of their own: ``advisor.py`` checks every id they name
+Every field is required (the structured-output mode of the OpenAI models is strict: no optional fields). Free-text reasons are written in European Portuguese,
+because the operator reads them in the plan. The agents never write coordinates, action JSON or ids of their own: ``advisor.py`` checks every id they name
 against the options they were shown.
 """
 from __future__ import annotations
@@ -10,43 +10,43 @@ from pydantic import BaseModel, Field
 
 
 class UnitSector(BaseModel):
-    unit_id: str = Field(description="id de uma unidade da lista 'units'")
-    sector_id: str = Field(description="id de um setor da lista 'sectors', por exemplo S2")
-    reason: str = Field(description="porquê esta unidade neste setor, numa frase")
+    unit_id: str = Field(description="id of a unit in 'units'")
+    sector_id: str = Field(description="id of a sector in 'sectors', e.g. S2")
+    reason: str = Field(description="why this unit goes to this sector, one sentence in pt-PT")
 
 
 class BombeirosDecision(BaseModel):
-    reasoning: str = Field(description="leitura da frente do fogo e do terreno, em 2 a 4 frases")
-    assignments: list[UnitSector] = Field(description="SÓ as unidades que mudas de setor em relação a 'rulesAssignment'; as que não indicares ficam como estão")
+    reasoning: str = Field(description="reading of the fire front and terrain, 2 to 4 sentences in pt-PT")
+    assignments: list[UnitSector] = Field(description="ONLY units that change sector compared with 'rulesAssignment'; units you leave out stay as they are")
 
 
 class EvacuationOrder(BaseModel):
-    reasoning: str = Field(description="critério da ordem, em 2 a 3 frases")
-    order: list[str] = Field(description="TODOS os ids de 'places', do primeiro a evacuar para o último, cada um uma só vez")
+    reasoning: str = Field(description="criterion for the order, 2 to 3 sentences in pt-PT")
+    order: list[str] = Field(description="ALL ids in 'places', from the first to evacuate to the last, each exactly once")
 
 
 class ShelterPick(BaseModel):
-    place_id: str = Field(description="o 'placeId' da evacuação")
-    shelter_id: str = Field(description="o id de uma das 'options' dessa evacuação")
-    reason: str = Field(description="porquê este abrigo, numa frase")
+    place_id: str = Field(description="the 'placeId' of the evacuation")
+    shelter_id: str = Field(description="an id from that evacuation's 'options'")
+    reason: str = Field(description="why this shelter, one sentence in pt-PT")
 
 
 class ShelterChoice(BaseModel):
-    reasoning: str = Field(description="critério da escolha, em 1 a 3 frases")
-    picks: list[ShelterPick] = Field(description="só as evacuações em que escolhes um abrigo diferente do primeiro da lista; as outras ficam como estão")
+    reasoning: str = Field(description="criterion for the choice, 1 to 3 sentences in pt-PT")
+    picks: list[ShelterPick] = Field(description="only evacuations where you choose a shelter other than the first in the list; the others stay as they are")
 
 
 class ClosureDecision(BaseModel):
-    reasoning: str = Field(description="critério, em 2 a 3 frases: que estradas protegem as pessoas e o acesso dos bombeiros")
-    enforce: list[str] = Field(description="ids de 'closures' a impor, do mais prioritário para o menos; os que não indicares não são impostos")
+    reasoning: str = Field(description="criterion, 2 to 3 sentences in pt-PT: which roads protect people and firefighter access")
+    enforce: list[str] = Field(description="ids in 'closures' to enforce, most urgent first; those you leave out go last in the queue but stay closed (the ring does not open)")
 
 
 class StandbyDecision(BaseModel):
-    reasoning: str = Field(description="critério, em 1 a 3 frases")
-    back_m: float = Field(description="UMA das distâncias de 'safeDistancesBehindCrewsM'")
-    ambulances: int = Field(description="quantas ambulâncias ficam de prevenção, entre 1 e 'ambulancesAvailable'")
+    reasoning: str = Field(description="criterion, 1 to 3 sentences in pt-PT")
+    back_m: float = Field(description="ONE of the distances in 'safeDistancesBehindCrewsM'")
+    ambulances: int = Field(description="how many ambulances stand by, between 1 and 'ambulancesAvailable'")
 
 
 class ReviewNote(BaseModel):
-    note: str = Field(description="nota do comandante ao operador, até 90 palavras: o que o plano faz e o que merece confirmação")
-    concerns: list[str] = Field(description="até 4 pontos a confirmar no terreno, cada um numa frase curta")
+    note: str = Field(description="commander's note to the operator, up to 90 words in pt-PT: what the plan does and what needs confirmation")
+    concerns: list[str] = Field(description="up to 4 points to confirm on the ground, each one short sentence in pt-PT")

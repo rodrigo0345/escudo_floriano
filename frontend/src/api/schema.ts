@@ -4007,7 +4007,7 @@ export interface components {
         UnitEvent: {
             tMin: number;
             /** @enum {string} */
-            type: "departed" | "arrived" | "started_working" | "water_empty" | "refill_started" | "refill_done" | "refuel_started" | "refuel_done" | "rest_started" | "rest_done" | "shift_ended" | "grounded" | "resumed" | "withdrawn" | "overrun_risk" | "returned";
+            type: "departed" | "arrived" | "started_working" | "water_empty" | "refill_started" | "refill_done" | "refuel_started" | "refuel_done" | "drop" | "rest_started" | "rest_done" | "shift_ended" | "grounded" | "resumed" | "withdrawn" | "overrun_risk" | "returned";
             position?: components["schemas"]["LatLon"] | null;
             detail?: string;
         };

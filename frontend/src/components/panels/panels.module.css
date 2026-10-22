@@ -1207,7 +1207,9 @@
   margin-top: 3px;
 }
 
-.linkButton {
+/* the plan editor's small actions: quiet until hovered; removing turns red so it reads as destructive */
+.ghostButton,
+.removeButton {
   padding: 2px 6px !important;
   border: 1px solid transparent !important;
   background: transparent !important;
@@ -1216,9 +1218,14 @@
   white-space: nowrap;
 }
 
-.linkButton:hover {
+.ghostButton:hover {
   border-color: var(--line) !important;
   color: var(--fg) !important;
+}
+
+.removeButton:hover {
+  border-color: color-mix(in srgb, var(--bad) 55%, transparent) !important;
+  color: var(--bad) !important;
 }
 
 .editorField {
@@ -1373,4 +1380,137 @@
 
 .suggestButton:hover {
   border-color: var(--acc) !important;
+}
+
+/* planos: A | B */
+.plansHead {
+  display: grid;
+  gap: 6px;
+}
+
+.requestBox {
+  display: grid;
+  gap: 5px;
+}
+
+.primaryButton {
+  width: 100%;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+.baseNote {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.linkButton {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #4da3ff);
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 12px;
+}
+
+.planPair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.planCard {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  border-top: 3px solid #ff8a3d;
+}
+
+.planCardB {
+  border-top-color: #3d9bff;
+}
+
+.planCardOn {
+  box-shadow: 0 0 0 1.5px var(--accent, #4da3ff);
+}
+
+.planCardHead {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+}
+
+.planCardHead > :last-child {
+  grid-column: 1 / -1;
+}
+
+.planCardHead small {
+  display: block;
+  line-height: 1.2;
+}
+
+.planLetter {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #ff8a3d;
+  color: #10161d;
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.planCardB .planLetter {
+  background: #3d9bff;
+}
+
+.planTiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.planTile {
+  display: grid;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.planTile small {
+  opacity: 0.65;
+  font-size: 10.5px;
+}
+
+.planTile b {
+  font-size: 15px;
+}
+
+.planButtons {
+  display: grid;
+  gap: 4px;
+}
+
+.moreDetails {
+  margin-top: 8px;
+}
+
+.moreDetails > summary {
+  cursor: pointer;
+  opacity: 0.8;
+  font-size: 12px;
+  padding: 4px 0;
 }

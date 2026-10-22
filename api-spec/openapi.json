@@ -15675,6 +15675,7 @@
               "refill_done",
               "refuel_started",
               "refuel_done",
+              "drop",
               "rest_started",
               "rest_done",
               "shift_ended",

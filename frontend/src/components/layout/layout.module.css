@@ -617,76 +617,6 @@
   color: #f0fdfa;
 }
 
-/* Sparse curve points on the event track: draggable diamonds */
-.keyframeMarker {
-  position: absolute;
-  top: 50%;
-  width: 9px;
-  height: 9px;
-  margin-left: -5px;
-  transform: translateY(-50%) rotate(45deg);
-  background: #fbbf24;
-  border: 1px solid #fff7ed;
-  border-radius: 1px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
-  cursor: ew-resize;
-  z-index: 6;
-  touch-action: none;
-}
-
-.keyframeMarker:hover {
-  background: #fde68a;
-  filter: brightness(1.15);
-}
-
-.keyframeMarkerActive {
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.35), 0 1px 4px rgba(0, 0, 0, 0.6);
-}
-
-/* ---- G4: click-to-jump markers on the event track (plan action starts & first road cuts) ---- */
-.trackMarker {
-  position: absolute;
-  top: 1px;
-  bottom: 1px;
-  width: 4px;
-  margin-left: -2px;
-  padding: 0;
-  border: 1px solid rgba(0, 0, 0, 0.55);
-  border-radius: 2px;
-  cursor: pointer;
-  z-index: 2;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.55);
-  transition: transform 0.1s ease, filter 0.15s ease;
-}
-
-.trackMarker:hover {
-  transform: scaleY(1.18);
-  filter: brightness(1.25);
-  z-index: 7;
-}
-
-/* plan action start: slightly wider bar, colour comes inline from the organization (ORG_COLOR) */
-.markerAction {
-  width: 5px;
-  margin-left: -2.5px;
-}
-
-/* first cut of a road: fixed red bar */
-.markerRoad {
-  background: #ef4444;
-}
-
-.keyframePopover {
-  width: 360px;
-}
-
-.kfGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 8px;
-}
-
 .popoverField input[type='number'],
 .popoverField input[type='text'],
 .rangeInputs select {
@@ -698,22 +628,6 @@
   border-radius: 4px;
   color: #fff;
   font-family: var(--mono);
-}
-
-.addKeyframeBtn {
-  background: rgba(180, 83, 9, 0.18);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.addKeyframeBtn:hover {
-  background: rgba(180, 83, 9, 0.32);
 }
 
 .selectionHighlight {
@@ -915,22 +829,6 @@
 
 .btnDelete:hover {
   background: rgba(239, 68, 68, 0.3);
-}
-
-.addEventBtn {
-  background: rgba(2, 132, 199, 0.18);
-  color: #38bdf8;
-  border: 1px solid rgba(2, 132, 199, 0.45);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.addEventBtn:hover {
-  background: rgba(2, 132, 199, 0.3);
 }
 
 @media (max-width: 900px) {

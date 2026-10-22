@@ -135,7 +135,7 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
           <h3 style={{ margin: 0 }}>Ajustar plano {label}</h3>
           <small className="note">As alterações substituem as ações deste plano e o what-if é recalculado (o plano fica marcado como ajustado ′); o outro plano do par mantém-se.</small>
         </div>
-        <button className={styles.linkButton} onClick={onCancel} aria-label="Fechar editor">
+        <button className={styles.ghostButton} onClick={onCancel} aria-label="Fechar editor">
           Fechar
         </button>
       </div>
@@ -172,7 +172,7 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
                     {action.type} · {orgName(action.organizationId ?? '') || orgOf.get(action.organizationId ?? '') || '—'} · início {triggerKind(action)}
                   </small>
                 </span>
-                <button className={styles.linkButton} onClick={() => { setValidation(null); actionsRef.current = removeAction(actionsRef.current, index); setActions(actionsRef.current); }}>
+                <button className={styles.removeButton} onClick={() => { setValidation(null); actionsRef.current = removeAction(actionsRef.current, index); setActions(actionsRef.current); }}>
                   Remover ação
                 </button>
               </div>
@@ -263,7 +263,7 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
                           />
                         </label>
                       ) : null}
-                      <button className={styles.linkButton} onClick={() => mutate((current) => removeAssignment(current, j))}>
+                      <button className={styles.removeButton} onClick={() => mutate((current) => removeAssignment(current, j))}>
                         Retirar
                       </button>
                     </div>

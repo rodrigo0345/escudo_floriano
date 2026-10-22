@@ -21,6 +21,9 @@ EARTH_RADIUS_M = 6_371_008.8
 # take the slower flanks (and every tier falls back to all sectors when there are few).
 HELICOPTER_SHARE = 1 / 3
 TRUCK_SHARE = 2 / 3
+FIGHTABLE_FULL_KWM = 1700.0  # ``Rules.suppression.fullEffectUpToKwm``
+FIGHTABLE_NONE_KWM = 4000.0  # ``Rules.suppression.noEffectFromKwm``
+UNFIGHTABLE_SHARE = 0.05  # a stretch crews cannot fight still counts for this share (people may need it held later, aircraft and lines still help)
 WORKABILITY_FLOOR = 0.35  # a stretch crews can barely work still counts for this share of its danger: a fast fire is not ignored because its ground is bad
 
 
@@ -67,7 +70,19 @@ class Sector:
     @property
     def danger(self) -> float:
         """How urgent the stretch is: how fast and how hard it burns, discounted where crews can do little (sending them there wastes them and puts them at risk)."""
-        return self.speed_mmin * max(self.intensity_kwm, 1.0) * (WORKABILITY_FLOOR + (1.0 - WORKABILITY_FLOOR) * self.workability)
+        # Crews and drops stop flames only up to FIGHTABLE_FULL_KWM and not at all from FIGHTABLE_NONE_KWM (the engine's own limits): a stretch burning past what they can
+        # fight counts for its speed at the limit and a fraction of that, so the effort goes where it can put the fire out (flanks, back) and not onto a head nobody can hold.
+        fightable = min(max(self.intensity_kwm, 1.0), FIGHTABLE_FULL_KWM) * (UNFIGHTABLE_SHARE + (1.0 - UNFIGHTABLE_SHARE) * self.fightability)
+        return self.speed_mmin * fightable * (WORKABILITY_FLOOR + (1.0 - WORKABILITY_FLOOR) * self.workability)
+
+    @property
+    def fightability(self) -> float:
+        """1 where direct attack works in full, 0 where the flames are too intense for it (linear between), like the engine."""
+        if self.intensity_kwm <= FIGHTABLE_FULL_KWM:
+            return 1.0
+        if self.intensity_kwm >= FIGHTABLE_NONE_KWM:
+            return 0.0
+        return (FIGHTABLE_NONE_KWM - self.intensity_kwm) / (FIGHTABLE_NONE_KWM - FIGHTABLE_FULL_KWM)
 
 
 @dataclass(frozen=True)
@@ -81,13 +96,15 @@ class Assignment:
     offset_m: float = 0.0  # where along the barrier its segment sits, from the sector's centre (laid end to end with the others)
     reserve: bool = False  # in an initial attack, a unit the fire's outline has no room for: it keeps to the usual tactic (blocks ahead)
     air_corridor: dict[str, Any] | None = None  # early air attack: the polygon an aircraft keeps dropping on, from its arrival until ``air_until`` (see orchestrator)
+    air_line: dict[str, Any] | None = None  # direct drop line across the active fire front for this aircraft
     air_until: float | None = None  # minutes from the decision the early air attack lasts (the first crews' arrival)
     fuel_strip: Any = None  # a ``fuelbreak.Strip`` this crew can finish before the fire arrives: a squad clears fuel there, an engine lays a wet line (LineString)
     site: dict[str, float] | None = None  # where the crew stands (``placement.py``): inside the burned area for an attack from the black; None = the sector's front
-    stay_minutes: int | None = None  # how long it may work there without the fire reaching it (None = the tactic's default; 0 = no safe spot: not sent)
+    stay_minutes: int | None = None  # how long it may work there without the fire reaching it (None = the tactic's default; 0 = not sent: no safe spot, or not needed on the front)
     start_after: float | None = None  # minutes after the decision before which its effect does not start (an aircraft cooling the ground just before a crew goes in)
 
 
+MAX_BARRIER_M = 400.0  # the longest one barrier of line on a stretch of front (a few units' worth): operations stay small, and the next stretch takes the rest
 COVER_MIN_SPEED_MMIN = 0.3  # a stretch spreading slower than this (m/min) is not a front anyone needs to hold yet
 OCTANTS = 8
 
@@ -142,9 +159,20 @@ def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit
     return kept[:limit]
 
 
+MAX_SLOT_SHIFT_M = 600.0  # a unit's place along the front never moves more than this from its sector: further out it is no longer on the fire
+
+
 def slot_shift(slot: int, step_m: float) -> float:
-    """Slot 0 stays put; 1, 2, 3, 4... move to alternate sides, one ``step_m`` further each pair (never zero for slot > 0)."""
-    return ((slot + 1) // 2) * step_m * (1 if slot % 2 else -1)
+    """Slot 0 stays put; 1, 2, 3, 4... move to alternate sides, one ``step_m`` further each pair, but never more than ``MAX_SLOT_SHIFT_M``.
+
+    Past that the slots wrap back onto the stretch nearest the sector (the next unit stands beside an earlier one), instead of sliding kilometres off the fire.
+    """
+    if not step_m:
+        return 0.0
+    cap = max(1, int(MAX_SLOT_SHIFT_M // step_m))
+    wrapped = (slot % (2 * cap))  # 0..2cap-1: a cycle over the places either side of the sector, nearest first
+    steps = (wrapped + 1) // 2
+    return steps * step_m * (-1 if wrapped % 2 == 0 and wrapped else 1) if wrapped else 0.0
 
 
 def assign_units(
@@ -154,6 +182,7 @@ def assign_units(
     *,
     budgets: dict[str, float] | None = None,
     concentration: int | None = None,
+    need_m_of: Callable[[Sector], float] | None = None,
 ) -> dict[str, Assignment]:
     """``units`` are ``(agent_id, tier)``; helicopters pick first, then trucks, then squads (stable by id).
 
@@ -162,10 +191,11 @@ def assign_units(
 
     With ``budgets`` (metres of line per unit) every unit's line is as long as it can build. With ``concentration`` too, the
     metres are spent on the ``concentration`` most dangerous sectors, in proportion to their danger, and the units of a sector
-    are laid end to end as **one barrier** instead of piled up in parallel.
+    are laid end to end as **one barrier** instead of piled up in parallel. ``need_m_of`` (metres per sector) caps that: a sector
+    takes units only until its line is as long as it needs, and the rest are not sent.
     """
     if budgets is not None and concentration:
-        return _assign_barriers(units, sectors, places, budgets, concentration)
+        return _assign_barriers(units, sectors, places, budgets, concentration, need_m_of)
     assigned = _assign_by_tier(units, sectors, places)
     if budgets is None:
         return assigned
@@ -222,7 +252,8 @@ def with_preferences(
     return out
 
 
-def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], budgets: dict[str, float], concentration: int) -> dict[str, Assignment]:
+def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], budgets: dict[str, float], concentration: int,
+                     need_m_of: Callable[[Sector], float] | None = None) -> dict[str, Assignment]:
     order = {"helicopter": 0, "truck": 1, "squad": 2}
     ranked = sorted(units, key=lambda u: (order.get(u[1], 9), u[0]))
     top = list(sectors[: max(1, concentration)])
@@ -242,9 +273,16 @@ def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector]
     weight = {s: max(s.danger / total_danger, 1e-6) for s in top}
     allocated = {s: 0.0 for s in top}
     members: dict[Sector, list[tuple[str, str]]] = {s: [] for s in top}
+    need = {s: need_m_of(s) for s in top} if need_m_of is not None else None
     for agent_id, tier in ranked:
         b = budgets.get(agent_id) or 0.0
-        sector = min(top, key=lambda s: ((allocated[s] + b) / weight[s], top.index(s)))  # fill each sector in proportion to its danger
+        open_sectors = [s for s in top if need is None or allocated[s] < need[s]]  # a stretch that already has the line it needs takes no more units
+        if not open_sectors:
+            out[agent_id] = Assignment(place=place_for(tier), stay_minutes=0)  # not needed on the front: it stays free for the next decision
+            continue
+        # a barrier is a few units' worth of line, not the whole front: a sector full (the line it can take) passes its units to the next one
+        room = [s for s in open_sectors if allocated[s] + b <= MAX_BARRIER_M] or open_sectors
+        sector = min(room, key=lambda s: ((allocated[s] + b) / weight[s], top.index(s)))  # fill each sector in proportion to its danger
         allocated[sector] += b
         members[sector].append((agent_id, tier))
     for sector, group in members.items():

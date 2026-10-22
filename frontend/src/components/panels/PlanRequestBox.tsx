@@ -60,8 +60,6 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
   const t = useAppStore((s) => s.t);
   const showBanner = useAppStore((s) => s.showBanner);
   const [requests, setRequests] = useState<PlanRequest[]>([]);
-  const [note, setNote] = useState('');
-  const [fromNow, setFromNow] = useState(true);
   const [sending, setSending] = useState(false);
   const [, setTick] = useState(0); // re-render for the elapsed time while open
   const seenPlans = useRef<string>('');
@@ -109,13 +107,11 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
     setSending(true);
     try {
       const created = await planRequestsApi.create(baseId, {
-        ...(note.trim() ? { note: note.trim() } : {}),
-        ...(fromNow && t > 0 ? { atMinute: Math.round(t) } : {}),
+        ...(t > 0 ? { atMinute: Math.round(t) } : {}), // decides from the minute on screen
         requestedBy: 'Operador (interface)',
       });
       seenPlans.current = '';
       setRequests((list) => [created, ...list.filter((r) => r.id !== created.id)]);
-      setNote('');
     } catch (e) {
       showBanner(`Pedido de plano: ${(e as Error).message}`);
     } finally {
@@ -127,14 +123,13 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
   const step = current ? stepOf(current) : -1;
 
   return (
-    <div className={`${styles.compareCard} ${styles.spaced}`}>
-      <h3>Pedir um novo plano aos agentes</h3>
+    <div className={styles.requestBox}>
       {open && current ? (
         <>
           <div>
             <Tag kind={STATUS_KIND[current.status]}>{STATUS_LABEL[current.status]}</Tag>{' '}
             <small className="note">
-              {current.claimedBy ? `${current.claimedBy} · ` : ''}há {since(current.createdAt)}
+              há {since(current.createdAt)}
               {current.atMinute != null ? ` · decide em T+${current.atMinute} min` : ''}
             </small>
           </div>
@@ -147,7 +142,6 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
             ))}
           </ol>
           {current.progress?.message ? <small className="note">{current.progress.message}</small> : null}
-          {current.note ? <small className="note">Pedido: “{current.note}”</small> : null}
           {unclaimed ? (
             <small className="note">
               Nenhum agente pegou no pedido ainda: podem estar a acabar outro plano (um de cada vez), ou o serviço não está a correr (<code>docker compose up -d agents</code>).
@@ -156,16 +150,10 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
         </>
       ) : (
         <>
-          <p className="note">
-            Os agentes compõem um novo par de planos (A ofensivo, B defensivo) para esta simulação, avaliam-nos no motor e publicam-nos aqui, mesmo que já haja planos.
-          </p>
-          <textarea rows={2} maxLength={500} placeholder="Nota para os agentes (opcional), p. ex. “o vento vai rodar: defender Sande primeiro”" value={note} onChange={(e) => setNote(e.target.value)} />
-          <label className="note">
-            <input type="checkbox" checked={fromNow} disabled={t <= 0} onChange={(e) => setFromNow(e.target.checked)} /> Decidir a partir do minuto no ecrã ({t > 0 ? `T+${Math.round(t)} min` : 'início'})
-          </label>
-          <button disabled={sending} onClick={() => void ask()}>
+          <button className={styles.primaryButton} disabled={sending} onClick={() => void ask()}>
             {sending ? 'A enviar…' : 'Pedir novo plano aos agentes'}
           </button>
+          <small className="note">{t > 0 ? `Decide a partir de T+${Math.round(t)} min (o minuto no ecrã).` : 'Decide a partir do início.'} Substitui os planos anteriores.</small>
           {current?.status === 'failed' ? <small className="note">Último pedido falhou: {current.error}</small> : null}
         </>
       )}

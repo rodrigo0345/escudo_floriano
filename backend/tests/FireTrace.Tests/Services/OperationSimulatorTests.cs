@@ -171,6 +171,24 @@ public class OperationSimulatorTests
     }
 
     [Fact]
+    public void A_helicopter_flies_to_water_refills_and_drops_instead_of_hovering_on_one_spot()
+    {
+        var heli = new Vehicle
+        {
+            Id = "veh-h", OrganizationId = "org-1", Callsign = "HEBL-1", Type = VehicleType.Helicopter, CrewCapacity = 3, StationId = "sta-1", WaterCapacityL = 1500, PumpFlowLpm = null,
+            Aerial = new AerialSpec(BucketCapacityL: 1500, LoadMinutes: 1.0, DropMinutes: 0.5, CruiseSpeedKmh: 200),
+        };
+        var u = Run(heli, eta: 10, stay: 60).Single();
+        Assert.Contains(u.Events, e => e.Type == "refill_started");
+        Assert.Contains(u.Events, e => e.Type == "refill_done");
+        Assert.Contains(u.Events, e => e.Type == "drop");                                    // cada tanque é uma largada
+        var working = u.Points.Where(p => p.TMin >= 10 && p.TMin < 70 && p.Position is not null).Select(p => p.Position!).Distinct().Count();
+        Assert.True(working > 4);                                                           // anda de um lado para o outro: não paira sempre no mesmo ponto
+        Assert.Contains(u.Points, p => p.Status == DispatchStatus.Refilling && p.WaterLevelL < 1500);
+        Assert.Contains(u.Points, p => p.Status == DispatchStatus.Working && p.WaterLevelL > 0); // larga com o balde cheio
+    }
+
+    [Fact]
     public void The_state_at_a_minute_reports_what_is_left_to_travel()
     {
         var u = Run(Truck(), eta: 20, stay: 60).Single();
@@ -180,5 +198,21 @@ public class OperationSimulatorTests
         Assert.Equal("act-1", u.ActionId);
         Assert.Equal(5, state.Personnel);
         Assert.Null(OperationSimulator.StateAt(u, 40).EtaMinutes);
+    }
+
+    [Fact]
+    public void A_helicopter_drops_water_and_flies_to_refill_at_water_point_and_returns()
+    {
+        var heli = new Vehicle
+        {
+            Id = "heli-1", OrganizationId = "org-1", Callsign = "HELI-1", Type = VehicleType.Helicopter, CrewCapacity = 2, StationId = "sta-1",
+            WaterCapacityL = 1000, Aerial = new AerialSpec { BucketCapacityL = 1000, LoadMinutes = 1, DropMinutes = 1, CruiseSpeedKmh = 180 },
+        };
+        var u = Run(heli, eta: 5, stay: 60).Single();
+        Assert.Equal(DispatchStatus.EnRoute, u.Points[2].Status);
+        Assert.Contains(u.Points, p => p.Status == DispatchStatus.Working);
+        Assert.Contains(u.Points, p => p.Status == DispatchStatus.Refilling);
+        Assert.Contains(u.Events, e => e.Type == "refill_started");
+        Assert.Contains(u.Events, e => e.Type == "refill_done");
     }
 }
