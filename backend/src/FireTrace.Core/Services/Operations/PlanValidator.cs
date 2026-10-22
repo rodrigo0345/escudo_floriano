@@ -26,7 +26,14 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
 {
     readonly SemaphoreSlim _gate = new(1, 1);
 
-    public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default)
+    /// <summary>A chave de uma viatura numa ação, como o <see cref="PlanRouter"/> a devolve.</summary>
+    public static string RoutedKey(string actionId, string resourceId) => $"{actionId}/{resourceId}";
+
+    /// <summary>
+    /// Valida o plano. `routed` = as viaturas que o <see cref="PlanRouter"/> acabou de encaminhar (criar, alterar): o alvo delas é alcançável e a rota foi calculada
+    /// na rede viária, por isso não se volta a calcular nem a conferir ponto a ponto (era o grosso do tempo de um `POST /plans`). Sem `routed` (`/plans/validate`) tudo é verificado.
+    /// </summary>
+    public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default, IReadOnlySet<string>? routed = null)
     {
         await _gate.WaitAsync(ct);
         try
@@ -59,7 +66,7 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
                 foreach (var org in (a.SupportingOrganizationIds ?? new()).Where(o => !knownOrgs.Contains(o))) Add("error", "unknown_organization", $"Organização '{org}' desconhecida.", $"{at}/supportingOrganizationIds", a.Id);
                 foreach (var dep in (a.DependsOn ?? new()).Where(d => d == a.Id || !ids.Contains(d))) Add("error", "unknown_dependency", $"A ação depende de '{dep}', que não existe neste plano.", $"{at}/dependsOn", a.Id);
 
-                foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, ct);
+                foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, routed, ct);
 
                 switch (a)
                 {
@@ -181,14 +188,14 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
         return result;
     }
 
-    async Task CheckResource(Plan plan, ResourceAssignment r, string at, PlanAction action, Action<string, string, string, string, string?, string?> add, CancellationToken ct)
+    async Task CheckResource(Plan plan, ResourceAssignment r, string at, PlanAction action, Action<string, string, string, string, string?, string?> add, IReadOnlySet<string>? routed, CancellationToken ct)
     {
         switch (r.ResourceType)
         {
             case ResourceType.Vehicle when await vehicles.GetAsync(r.ResourceId, ct) is { } v:
                 if (r.Personnel is { } n && (n < (v.MinimumCrew ?? 1) || n > v.CrewCapacity)) add("warning", "crew_range", $"A viatura {v.Callsign} leva entre {v.MinimumCrew ?? 1} e {v.CrewCapacity} pessoas.", $"{at}/personnel", action.Id, v.Id);
                 if (r.Responsibility is { } resp && !rules.Supports(resp, v.Capabilities)) add("warning", "responsibility_not_supported", $"A viatura {v.Callsign} não tem capacidades para '{EnumText.ToSnake(resp)}'.", $"{at}/responsibility", action.Id, v.Id);
-                await CheckAccess(plan, v, r, at, action, add, ct);
+                if (routed?.Contains(RoutedKey(action.Id, r.ResourceId)) != true) await CheckAccess(plan, v, r, at, action, add, ct);
                 break;
             case ResourceType.PersonnelPool when await pools.GetAsync(r.ResourceId, ct) is { } p:
                 if (r.Personnel > p.Total) add("warning", "not_enough_personnel", $"O grupo só tem {p.Total} pessoas.", $"{at}/personnel", action.Id, p.Id);

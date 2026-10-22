@@ -9,6 +9,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY firetrace_agents ./firetrace_agents
 RUN pip install --no-cache-dir .
+# the demo resources the service registers on start (AGENTS_SEED_DEMO), and the scripts for `docker compose exec agents python scripts/...`
+COPY scripts ./scripts
 ENV PYTHONUNBUFFERED=1 \
     FIRETRACE_BASE_URL=http://backend:8080/api/v1 \
     FIRETRACE_SPEC=/app/api-spec/openapi.json

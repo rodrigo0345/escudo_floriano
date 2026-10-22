@@ -32,10 +32,14 @@ The API has no event channel (see the contract's description), so this is a poll
     AGENTS_MAX_ATTEMPTS         tries per baseline before giving up    (3)
     AGENTS_SIMULATE_TIMEOUT     seconds to follow a what-if run        (900)
     AGENTS_NAME                 who claims the operator's requests     (firetrace-agents; shown in the UI)
+    AGENTS_SEED_DEMO            on start, register the demo resources of a maximum-alert day: aircraft, crews pre-positioned in the forest and
+                                reinforcement groups (1; 0 = off). Runs ``scripts/seed_reinforcements.py`` and ``scripts/seed_air_and_prepositioning.py``,
+                                which skip what is already there, so a ``docker compose up`` from scratch gets the same fleet the plans were tuned on.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import logging
 import os
 import signal
@@ -43,10 +47,12 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable
 
 from .alternatives import HOUSE_ZONES_FOR_B, build_alternatives
 from .client import ApiProblem, FiretraceClient, NotReady
+from .commander import commander_from_env
 from .orchestrator import OrchestratorAgent
 from .revision import Reviser
 
@@ -54,6 +60,8 @@ log = logging.getLogger("firetrace.watcher")
 
 DEFAULT_LOCATION = "guimaraes-concelho"
 MIN_MINUTES_BEFORE_END = 30  # a plan decided at the very end of the run would have nothing left to change
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+DEMO_SEEDS = ("seed_reinforcements", "seed_air_and_prepositioning")  # each skips what is already there
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,7 @@ class WatcherSettings:
     max_attempts: int = 3
     simulate_timeout_seconds: float = 900.0
     agent_name: str = "firetrace-agents"
+    seed_demo: bool = True
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "WatcherSettings":
@@ -94,6 +103,7 @@ class WatcherSettings:
             max_attempts=int(e.get("AGENTS_MAX_ATTEMPTS", d.max_attempts)),
             simulate_timeout_seconds=float(e.get("AGENTS_SIMULATE_TIMEOUT", d.simulate_timeout_seconds)),
             agent_name=e.get("AGENTS_NAME", d.agent_name) or d.agent_name,
+            seed_demo=str(e.get("AGENTS_SEED_DEMO", "1" if d.seed_demo else "0")).strip().lower() not in ("0", "false", "no"),
         )
 
 
@@ -128,6 +138,9 @@ class Watcher:
         s = self.settings
         self.reviser = Reviser(client, orchestrator, replan_minutes=s.replan_minutes, max_waves=s.max_waves, horizon_minutes=s.horizon_minutes,
                                stage_minutes=s.stage_minutes, concentration=s.concentration or None) if s.revise_selected else None
+        self.commander = commander_from_env()  # None = the rules choose the strategy (AGENTS_COMMANDER=llm turns the LLM commander on)
+        if self.commander is not None:
+            log.info("LLM commander on: %s", self.commander.llm.model if self.commander.llm else "no model/key, the rules decide")
 
     # -- one look ----------------------------------------------------------------
     def poll_once(self) -> list[str]:
@@ -202,7 +215,7 @@ class Watcher:
             self.orchestrator, self.client, sim_id, publish=True, house_zones=self.settings.building_zones or HOUSE_ZONES_FOR_B,
             horizon_minutes=self.settings.horizon_minutes, location_id=location_id, title_prefix="Plano", at_minute=at_minute,
             stage_minutes=self.settings.stage_minutes, concentration=self.settings.concentration or None,
-            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves, candidates=self.settings.candidates,
+            replan_minutes=self.settings.replan_minutes, max_waves=self.settings.max_waves, candidates=self.settings.candidates, commander=self.commander,
             progress=progress, plan_metadata=metadata,
         )
         for cycle in (result.cycle_a, result.cycle_b):
@@ -309,11 +322,33 @@ class Watcher:
                 time.sleep(3)
         return False
 
+    def seed_demo(self) -> bool:
+        """Register the demo resources (``AGENTS_SEED_DEMO``); ``True`` once every seed ran, ``False`` to try again on the next poll."""
+        base_url = str(self.client._http.base_url).rstrip("/")  # noqa: SLF001 — the seeds talk to the same API
+        for name in DEMO_SEEDS:
+            path = SCRIPTS / f"{name}.py"
+            if not path.exists():
+                log.warning("demo resources: %s not found, skipped", path)
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(name, path)
+                module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+                spec.loader.exec_module(module)  # type: ignore[union-attr]
+                module.main(["--base-url", base_url])
+            except (Exception, SystemExit) as error:  # noqa: BLE001 — a seed that fails (backend still loading) is tried again, it never stops the plans
+                log.error("demo resources: %s failed: %s: %s", name, type(error).__name__, error)
+                return False
+        log.info("demo resources ready (aircraft, pre-positioned crews, reinforcements)")
+        return True
+
     def run_forever(self, stop: Callable[[], bool] = lambda: False) -> None:
         if not self.wait_for_backend(stop):
             log.error("the backend never answered; polling anyway")
+        seeded = not self.settings.seed_demo
         log.info("watching for baselines updated since %s (every %.0f s)", self.since.isoformat(timespec="seconds"), self.settings.poll_seconds)
         while not stop():
+            if not seeded:
+                seeded = self.seed_demo()
             try:
                 self.poll_once()
             except Exception as error:  # noqa: BLE001 — a backend restart or a bad page: look again next time
