@@ -108,13 +108,13 @@ def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str, en
     The candidate is titled ``[lab] …`` (the repo's mark for throwaway objects): it lives a few seconds, and the UI must not offer it to the operator as a plan.
     """
     started = time.monotonic()
-    title =str(plan.get("title") or "")
+    title = str(plan.get("title") or "")
     # The candidate is created only to be simulated and deleted: without `basis.simulationId` the backend skips the smoke and crew-exposure warnings it
     # computes on the baseline (~30 s of a ~38 s create, measured on Penha) — the what-if below counts the crews the fire reaches itself, and gives the
     # same result (measured: identical area, buildings and casualties). The published plan keeps its basis and gets the full validation.
     created = client.create_plan({**plan, "title": title if title.startswith(CANDIDATE_PREFIX) else f"{CANDIDATE_PREFIX}{title}",
                                   "basis": {k: v for k, v in (plan.get("basis") or {}).items() if k != "simulationId"}})
-    plan_id =str(created["id"])
+    plan_id = str(created["id"])
     published_in = time.monotonic() - started
     try:
         run = client.simulate_plan(plan_id, baseline_simulation_id=baseline_id, wait_seconds=None, engine=engine)
@@ -359,6 +359,7 @@ def build_alternatives(
     decided_at = int(cycle.get("at_minute") or 0)
     # The safety rule (see judge.py): a plan is judged on the forecast and on a wrong wind, the crews caught are cut short or not sent, and a plan that still
     # predicts a casualty is not published.
+    from .holding import drop_unreachable_holds, hold_idle_units  # noqa: PLC0415 — holding builds on adaptation, which builds on this module
     from .judge import Judge  # noqa: PLC0415 — judge builds on this module
 
     issues: list[str] = []
@@ -512,6 +513,20 @@ def build_alternatives(
             out.unsafe.add(variant)
             out.issues.append(f"plan {variant} not published: the engine could not show it is safe")
 
+    # a unit that has finished its job holds where it is (ready, on a safe spot) instead of driving home hours before the run ends (see holding.py)
+    run_end = int(snapshot.get("durationMinutes") or 0)
+    location = str(cycle.get("location_id") or snapshot.get("locationId") or "guimaraes-concelho")
+    baseline_clock, _error = orchestrator.fire_clock(simulation_id, location)
+    ground = {str(a.observation.vehicle_id or a.agent_id): a for a in orchestrator.agents if a.tier.value in ("truck", "squad")}
+    for variant, plan in (("A", plan_a), ("B", plan_b)):
+        if variant not in out.unsafe:
+            # a unit holds where the fire does not come *with this plan* (its own what-if run: slower than the baseline's no-response fire, and with its own spotting)
+            run_id = getattr(getattr(verdicts.get(variant), "forecast", None), "run_id", None)
+            clock = (orchestrator.fire_clock(str(run_id), location)[0] if run_id else None) or baseline_clock
+            reasons: dict[str, int] = {}
+            holding = hold_idle_units(plan, clock, run_end, ground, reasons, orchestrator.unit_routes)
+            log.info("baseline %s: plan %s: %d units hold in the field after their job instead of going home (not held: %s; %d ground units known)", simulation_id, variant, holding, reasons or "-", len(ground))
+
     for plan, evaluation in ((plan_a, out.eval_a), (plan_b, out.eval_b)):
         if evaluation is not None:
             plan["summary"] = f"### Resultado simulado pelo motor\n- {evaluation.line()}\n\n" + plan.get("summary", "")
@@ -546,6 +561,9 @@ def build_alternatives(
             if variant in out.unsafe:
                 continue
             validation = client.validate_plan(plan)
+            if validation.get("valid") is False and (dropped := drop_unreachable_holds(plan, validation)):
+                log.info("baseline %s: plan %s: %d holding actions dropped (their unit cannot drive to the waiting spot)", simulation_id, variant, dropped)
+                validation = client.validate_plan(plan)
             if validation.get("valid") is False:
                 out.issues.append(f"plan {variant} not published: the backend validation reports errors")
                 continue

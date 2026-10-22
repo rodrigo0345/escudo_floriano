@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { ActionStatus, Plan, PlanAction, Vehicle } from '@/api';
 import { Tag } from '@/components/common/StatCard';
@@ -77,6 +77,30 @@ export function PlanDecisions({ plan, onMap, showOnMap, busyActionId, onProgress
   const orgIds = [...new Set(decisions.flatMap((d) => d.organizationIds))].sort((a, b) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b));
   const objectives = [...(plan.objectives ?? [])].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
   const focusedKey = decisions.find((d) => d.actions.some((a) => a.id === focused))?.key ?? null;
+  const selectedUnitId = useAppStore((s) => s.selectedUnitId);
+  const selectUnit = useAppStore((s) => s.selectUnit);
+
+  // a vehicle clicked on the map: pick the decision it works on at this minute (else the next one it has, else the last it had)
+  useEffect(() => {
+    if (!selectedUnitId) return;
+    const minute = cursor ?? 0;
+    const rank: Record<ActionPhase, number> = { active: 0, en_route: 1, upcoming: 2, done: 3 };
+    const mine = decisions
+      .flatMap((d) => d.actions.filter((a) => (a.resources ?? []).some((r) => r.resourceId === selectedUnitId)).map((a) => ({ d, a, w: windows.get(a.id as string) })))
+      .filter((x) => x.w)
+      .map((x) => ({ ...x, phase: phaseAt(x.w!, minute) }))
+      .sort((x, y) => rank[x.phase] - rank[y.phase] || (x.phase === 'done' ? y.w!.end - x.w!.end : x.w!.start - y.w!.start));
+    selectUnit(null);
+    const chosen = mine[0];
+    if (!chosen) return;
+    setNowOnly(false);
+    setOrgFilter(null);
+    setOpenKey(chosen.d.key);
+    setFocused(chosen.a.id as string);
+    setTimeout(() => document.querySelector(`[data-decision="${CSS.escape(chosen.d.key)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+    const where = whereOf(chosen.a);
+    if (where && world) world.focusOnLatLon(where.lat, where.lon);
+  }, [selectedUnitId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = (d: Decision) => {
     if (focusedKey === d.key) {
@@ -192,7 +216,7 @@ function DecisionCard({ decision: d, phase, on, open, planActive, busyActionId, 
   ].filter(Boolean);
 
   return (
-    <div className={`${styles.decision} ${on ? styles.actionCardOn : ''}`} onClick={onPick} title={on ? 'Tirar do mapa' : 'Mostrar no mapa'}>
+    <div data-decision={d.key} className={`${styles.decision} ${on ? styles.actionCardOn : ''}`} onClick={onPick} title={on ? 'Tirar do mapa' : 'Mostrar no mapa'}>
       <div className={styles.actionCardHead}>
         {PRIORITY_LABEL[d.priority] ? <Tag kind={d.priority === 'critical' ? 'bad' : 'warn'}>{PRIORITY_LABEL[d.priority]}</Tag> : null}
         {phase ? <Tag kind={PHASE_TAG[phase]}>{PHASE_LABEL[phase]}</Tag> : null}

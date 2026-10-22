@@ -1542,7 +1542,8 @@
   grid-column: span 1;
 }
 
-.editorResources {
+.editorResources,
+.requestBox {
   display: grid;
   gap: 5px;
 }
@@ -1621,4 +1622,10 @@
 
 .suggestButton:hover {
   border-color: var(--acc) !important;
+}
+
+.primaryButton {
+  width: 100%;
+  padding: 8px 10px;
+  font-weight: 600;
 }

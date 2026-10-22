@@ -5,7 +5,7 @@ import { VehicleMarker } from './vehicleMarker';
 import { buildVehicle, isAircraft, liveryOf, type ModelClass, type VehicleModel } from './vehicleModels';
 
 /** Base scale factor so vehicles are comfortably visible on the regional wildfire terrain map. */
-export const BASE_VEHICLE_SCALE = 2.4;
+export const BASE_VEHICLE_SCALE = 1.4;
 
 /**
  * Draw order of a vehicle's model: above the ground annotations (roads, closures, fire lines and fuel breaks, 5–9) so a car is never

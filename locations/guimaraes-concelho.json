@@ -16,7 +16,19 @@
   // cidade 3D fotorrealista (tiles locais em data/tiles3d/guimaraes-concelho/): o ingest avisa se faltarem
   "tiles3d": true,
   "landCoverSource": "worldcover-2021",
-  "curatedFacilities": [],
+  "curatedFacilities": [
+    { "type": "fire_station", "name": "Associação Humanitária dos Bombeiros Voluntários de Guimarães", "lat": 41.4406, "lon": -8.2917, "operator": "Bombeiros Voluntários de Guimarães", "source": "curated" },
+    { "type": "fire_station", "name": "Bombeiros Voluntários das Taipas", "lat": 41.4883, "lon": -8.3444, "operator": "Bombeiros Voluntários das Taipas", "source": "curated" },
+    { "type": "fire_station", "name": "Bombeiros Voluntários de Fafe", "lat": 41.4518, "lon": -8.1722, "operator": "Bombeiros Voluntários de Fafe", "source": "curated" },
+    { "type": "fire_station", "name": "Bombeiros Voluntários de Vizela", "lat": 41.3783, "lon": -8.3075, "operator": "Bombeiros Voluntários de Vizela", "source": "curated" },
+    { "type": "gnr", "name": "Destacamento Territorial da GNR de Guimarães", "lat": 41.4445, "lon": -8.2982, "operator": "Guarda Nacional Republicana", "source": "curated" },
+    { "type": "gnr", "name": "Posto Territorial da GNR de Caldas das Taipas", "lat": 41.4870, "lon": -8.3410, "operator": "Guarda Nacional Republicana", "source": "curated" },
+    { "type": "civil_protection", "name": "Serviço Municipal de Proteção Civil de Guimarães", "lat": 41.4415, "lon": -8.2955, "operator": "Município de Guimarães", "source": "curated" },
+    { "type": "civil_protection", "name": "Posto de Comando Operacional (PCO Penha)", "lat": 41.4305, "lon": -8.2710, "operator": "Proteção Civil Municipal", "source": "curated" },
+    { "type": "hospital", "name": "Hospital da Senhora da Oliveira - Guimarães", "lat": 41.4428, "lon": -8.3060, "operator": "SNS", "source": "curated" },
+    { "type": "inem", "name": "Base INEM Norte - Guimarães", "lat": 41.4430, "lon": -8.3050, "operator": "INEM", "source": "curated" },
+    { "type": "heliport", "name": "Heliporto do Hospital da Senhora da Oliveira", "lat": 41.4423, "lon": -8.3055, "operator": "INEM / Proteção Civil", "source": "curated" }
+  ],
 
   // Ignições hipotéticas junto a cumes reais (OSM natural=peak), em zonas diferentes do concelho, com meteorologia real de cada data.
   "incidents": [

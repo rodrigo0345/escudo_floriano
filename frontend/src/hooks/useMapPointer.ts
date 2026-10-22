@@ -83,7 +83,14 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
 
     const onUp = (e: PointerEvent) => {
       const s = useAppStore.getState();
-      if (s.pickIgnitionSlot == null || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > CLICK_SLOP_PX) return;
+      if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > CLICK_SLOP_PX) return;
+      if (s.pickIgnitionSlot == null) {
+        // a click on a vehicle: the side panel shows the action it is doing
+        const clicked = actorOf(engine.picker.pick(e.clientX, e.clientY, canvas.getBoundingClientRect(), world.pickables)?.object);
+        const unitId = clicked ? world.units.unitIdOf(clicked) : null;
+        if (unitId) s.selectUnit(unitId);
+        return;
+      }
       const hit = engine.picker.pick(e.clientX, e.clientY, canvas.getBoundingClientRect(), [world.terrain.mesh]);
       if (!hit) return;
       const [lat, lon] = world.geo.toLatLon(hit.point.x, hit.point.z);

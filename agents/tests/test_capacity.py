@@ -27,7 +27,7 @@ class TestBudget:
 
 
 class TestBarriers:
-    SECTORS = [Sector(41.40 + 0.02 * i, -8.30, 90, 30 - 10 * i, 3000 - 800 * i) for i in range(4)]  # ranked, far apart
+    SECTORS = [Sector(41.40 + 0.02 * i, -8.30, 90, 30 - 10 * i, 1600 - 400 * i) for i in range(4)]  # ranked, far apart
 
     @staticmethod
     def _units(n):

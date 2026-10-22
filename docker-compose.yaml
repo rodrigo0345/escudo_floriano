@@ -115,6 +115,8 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       AGENTS_NAME: "${AGENTS_NAME:-firetrace-agents}"   # who claims the operator's plan requests (shown in the Planos tab)
       AGENTS_LLM_LOG_DIR: "${AGENTS_LLM_LOG_DIR:-/app/logs}"
+      AGENTS_AUTO_PLAN: "${AGENTS_AUTO_PLAN:-0}"   # plans are made when the operator asks (a baseline is not planned on its own: saves OpenAI tokens)
+      AGENTS_KEEP_ONLY_LATEST: "${AGENTS_KEEP_ONLY_LATEST:-1}"   # after a request, every older plan and what-if run is deleted
       AGENTS_SEED_DEMO: "${AGENTS_SEED_DEMO:-1}"   # on start, registers the aircraft, pre-positioned crews and reinforcements (skips what is there)
     volumes:
       - ./api-spec:/app/api-spec:ro

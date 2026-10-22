@@ -59,7 +59,7 @@ def make_agent_node(task: str, llm: Any):
         brief = state["brief"]
         text = "Briefing (JSON):\n" + json.dumps(brief, ensure_ascii=False, separators=(",", ":"))
         if state.get("problems"):
-            text += "\n\nA tua resposta anterior tinha problemas. Corrige-os e responde de novo:\n" + "\n".join(f"- {p}" for p in state["problems"])
+            text += "\n\nYour previous answer had problems. Fix them and answer again:\n" + "\n".join(f"- {p}" for p in state["problems"])
         started = time.monotonic()
         try:
             out = llm.with_structured_output(schema, include_raw=True).invoke([SystemMessage(content=PROMPTS[task]), HumanMessage(content=text)])
@@ -69,7 +69,7 @@ def make_agent_node(task: str, llm: Any):
         used = _usage(out.get("raw"))
         merged = {"input": tokens["input"] + used["input"], "output": tokens["output"] + used["output"]}
         parsed = out.get("parsed")
-        problems = [] if parsed is not None else [f"a resposta não respeita o formato: {str(out.get('parsing_error'))[:200]}"]
+        problems = [] if parsed is not None else [f"the answer does not match the format: {str(out.get('parsing_error'))[:200]}"]
         return {"decision": parsed, "problems": problems, "error": None, "attempt": state.get("attempt", 0) + 1, "tokens": merged, "seconds": state.get("seconds", 0.0) + time.monotonic() - started}
 
     return node

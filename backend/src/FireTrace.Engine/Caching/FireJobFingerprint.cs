@@ -46,7 +46,7 @@ public static class FireJobFingerprint
     {
         if (plan is null) return;
         Number(hash, 2); // suppression model v2: intensity in the spread direction, lines as barriers (a job cached under v1 is not reused)
-        Number(hash, plan.FullKwm); Number(hash, plan.NoneKwm); Number(hash, plan.MinFactor); Number(hash, plan.LineHoldFullKwm); Number(hash, plan.LineBreachKwm);
+        Number(hash, plan.FullKwm); Number(hash, plan.NoneKwm); Number(hash, plan.MinFactor); Number(hash, plan.LineHoldFullKwm); Number(hash, plan.LineBreachKwm); Number(hash, plan.ExtinguishAt);
         foreach (var w in plan.Windows) { Bytes(hash, MemoryMarshal.AsBytes<int>(w.Cells)); Number(hash, w.FromMinute); Number(hash, w.UntilMinute); Number(hash, w.Effectiveness); Number(hash, w.Direct ? 1 : 0); }
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/common/Icon';
 import { humidityColorVar, windColorCss } from '@/domain/colors';
@@ -14,8 +14,29 @@ import styles from './viewport.module.css';
  * temperature, air humidity and fine-fuel moisture. Values follow the playback minute; only
  * the arrow rotation is driven per frame (straight on the DOM, no React re-render).
  */
+const COLLAPSED_KEY = 'firetrace.weatherHud.collapsed';
+
+/** The collapsed state is a per-viewer convenience: it is remembered when the browser lets it, and the card works without it. */
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function WeatherHud() {
   const engine = useEngine();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = () =>
+    setCollapsed((was) => {
+      try {
+        window.localStorage.setItem(COLLAPSED_KEY, was ? '0' : '1');
+      } catch {
+        /* not remembered */
+      }
+      return !was;
+    });
   const run = useAppStore((s) => s.run);
   const t = useAppStore((s) => s.t);
   const scenarioId = useAppStore((s) => s.scenarioId);
@@ -42,8 +63,17 @@ export function WeatherHud() {
   const to = (weather.windFromDeg + 180) % 360;
   const color = windColorCss(weather.windKmh);
 
+  const risk = fireRiskLevel(weather);
   return (
-    <div className={styles.hud}>
+    <div className={`${styles.hud} ${collapsed ? styles.hudCollapsed : ''}`}>
+      <button
+        className={styles.hudToggle}
+        onClick={toggle}
+        aria-label={collapsed ? 'Mostrar as condições meteorológicas' : 'Esconder as condições meteorológicas'}
+        title={collapsed ? 'Mostrar as condições meteorológicas' : 'Esconder as condições meteorológicas'}
+      >
+        {collapsed ? '▸' : '◂'}
+      </button>
       <svg className={styles.dial} viewBox="-32 -32 64 64" aria-hidden="true">
         <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".25" />
         <text y="-19" textAnchor="middle" fontSize="8" fill="currentColor" opacity=".7">
@@ -54,16 +84,20 @@ export function WeatherHud() {
         </g>
       </svg>
       <div className={styles.hudMain}>
-        <b style={{ color }}>{Math.round(weather.windKmh)} km/h</b>
-        <small>
+        <b style={{ color }}>
+          {Math.round(weather.windKmh)} km/h
+          {collapsed ? <small className={styles.hudChip}> · {Math.round(weather.tempC)} °C · {Math.round(weather.humidityPct)} %{risk === 'extreme' ? ' · risco extremo' : risk === 'high' ? ' · risco elevado' : ''}</small> : null}
+        </b>
+        {collapsed ? null : <small>
           de {compass(weather.windFromDeg)} · {Math.round(weather.windFromDeg)}° (sopra para {compass(to)})
-        </small>
-        <small>
+        </small>}
+        {collapsed ? null : <small>
           {weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}
           {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
           {weather.isDay != null ? ` · ${weather.isDay ? 'dia' : 'noite'}` : ''}
-        </small>
+        </small>}
       </div>
+      {collapsed ? null : <>
       {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
         <div className={styles.hudPrecip}>
           <Icon name="rain" /> Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
@@ -106,6 +140,7 @@ export function WeatherHud() {
         <b>{weather.fineFuelMoisturePct != null ? `${weather.fineFuelMoisturePct.toFixed(1)} %` : '—'}</b>
       </div>
       <small className={styles.hudSource}>{scenarioId === 'custom' ? 'temperatura do ar definida no cenário' : 'temperatura do ar · ERA5 / Open-Meteo'}</small>
+      </>}
     </div>
   );
 }

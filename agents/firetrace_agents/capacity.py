@@ -15,6 +15,7 @@ WET_LINE_FACTOR = 2.0  # assumption: a hose line goes down faster than a hand li
 AERIAL_WATER_DISTANCE_KM = 5.0  # assumption (Rules.aerial.limits.maxDistanceToWaterKm is 10)
 DROP_LENGTH_M = 80.0  # assumption: the length one bucket drop covers
 MIN_LINE_M = 20.0
+FRONT_WIDTH_ZONES = 2.0  # assumption: a stretch of front needs a line as wide as two work zones (its zone, and the one beside it)
 
 
 def line_budget_m(tier: str, crew: int, stage_minutes: float, rules: dict[str, Any] | None = None) -> float:
@@ -30,3 +31,9 @@ def line_budget_m(tier: str, crew: int, stage_minutes: float, rules: dict[str, A
         cycle = 2 * AERIAL_WATER_DISTANCE_KM / speed * 60 + float(heli.get("loadMinutes") or 1.0) + float(heli.get("dropMinutes") or 1.0)
         return max(MIN_LINE_M, int(stage_minutes // cycle) * DROP_LENGTH_M)
     return 0.0
+
+
+def front_need_m(zone_radius_m: float, intensity_kwm: float, no_effect_kwm: float) -> float:
+    """Metres of line one stretch of front needs in a stage: its width, more where the fire is hotter (crews lose effect as it grows toward ``noEffectFromKwm``)."""
+    heat = min(1.0, intensity_kwm / no_effect_kwm) if no_effect_kwm > 0 else 0.0
+    return FRONT_WIDTH_ZONES * zone_radius_m * (1.0 + heat)

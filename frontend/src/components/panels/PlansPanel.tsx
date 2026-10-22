@@ -405,6 +405,16 @@ export function PlansPanel() {
     void showSimulationById(simulation.id as string);
   };
 
+  // a vehicle clicked on the map: open the plan on the map so its decisions can show what that vehicle is doing
+  const selectedUnitId = useAppStore((s) => s.selectedUnitId);
+  useEffect(() => {
+    if (!selectedUnitId) return;
+    const planId = run?.simulation.kind === 'what_if' ? run.simulation.planId : null;
+    const shown = plans.find((p) => p.id === planId);
+    if (shown && open?.id !== shown.id) void togglePlan(shown);
+    else if (!shown) useAppStore.getState().selectUnit(null);
+  }, [selectedUnitId, run, plans, open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!baseId) return <p className="note">Escolha um cenário para ver os planos que os agentes propuseram.</p>;
 
   const showing = run?.simulation;
