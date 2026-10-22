@@ -115,3 +115,73 @@
   font-size: 11px;
   color: var(--mut);
 }
+
+/* ConfirmButton: the question asked in the page, not in a browser dialog */
+.confirmWrap {
+  display: grid;
+  gap: 3px;
+}
+
+.confirmWrap > button:first-child {
+  width: 100%;
+}
+
+/* the two locked seconds: the question, with a bar filling under it */
+.confirmAsking {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 159, 26, 0.14) !important;
+  border-color: #ff9f1a !important;
+  color: #ffd08a !important;
+  font-weight: 600;
+}
+
+.confirmAsking:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+
+.confirmAsking::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: #ff9f1a;
+  transform-origin: left;
+  animation: confirmArm 2s linear forwards;
+}
+
+@keyframes confirmArm {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* then the answer: one click does it */
+.confirmReady {
+  background: #d9480f !important;
+  border-color: #d9480f !important;
+  color: #fff !important;
+  font-weight: 700;
+}
+
+.confirmDetail {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--mut);
+}
+
+.confirmCancel {
+  justify-self: start;
+  padding: 1px 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--mut) !important;
+  font-size: 11px !important;
+  text-decoration: underline;
+}

@@ -18,6 +18,7 @@ import {
   type VehicleCapability,
   type VehicleInput,
 } from '@/api';
+import { ConfirmButton } from '@/components/common/ConfirmButton';
 import { CardGrid, StatCard } from '@/components/common/StatCard';
 import {
   CAPABILITY_LABEL,
@@ -174,17 +175,18 @@ export function ResourcesView() {
           + Nova corporação
         </button>
         <hr style={{ width: '100%', borderColor: 'var(--line)' }} />
-        <button
+        <ConfirmButton
           disabled={!vehicles.length || loading}
           title="Preenche água, bomba, velocidade, combustível, lotação... de todos os veículos com as especificações reais do catálogo"
-          onClick={async () => {
-            if (!window.confirm(`Sobrescrever as especificações de ${vehicles.length} veículos com os valores do catálogo? (Indicativos/siglas, estação e estado não mudam.)`)) return;
+          yes="Sim, sobrescrever"
+          detail={`Sobrescreve as especificações de ${vehicles.length} veículos com os valores do catálogo (indicativos, estação e estado não mudam).`}
+          onConfirm={async () => {
             const n = await completeFromCatalog();
-            window.alert(`${n} veículos atualizados.`);
+            useAppStore.getState().showBanner(`${n} veículos atualizados com as especificações do catálogo.`, 'warn');
           }}
         >
           Completar frota com especificações reais
-        </button>
+        </ConfirmButton>
         <p className="note">Valores do catálogo: fontes públicas quando existem, estimativas assinaladas caso contrário.</p>
       </div>
 
@@ -238,7 +240,6 @@ export function ResourcesView() {
                   await mutate(() => organizationsApi.patch(org.id as string, input));
                 }}
                 onDelete={async () => {
-                  if (!window.confirm(`Apagar «${org.name}»?`)) return;
                   if (await mutate(() => organizationsApi.delete(org.id as string))) setOrgId(null);
                 }}
               />
@@ -314,7 +315,11 @@ function OrgEditor({
           {org ? 'Guardar' : 'Criar corporação'}
         </button>
         {!org ? <button onClick={onDone}>Cancelar</button> : null}
-        {onDelete ? <button onClick={() => void onDelete()}>Apagar corporação</button> : null}
+        {onDelete ? (
+          <ConfirmButton yes="Sim, apagar" detail="Apaga a corporação. Não se pode desfazer." onConfirm={() => void onDelete()}>
+            Apagar corporação
+          </ConfirmButton>
+        ) : null}
       </div>
     </div>
   );
@@ -648,13 +653,7 @@ function VehiclesSection({ org, list, stations }: { org: Organization; list: Veh
 
               <div className={styles.cardFooter}>
                 <button onClick={() => edit(v)}>Editar</button>
-                <button
-                  onClick={() => {
-                    if (window.confirm(`Apagar ${v.callsign}?`)) void mutate(() => vehiclesApi.delete(v.id as string));
-                  }}
-                >
-                  Apagar
-                </button>
+                <ConfirmButton yes="Sim, apagar" onConfirm={() => void mutate(() => vehiclesApi.delete(v.id as string))}>Apagar</ConfirmButton>
               </div>
             </div>
           );
@@ -1134,13 +1133,7 @@ function StationsSection({ org, list }: { org: Organization; list: Station[] }) 
               >
                 Editar
               </button>
-              <button
-                onClick={() => {
-                  if (window.confirm(`Apagar ${s.name}?`)) void mutate(() => stationsApi.delete(s.id as string));
-                }}
-              >
-                Apagar
-              </button>
+              <ConfirmButton yes="Sim, apagar" onConfirm={() => void mutate(() => stationsApi.delete(s.id as string))}>Apagar</ConfirmButton>
             </div>
           </div>
         ))}
@@ -1258,13 +1251,7 @@ function PersonnelSection({ org, list, stations }: { org: Organization; list: Pe
               >
                 Editar
               </button>
-              <button
-                onClick={() => {
-                  if (window.confirm('Apagar este grupo?')) void mutate(() => personnelApi.delete(p.id as string));
-                }}
-              >
-                Apagar
-              </button>
+              <ConfirmButton yes="Sim, apagar" onConfirm={() => void mutate(() => personnelApi.delete(p.id as string))}>Apagar</ConfirmButton>
             </div>
           </div>
         ))}
@@ -1384,13 +1371,7 @@ function EquipmentSection({ org, list, stations }: { org: Organization; list: Eq
                 >
                   Editar
                 </button>
-                <button
-                  onClick={() => {
-                    if (window.confirm('Apagar este equipamento?')) void mutate(() => equipmentApi.delete(e.id as string));
-                  }}
-                >
-                  Apagar
-                </button>
+                <ConfirmButton yes="Sim, apagar" onConfirm={() => void mutate(() => equipmentApi.delete(e.id as string))}>Apagar</ConfirmButton>
               </div>
             </div>
           );

@@ -11,6 +11,7 @@ import {
   type PlanStatus,
   type Simulation,
 } from '@/api';
+import { ConfirmButton } from '@/components/common/ConfirmButton';
 import { Row, Tag } from '@/components/common/StatCard';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
@@ -26,8 +27,8 @@ const nf = (n: number) => n.toLocaleString('pt-PT');
 
 const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
   proposed: 'Proposto',
-  selected: 'Selecionado',
-  active: 'Ativo',
+  selected: 'Escolhido',
+  active: 'Em execução',
   completed: 'Concluído',
   discarded: 'Descartado',
   cancelled: 'Cancelado',
@@ -54,6 +55,16 @@ function latestPair(plans: PlanSummary[]): PlanSummary[] {
   const pair = ['A', 'B'].flatMap((v) => (byVariant.has(v) ? [byVariant.get(v)!] : []));
   if (pair.length) return pair;
   return plans.length ? [plans.reduce(newest)] : [];
+}
+
+/** The operator's path for a plan (`POST /select`, `POST /activate`, `PATCH status=completed`), as the steps the card shows. */
+const PLAN_FLOW: PlanStatus[] = ['proposed', 'selected', 'active', 'completed'];
+
+/** What a plan commits when it is put into execution: the backend dispatches every vehicle and crew and opens every road closure. */
+function commitmentOf(plan: Plan | undefined): { units: number; closures: number } {
+  const actions = plan?.actions ?? [];
+  const units = new Set(actions.flatMap((a) => (a.resources ?? []).filter((r) => r.resourceType !== 'equipment').map((r) => r.resourceId as string)));
+  return { units: units.size, closures: actions.filter((a) => a.type === 'road_closure').length };
 }
 
 const PLAN_STYLE: Record<string, { name: string; hint: string }> = {
@@ -299,7 +310,11 @@ export function PlansPanel() {
     }
   };
 
-  /** The operator's approval path: proposed → selected → active → completed. */
+  /**
+   * The operator's approval path: proposed → selected (the other plans of this simulation are discarded, nothing is sent yet) →
+   * active (every vehicle and crew is dispatched and every road closure opened, all or nothing) → completed (dispatches cancelled, closures lifted).
+   * The two steps that move real resources are confirmed in the card first (ConfirmButton).
+   */
   const transition = async (plan: PlanSummary, next: 'select' | 'activate' | 'complete') => {
     const id = plan.id as string;
     setBusy(`${next}:${id}`);
@@ -372,14 +387,14 @@ export function PlansPanel() {
     }
   };
 
-  /** Deletes a plan after the operator confirms it (it cannot be undone): old plans need not pile up. */
+  /** Deletes a plan once the operator confirms it in its button (it cannot be undone): old plans need not pile up. */
   const removePlan = async (plan: PlanSummary) => {
     const id = plan.id as string;
     const name = `${plan.variant ? `${plan.variant} ` : ''}«${plan.title}»`;
-    const warning = plan.status === 'active' ? '\n\nEste plano está ATIVO: as organizações deixam de ver as suas ações.' : '';
-    if (!window.confirm(`Apagar o plano ${name}?${warning}\n\nIsto não se pode desfazer.`)) return;
+    const active = plan.status === 'active';
     setBusy(`del:${id}`);
     try {
+      if (active) await plansApi.patch(id, { status: 'completed' }); // a plan under way cannot be deleted: close it first
       await plansApi.delete(id);
       if (open?.id === id) {
         setOpen(null);
@@ -433,6 +448,24 @@ export function PlansPanel() {
     const m = metricsOf(full.get(id));
     const onMap = !!sim && showing?.id === sim.id;
     const stats = sim?.stats;
+    const { units, closures } = commitmentOf(full.get(id));
+    const other = plans.find((p) => p.id !== id)?.variant;
+    // the one next step of this plan, said with what it does
+    const next =
+      status === 'proposed'
+        ? { step: 'select' as const, label: 'Escolher este plano', hint: `${other ? `O plano ${other} fica descartado. ` : ''}Ainda não se envia nenhum meio: pode editar e simular antes.` }
+        : status === 'selected'
+          ? {
+              step: 'activate' as const,
+              label: 'Pôr em execução',
+              hint: full.has(id)
+                ? `Despacha ${units} meios${closures ? `, corta ${closures} estradas` : ''} e dá as tarefas às organizações.`
+                : 'Despacha os meios do plano, corta as estradas e dá as tarefas às organizações.',
+            }
+          : status === 'active'
+            ? { step: 'complete' as const, label: 'Encerrar a operação', hint: 'Os meios regressam e as estradas reabrem.' }
+            : null;
+    const closedNote = status === 'discarded' ? 'Descartado: foi escolhido o outro plano.' : status === 'completed' ? 'Operação encerrada.' : status === 'cancelled' ? 'Plano cancelado.' : null;
     const tile = (label: string, value: number | undefined, baseValue: number | undefined, unit = '') => (
       <div className={styles.planTile}>
         <small>{label}</small>
@@ -441,7 +474,11 @@ export function PlansPanel() {
       </div>
     );
     return (
-      <div key={id} className={`${styles.planCard} ${onMap ? styles.planCardOn : ''} ${variant === 'B' ? styles.planCardB : ''}`} title={plan.title}>
+      <div
+        key={id}
+        className={`${styles.planCard} ${onMap ? styles.planCardOn : ''} ${variant === 'B' ? styles.planCardB : ''} ${closedNote ? styles.planCardClosed : ''}`}
+        title={plan.title}
+      >
         <div className={styles.planCardHead}>
           <span className={styles.planLetter}>
             {variant || '·'}
@@ -451,11 +488,28 @@ export function PlansPanel() {
             <b>{look?.name ?? plan.title}</b>
             <small className="note">{look?.hint ?? plan.strategy}</small>
           </div>
-          <span>
-            <Tag kind={PLAN_STATUS_KIND[status] ?? 'warn'}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>{' '}
-            {edited.has(id) ? <span title="Ajustado pelo operador (A6); o what-if é deste ajuste"><Tag kind="warn">ajustado</Tag></span> : null}
-          </span>
+          {edited.has(id) ? (
+            <span title="Ajustado pelo operador (A6); o what-if é deste ajuste">
+              <Tag kind="warn">ajustado</Tag>
+            </span>
+          ) : (
+            <span />
+          )}
         </div>
+        {PLAN_FLOW.includes(status) ? (
+          <ol className={styles.planFlow} aria-label="Etapa do plano">
+            {PLAN_FLOW.map((s, i) => {
+              const at = PLAN_FLOW.indexOf(status);
+              return (
+                <li key={s} className={i === at ? styles.planStepOn : i < at ? styles.planStepDone : ''}>
+                  {PLAN_STATUS_LABEL[s]}
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <Tag kind={PLAN_STATUS_KIND[status] ?? 'warn'}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>
+        )}
         {sim ? (
           <div className={styles.planTiles}>
             {tile('Área ardida', stats?.burnedHa, baseStats?.burnedHa, ' ha')}
@@ -466,38 +520,51 @@ export function PlansPanel() {
         ) : (
           <small className="note">Ainda sem simulação deste plano.</small>
         )}
-        <div className={styles.planButtons}>
-          <button className={open?.id === id ? 'on' : ''} onClick={() => void togglePlan(plan)}>
-            {open?.id === id ? 'Esconder plano' : 'Ver plano'}
+        {next ? (
+          <div className={styles.planNext}>
+            {next.step === 'select' ? (
+              <button className={styles.primaryButton} disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
+                {busy === `select:${id}` ? '…' : next.label}
+              </button>
+            ) : (
+              // these two move real vehicles and roads: asked in the card, second click after two seconds
+              <ConfirmButton
+                className={styles.primaryButton}
+                disabled={busy === `${next.step}:${id}`}
+                yes={next.step === 'activate' ? 'Sim, pôr em execução' : 'Sim, encerrar'}
+                onConfirm={() => void transition(plan, next.step)}
+              >
+                {busy === `${next.step}:${id}` ? '…' : next.label}
+              </ConfirmButton>
+            )}
+            <small className="note">{next.hint}</small>
+          </div>
+        ) : closedNote ? (
+          <small className="note">{closedNote}</small>
+        ) : null}
+        <div className={styles.planSecondary}>
+          <button className={open?.id === id && editingId !== id ? 'on' : ''} onClick={() => void togglePlan(plan)} title="As decisões dos agentes, e o plano no mapa">
+            {open?.id === id && editingId !== id ? 'Fechar decisões' : 'Ver decisões'}
           </button>
           {!sim ? (
-            <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)}>
+            <button disabled={busy === `sim:${id}`} onClick={() => void simulate(plan)} title="Corre o fogo com este plano aplicado (e se fizermos isto?)">
               {busy === `sim:${id}` ? 'A simular…' : 'Simular'}
             </button>
           ) : null}
           {status === 'proposed' || status === 'selected' || status === 'active' ? (
-            <button className={editingId === id ? 'on' : ''} onClick={() => void editPlan(plan)}>
-              {editingId === id ? 'A ajustar…' : 'Editar'}
+            <button className={editingId === id ? 'on' : ''} onClick={() => void editPlan(plan)} title="Ajustar as ações e os meios; o plano volta a ser simulado">
+              {editingId === id ? 'A editar…' : 'Editar'}
             </button>
           ) : null}
-          {status === 'proposed' ? (
-            <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
-              {busy === `select:${id}` ? '…' : 'Selecionar'}
-            </button>
-          ) : null}
-          {status === 'selected' ? (
-            <button disabled={busy === `activate:${id}`} onClick={() => void transition(plan, 'activate')}>
-              {busy === `activate:${id}` ? '…' : 'Ativar'}
-            </button>
-          ) : null}
-          {status === 'active' ? (
-            <button disabled={busy === `complete:${id}`} onClick={() => void transition(plan, 'complete')}>
-              {busy === `complete:${id}` ? '…' : 'Encerrar'}
-            </button>
-          ) : null}
-          <button className={styles.dangerButton} disabled={busy === `del:${id}`} onClick={() => void removePlan(plan)}>
+          <ConfirmButton
+            className={styles.dangerButton}
+            disabled={busy === `del:${id}`}
+            yes="Sim, apagar"
+            detail={status === 'active' ? 'Está em execução: primeiro é encerrado (os meios regressam). Não se pode desfazer.' : 'Não se pode desfazer.'}
+            onConfirm={() => void removePlan(plan)}
+          >
             {busy === `del:${id}` ? 'A apagar…' : 'Apagar'}
-          </button>
+          </ConfirmButton>
         </div>
       </div>
     );
@@ -598,9 +665,9 @@ export function PlansPanel() {
                       {plan.createdAt ? ` · ${new Date(plan.createdAt).toLocaleString('pt-PT')}` : ''}
                     </small>
                   </span>
-                  <button className={styles.dangerButton} disabled={busy === `del:${plan.id as string}`} onClick={() => void removePlan(plan)}>
+                  <ConfirmButton className={styles.dangerButton} yes="Sim, apagar" disabled={busy === `del:${plan.id as string}`} onConfirm={() => void removePlan(plan)}>
                     {busy === `del:${plan.id as string}` ? '…' : 'Apagar'}
-                  </button>
+                  </ConfirmButton>
                 </Row>
               ))}
             </div>

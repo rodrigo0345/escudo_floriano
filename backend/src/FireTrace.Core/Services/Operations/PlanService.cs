@@ -4,6 +4,7 @@ using FireTrace.Core.Domain.Dispatches;
 using FireTrace.Core.Domain.Errors;
 using FireTrace.Core.Domain.Interventions;
 using FireTrace.Core.Domain.Plans.Actions;
+using FireTrace.Core.Domain.Plans.Triggers;
 using FireTrace.Core.Domain.Plans;
 using FireTrace.Core.Domain.Resources;
 using FireTrace.Core.Domain.RoadClosures;
@@ -89,16 +90,48 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
     public async Task<Plan> ActivateAsync(string id, CancellationToken ct = default)
     {
         var plan = await Require(id, PlanStatus.Selected, ct);
-        var assignments = plan.Actions.SelectMany(a => (a.Resources ?? new()).Where(r => r.ResourceType != ResourceType.Equipment).Select(r => (Action: a, Resource: r))).ToList();
+        // a plan still selected owns no live dispatch: any left by an activation that failed half-way is cancelled before trying again
+        await CancelDispatchesAsync(plan.Id, ct);
+        // a vehicle the plan gives several jobs (attack the head, then defend a village) is dispatched once, to its first job by time:
+        // the dispatcher refuses the same vehicle twice in one batch, and its later jobs stay on the plan
+        var start = plan.Basis?.SituationAsOf ?? clock.GetUtcNow();
+        var assignments = plan.Actions
+            .Select((a, order) => (Action: a, Order: order, At: a.Trigger is AtTimeTrigger t ? t.At.MinutesFrom(start) : 0))
+            .OrderBy(x => x.At).ThenBy(x => x.Order)
+            .SelectMany(x => (x.Action.Resources ?? new()).Where(r => r.ResourceType != ResourceType.Equipment).Select(r => (x.Action, Resource: r)))
+            .DistinctBy(x => x.Resource.ResourceType == ResourceType.Vehicle ? $"vehicle:{x.Resource.ResourceId}" : $"{x.Action.Id}:{x.Resource.ResourceType}:{x.Resource.ResourceId}")
+            .ToList();
         var batch = new DispatchBatch(assignments.Select(x => ToDispatch(x.Action, x.Resource)).ToList(), $"Plano {plan.Title}");
 
         var check = await dispatching.ValidateAsync(batch, ct);
         if (!check.Valid) throw new ConflictException("Não é possível ativar: " + string.Join("; ", check.Issues.Where(i => i.Severity == "error").Select(i => i.Message)), "resources_unavailable");
         await dispatching.CreateAsync(batch, new DispatchOrigin(DispatchSource.PlanAction, plan.Id, assignments.Select(x => (string?)x.Action.Id).ToList()), ct);
 
-        var actions = new List<PlanAction>();
-        foreach (var a in plan.Actions) actions.Add(a is RoadClosureAction c ? c with { ClosureId = (await OpenClosure(plan, c, ct)).Id } : a);
-        return await plans.SaveAsync(Transition(plan with { Actions = actions, ActivatedAt = clock.GetUtcNow() }, PlanStatus.Active), ct);
+        var opened = new List<RoadClosure>();
+        try
+        {
+            var actions = new List<PlanAction>();
+            foreach (var a in plan.Actions)
+            {
+                if (a is not RoadClosureAction c) { actions.Add(a); continue; }
+                var closure = await OpenClosure(plan, c, ct);
+                opened.Add(closure);
+                actions.Add(c with { ClosureId = closure.Id });
+            }
+            return await plans.SaveAsync(Transition(plan with { Actions = actions, ActivatedAt = clock.GetUtcNow() }, PlanStatus.Active), ct);
+        }
+        catch
+        {
+            // all or nothing: undo what this activation made, so the plan stays selected with its vehicles free and no road cut
+            await CancelDispatchesAsync(plan.Id, CancellationToken.None);
+            foreach (var closure in opened) await closures.DeleteAsync(closure.Id, CancellationToken.None);
+            throw;
+        }
+    }
+
+    async Task CancelDispatchesAsync(string planId, CancellationToken ct)
+    {
+        foreach (var d in await dispatches.ListAsync(d => d.PlanId == planId && d.IsActive, ct)) await dispatching.CancelAsync(d, ct);
     }
 
     static DispatchInput ToDispatch(PlanAction action, ResourceAssignment r) => new(r.ResourceType, r.ResourceId, r.Personnel ?? 1, r.Responsibility ?? DefaultResponsibility(action),
@@ -122,17 +155,24 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
         _ => new Target(Label: a.Title),
     };
 
-    async Task<RoadClosure> OpenClosure(Plan plan, RoadClosureAction c, CancellationToken ct) => await closures.CreateAsync(new RoadClosure
+    async Task<RoadClosure> OpenClosure(Plan plan, RoadClosureAction c, CancellationToken ct)
     {
-        LocationId = plan.LocationId, RoadIds = c.RoadIds, Geometry = c.Geometry, Kind = c.Kind, Reason = c.Reason, Status = ClosureStatus.Active, Start = clock.GetUtcNow(),
-        End = c.Until?.Resolve(plan.Basis?.SituationAsOf ?? clock.GetUtcNow()), Detour = c.Detour, Checkpoints = c.Checkpoints, Exemptions = c.Exemptions, ResponsibleOrganizationId = c.OrganizationId,
-        Source = "plan_action", PlanActionRef = new PlanActionRef(plan.Id, c.Id),
-    }, ct);
+        var start = clock.GetUtcNow();
+        // the plan's clock starts when it is activated (T+0): an `until` of T+260 ends 260 min after activation, not after the scenario's
+        // start (an exercise can be months old, which made every closure end before it began); an absolute end already past is left open
+        DateTimeOffset? end = c.Until is { OffsetMinutes: { } minutes } ? start.AddMinutes(minutes) : c.Until?.Time is { } at && at > start ? at : null;
+        return await closures.CreateAsync(new RoadClosure
+        {
+            LocationId = plan.LocationId, RoadIds = c.RoadIds, Geometry = c.Geometry, Kind = c.Kind, Reason = c.Reason, Status = ClosureStatus.Active, Start = start,
+            End = end, Detour = c.Detour, Checkpoints = c.Checkpoints, Exemptions = c.Exemptions, ResponsibleOrganizationId = c.OrganizationId,
+            Source = "plan_action", PlanActionRef = new PlanActionRef(plan.Id, c.Id),
+        }, ct);
+    }
 
     /// <summary>Fecha o plano: cancela os despachos que criou e levanta os cortes de estrada.</summary>
     async Task<Plan> CloseAsync(Plan plan, PlanStatus status, CancellationToken ct)
     {
-        foreach (var d in await dispatches.ListAsync(d => d.PlanId == plan.Id && d.IsActive, ct)) await dispatching.CancelAsync(d, ct);
+        await CancelDispatchesAsync(plan.Id, ct);
         foreach (var c in await closures.ListAsync(c => c.PlanActionRef?.PlanId == plan.Id && c.Status == ClosureStatus.Active, ct)) await closures.SaveAsync(c with { Status = ClosureStatus.Lifted, End = clock.GetUtcNow() }, ct);
         return Transition(plan with { CompletedAt = clock.GetUtcNow() }, status);
     }

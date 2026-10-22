@@ -337,9 +337,64 @@
   font-size: 15px;
 }
 
-.planButtons {
+.planCardClosed {
+  opacity: 0.6;
+}
+
+/* Proposto → Escolhido → Em execução → Concluído */
+.planFlow {
   display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 10px;
+  text-align: center;
+}
+
+.planFlow li {
+  padding: 3px 2px 2px;
+  border-top: 3px solid var(--line);
+  color: var(--mut);
+  line-height: 1.15;
+}
+
+.planFlow li.planStepDone {
+  border-top-color: color-mix(in srgb, var(--acc) 55%, transparent);
+}
+
+.planFlow li.planStepOn {
+  border-top-color: var(--acc);
+  color: var(--fg);
+  font-weight: 700;
+}
+
+/* the plan's one next step, and what it does */
+.planNext {
+  display: grid;
+  gap: 3px;
+}
+
+.planNext .primaryButton {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+}
+
+.planNext .primaryButton:disabled {
+  opacity: 0.6;
+}
+
+.planSecondary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 4px;
+}
+
+.planSecondary button {
+  padding: 3px 6px;
+  font-size: 11.5px;
 }
 
 .dangerButton {

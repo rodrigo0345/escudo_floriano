@@ -5,7 +5,6 @@ import { useEngineContext } from '@/engine/EngineContext';
 import { SceneEngine } from '@/engine/sceneEngine';
 import { useAppStore } from '@/store/appStore';
 
-import { AlertToast } from './AlertToast';
 import { Compass } from './Compass';
 import { LayersPanel } from './LayersPanel';
 import { Banner, Hint, LoadingOverlay } from './Overlays';
@@ -47,7 +46,6 @@ export function Viewport() {
       <WeatherHud />
       <MiniMap />
       <ScaleBar />
-      <AlertToast />
       <Hint />
       <Banner />
       <LoadingOverlay />
