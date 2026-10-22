@@ -120,6 +120,19 @@ public sealed class RoutingService(IMapReader map, IDocumentStore<RoadClosure> c
         return RoadGraph.For(net).AccessTimes(new[] { A(from) }, destinations.Select(A).ToList(), speeds.Profile(), e => closed.ContainsKey(net.Edges[e].Id));
     }
 
+    /// <summary>
+    /// Como acima, para uma viatura concreta (um VFCI anda em caminhos florestais que o perfil genérico não usa; um pesado não sobe onde um ligeiro sobe):
+    /// de onde ela está, sobretudo quando parou no fim de um caminho, só os destinos que ela própria alcança.
+    /// </summary>
+    public async Task<IReadOnlyList<double?>> DriveMinutesAsync(string locationId, LatLon from, IReadOnlyList<LatLon> destinations, VehicleProfile vehicle, CancellationToken ct = default)
+    {
+        var net = await map.GetRoadsAsync(locationId, ct);
+        var graph = await GraphAsync(net, locationId, ct);
+        Anchor A(LatLon p) { var (x, y) = net.Spec.ToCell(p.Lat, p.Lon); return new Anchor("", x, y); }
+        var closed = await ClosedEdges(locationId, null, true, ct);
+        return graph.AccessTimes(new[] { A(from) }, destinations.Select(A).ToList(), vehicle.ToTravel(speeds, routing, emergency: true), e => closed.ContainsKey(net.Edges[e].Id));
+    }
+
     public async Task<AccessMatrix> AccessAsync(AccessRequest req, CancellationToken ct = default)
     {
         var net = await map.GetRoadsAsync(req.LocationId, ct);

@@ -219,6 +219,11 @@ export class UnitLayer {
     const water = a.waterLevelL != null && b.waterLevelL != null ? lerp(a.waterLevelL, b.waterLevelL, f) : (a.waterLevelL ?? b.waterLevelL);
     const capacity = unit.state.water?.capacityL;
     const fatigue = a.fatiguePct != null && b.fatiguePct != null ? lerp(a.fatiguePct, b.fatiguePct, f) : (a.fatiguePct ?? b.fatiguePct);
+    const fuel = a.fuelPct != null && b.fuelPct != null ? lerp(a.fuelPct, b.fuelPct, f) : (a.fuelPct ?? b.fuelPct);
+    // a refill trip is for water or for fuel: the last refill/refuel event says which; on a water trip, the tank filling up means it is at the water point
+    const trip = status === 'refilling' ? tripKind(unit.track.events, a.tMin + f) : null;
+    const activity: Activity =
+      trip === 'fuel' ? 'refueling' : trip === 'water' ? ((b.waterLevelL ?? 0) > (a.waterLevelL ?? 0) ? 'filling' : 'to_water') : activityOf(status, e.role);
 
     // water: trucks spray at the fire while they have water; aircraft drop over it, in passes
     if (status === 'working' && (water ?? 1) > 0 && (e.role === 'attack' || e.role === 'air')) {
@@ -241,9 +246,10 @@ export class UnitLayer {
         org: e.org,
         orgColor: e.orgColor,
         vehicleType: actor.cls,
-        activity: activityOf(status, e.role),
+        activity,
         detail: e.targetLabel && (status === 'en_route' || status === 'on_scene' || status === 'working' || status === 'ordered') ? e.targetLabel : undefined,
         water: capacity && water != null ? water / capacity : undefined,
+        fuel: fuel != null ? fuel / 100 : undefined,
         people: `${people} p${fatigue != null && fatigue >= 1 ? ` · cansaço ${Math.round(fatigue)}%` : ''}`,
         casualties: unit.state.crew?.casualties || undefined,
       });
@@ -252,6 +258,7 @@ export class UnitLayer {
     actor.setTip(
       `${callsign} · ${e.org} · ${DISPATCH_STATUS_LABEL[status] ?? status} · ${people} pessoas` +
         (water != null ? ` · água ${Math.round(water)}${capacity ? `/${Math.round(capacity)}` : ''} L` : '') +
+        (fuel != null ? ` · combustível ${Math.round(fuel)}%` : '') +
         (fatigue != null ? ` · cansaço ${Math.round(fatigue)}%` : ''),
     );
   }
@@ -266,6 +273,17 @@ export class UnitLayer {
     const e = this.entries.find((x) => x.unit.state.unitId === unitId);
     return e?.actor.group.visible ? e.actor.group.position.clone() : null;
   }
+}
+
+/** Whether the refill a unit is on at minute `t` is for water or for fuel (the last `refill_*` / `refuel_*` event at or before it). */
+function tripKind(events: ReadonlyArray<{ tMin: number; type: string }> | undefined, t: number): 'water' | 'fuel' | null {
+  let kind: 'water' | 'fuel' | null = null;
+  for (const ev of events ?? []) {
+    if (ev.tMin > t) break;
+    if (ev.type === 'refuel_started') kind = 'fuel';
+    else if (ev.type === 'refill_started') kind = 'water';
+  }
+  return kind;
 }
 
 /** What the tag says, from the backend's dispatch status and the unit's role. */

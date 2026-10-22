@@ -15566,6 +15566,9 @@
           "water": {
             "$ref": "#/components/schemas/WaterStatus"
           },
+          "fuel": {
+            "$ref": "#/components/schemas/FuelStatus"
+          },
           "crew": {
             "$ref": "#/components/schemas/CrewStatus"
           },
@@ -15577,6 +15580,31 @@
           "unitId",
           "status"
         ]
+      },
+      "FuelStatus": {
+        "type": "object",
+        "description": "Combustível de uma viatura terrestre na simulação: gasta-se a andar (por km) e com a bomba a trabalhar (por hora); abaixo de `Rules.fuel.refuelBelowPct` a viatura vai abastecer ao posto de combustível (ou ao seu quartel) mais perto por estrada.",
+        "properties": {
+          "levelPct": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "capacityL": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "refuelFacilityId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Posto de combustível (ou quartel) para onde vai abastecer, se o estiver a fazer."
+          }
+        }
       },
       "UnitStateList": {
         "type": "object",
@@ -15615,6 +15643,8 @@
               "water_empty",
               "refill_started",
               "refill_done",
+              "refuel_started",
+              "refuel_done",
               "rest_started",
               "rest_done",
               "shift_ended",
@@ -15689,6 +15719,13 @@
                     "number",
                     "null"
                   ]
+                },
+                "fuelPct": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "Combustível que resta (%), nas viaturas terrestres."
                 }
               },
               "required": [
@@ -15787,8 +15824,14 @@
                 "minimum": 0,
                 "maximum": 1
               },
+              "attackFlowLpm": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Caudal máximo das linhas de ataque de uma viatura (L/min): o consumo a trabalhar é `min(pumpFlowLpm, attackFlowLpm) × dutyCycle` (num incêndio rural trabalha-se com duas linhas de mangueira, não com o caudal todo da bomba)."
+              },
               "refill": {
                 "type": "object",
+                "description": "Sem água, a viatura vai por estrada ao ponto de água mais rápido de alcançar (das `sources`), enche (`capacidade / caudal do ponto` + `setupMinutes`) e volta.",
                 "properties": {
                   "setupMinutes": {
                     "type": "number"
@@ -15814,6 +15857,43 @@
                       "$ref": "#/components/schemas/WaterPointKind"
                     }
                   }
+                }
+              }
+            }
+          },
+          "fuel": {
+            "type": "object",
+            "description": "Combustível das viaturas terrestres. Uma viatura sem `fuelCapacityL` usa `defaultCapacityL`; com `rangeKm` gasta `fuelCapacityL / rangeKm` por km, senão `drivingLPer100Km`. Parte com `state.fuelPct` (cheia se não houver).",
+            "properties": {
+              "defaultCapacityL": {
+                "type": "number",
+                "minimum": 0
+              },
+              "drivingLPer100Km": {
+                "type": "number",
+                "minimum": 0
+              },
+              "workingLph": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Gasto a trabalhar no local (bomba e motor ao ralenti), L/h."
+              },
+              "refuelBelowPct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Abaixo disto a viatura vai abastecer."
+              },
+              "refuelMinutes": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Tempo no posto (encher o depósito), sem contar a viagem."
+              },
+              "sources": {
+                "type": "array",
+                "description": "Onde se abastece, por ordem de preferência quando o tempo de viagem é igual.",
+                "items": {
+                  "$ref": "#/components/schemas/FacilityKind"
                 }
               }
             }

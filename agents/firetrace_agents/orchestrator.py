@@ -29,28 +29,37 @@ The orchestrator can also request a what-if run of a published plan
 from __future__ import annotations
 
 import copy
+import logging
 import math
+import os
 import statistics
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 from .client import ApiProblem, FiretraceClient
 from .contracts import UNSAFE_ON_WIRE, validate_against_spec
 from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
+from .advisor import (
+    Advisor, AdvisorLog, NullAdvisor, evacuation_brief, sector_brief, sector_id, unit_brief, valid_closures, valid_evacuation_order, valid_sector_choice, valid_shelters,
+    valid_standby,
+)
 from .buildings import DEFENDERS_PER_ZONE, BuildingZone, building_cells, ignition_minutes, zones_to_defend
 from .daylight import minutes_to_sunset
-from .duty import duty_factor
+from .duty import duty_factor, fuel_of, refill_setup_minutes
 from .fuelbreak import plan_strip, plan_wet_line, strip_polygon
-from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, LEAD_MINUTES, GnrPlan, closure_action, control_point_action, intensity_lookup, nearest_units, plan_closures, unit_stub
+from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, GnrPlan, closure_action, control_point_action, intensity_lookup, nearest_units, plan_cordon, unit_stub
 from .capacity import line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
 from .placement import FireClock, black_site, stay_ahead
-from .support import SupportAgents, SupportPlan
-from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, plan_sectors, slot_shift, zone_around
+from .support import STANDBY_AMBULANCES, SupportAgents, SupportPlan
+from .terrain import TerrainReader, apply_to_effect as apply_terrain_effect
+from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, plan_sectors, slot_shift, with_preferences, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 from .travel import TravelPlanner, centroid
 
+
+log = logging.getLogger("firetrace.orchestrator")
 
 STAGING_DISTANCES_M = (800.0, 1600.0, 3200.0, 6400.0)  # how far from the fire a unit that cannot reach it waits, nearest first
 ARRIVAL_STEP_MIN = 15  # units arriving within this of each other are placed on the same picture of the fire
@@ -65,6 +74,7 @@ AIR_DROP_WET_MIN = 20.0  # = firefighter.AIR_DROP_WET_MIN: how long one water dr
 DEFAULT_AIR_WATER_KM = 5.0  # a helicopter's dip when no water point is known
 EARLY_AIR_KWM = 1700.0  # = Rules.suppression.fullEffectUpToKwm when /rules has none: past it before the crews arrive, the aircraft go at once
 WORKABLE_EDGE_SHARE = 0.5  # a fire whose head is past direct attack is still attacked on its flanks while at least this share of its edge can be worked
+MAX_ADVICE_SECTOR_CALLS = 4  # an advisor is asked about the sectors for at most this many groups of units per cycle (each group is a different picture of the fire); the rest follow the rules
 COMBAT_EFFECTS = frozenset({"crew_deployment", "fire_line", "aerial_drop", "structure_protection", "fuel_removal"})
 
 
@@ -102,6 +112,7 @@ class CycleResult:
     held: list[str] = field(default_factory=list)  # units kept at their stations as a tactical reserve (plan B)
     support: Any = None  # what Proteção Civil and INEM added (``support.SupportPlan``)
     arrival_intensity: float | None = None  # the fire's intensity (kW/m) when the units get there: attack it, or contain it first
+    advice: AdvisorLog = field(default_factory=AdvisorLog)  # what the advisor (an LLM commander) decided in this cycle, and what was thrown away (``advisor.py``)
 
     def assessment(self, rules: dict[str, Any] | None) -> str:
         """The firefighters' reading of the fire, in one sentence: attack to put it out, or contain it first (lives, then houses) and attack when it weakens."""
@@ -158,6 +169,14 @@ class OrchestratorAgent:
         self._location_id: str | None = None
         self._water: dict[tuple[float, float], float] = {}  # rounded target → km to the nearest water point a helicopter can dip into
         self._facilities: dict[str, list[dict[str, Any]]] = {}  # location → facilities (static, fetched once)
+        # The ground each crew works on (slope, fuel, water): the backend does not slow a crew on a steep slope, so the agents do (`terrain.py`). Each is a switch.
+        self.terrain_enabled = os.environ.get("AGENTS_TERRAIN", "1").lower() not in {"0", "false", "no"}
+        self.real_refill = os.environ.get("AGENTS_REAL_REFILL", "1").lower() not in {"0", "false", "no"}
+        self._terrain: dict[str, TerrainReader] = {}  # location → asked-once terrain and refill distances
+        self.advisor: Advisor = NullAdvisor()  # an LLM commander may be plugged in (``llm/``): it chooses among options the rules offer, and may be wrong without harm
+        self._advising = False  # the cycle being planned consults the advisor
+        self._advice = AdvisorLog()
+        self._advice_calls = 0
 
     # -- team --------------------------------------------------------------------
     @property
@@ -211,6 +230,7 @@ class OrchestratorAgent:
         force_contain: bool = False,
         early_air: bool = True,
         validate: bool = True,
+        use_advisor: bool = False,
     ) -> CycleResult:
         """Situation → decisions → validation → plans A and B (→ ``POST /plans``).
 
@@ -236,7 +256,10 @@ class OrchestratorAgent:
         A combat unit that would arrive with under ``MIN_USEFUL_WORK_MIN`` of the run left is not sent.
         Every crew is placed where it is safe (``placement.py``): an initial attack works from the burned side of the edge at the minute the crew arrives, and a
         crew working ahead of the fire leaves before it gets there; a crew with no safe spot is not sent (it stays free for later).
+        ``use_advisor`` asks ``self.advisor`` (an LLM commander, see ``advisor.py``) at the places it may decide: which sector each unit works, the order of the
+        evacuations and their shelters, which road closures are enforced, where the ambulances wait, and a final note; whatever it gets wrong is discarded and the rules decide.
         """
+        self._begin_advice(use_advisor)
         simulation = self._simulation(simulation_id)
         ignitions = ((simulation or {}).get("scenarioSnapshot") or {}).get("ignitions") or []
         self._run_minutes = int(((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes") or 0)
@@ -258,7 +281,7 @@ class OrchestratorAgent:
         if not self.agents:
             raise RuntimeError("no firefighter agents available from the fleet")
 
-        result = CycleResult(simulation_id=simulation_id)
+        result = CycleResult(simulation_id=simulation_id, advice=self._advice)
         situation, result.attack_lead, result.initial_attack = self._initial_attack(situation, location_id, travel)
         if force_contain and result.initial_attack:  # the commander chose to contain although the engine's test would attack
             situation, result.initial_attack = replace(situation, initial_attack=False, work_minutes=AHEAD_STAY_MIN), False
@@ -274,7 +297,7 @@ class OrchestratorAgent:
                 result.assignments.update(self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=(everyone - ids) | set(reserved), lead=lead))
         else:
             result.assignments = self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=set(reserved), lead=result.attack_lead if result.initial_attack else None)
-        result.life = self._plan_life(situation, location_id, result.assignments, exclude=set(reserved))
+        result.life = self._plan_life(situation, location_id, result.assignments, exclude=set(reserved), zones=result.zones)
         result.assignments.update({agent_id: Assignment(place=asset) for agent_id, asset in reserved.items()})
         if result.initial_attack:
             result.attack_zones, result.attack_crews = self._fit_on_outline(situation, result, groups)
@@ -322,12 +345,14 @@ class OrchestratorAgent:
             run_minutes = int(((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes") or situation.life_horizon_minutes)
             support, agents = self._support(situation, location_id, result, run_minutes)
             people = {d.item.id: (d.item.people, d.item.vulnerable, str((d.item.asset.get("details") or {}).get("kind") or d.item.asset.get("kind") or "")) for d in (result.life.decisions if result.life else ())}
+            shelters = self._advised_shelters(agents, plan_a, people)
             for plan in (plan_a, plan_b):
                 plan["actions"].extend(copy.deepcopy(support.actions))
                 if agents is not None:
-                    for message in agents.enrich_evacuations(plan, people, support.ambulances_left):
+                    for message in agents.enrich_evacuations(plan, people, support.ambulances_left, shelters):
                         result.issues.append(AgentIssue("proteção civil", "evacuação", message))
             result.support = support
+        self._advised_review(result, plan_a, situation)
 
         if validate or publish:  # the callers that judge the plans themselves (alternatives, re-plans) validate later, once
             self._validate_plans(result)
@@ -537,7 +562,7 @@ class OrchestratorAgent:
             facilities=self._facilities[location_id], ambulances=ambulances, station_position=planner.station_position, route=lambda vehicle, point: planner.eta(unit_stub(vehicle), point),
         )
         sites = [a.site for a in result.assignments.values() if a.site is not None] or [a.sector.position for a in result.assignments.values() if a.sector is not None and a.place is None][:6]
-        plan = agents.medical_standby(sites, situation.head_bearing_deg, decided_at)
+        plan = agents.medical_standby(sites, situation.head_bearing_deg, decided_at, self._advised_standby(agents, sites, situation.head_bearing_deg, ambulances))
         try:
             post = agents.command_post(situation.anchor)
         except ValueError:
@@ -741,7 +766,7 @@ class OrchestratorAgent:
                 vectors = self.client.get_vectors(situation.simulation_id, t_min=int(t_min))
             except ApiProblem:  # a server without vectors: units fall back to the fire's head
                 continue
-            sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m)
+            sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, workability_of=self._sector_workability(situation))
             if sectors:
                 break
         fighters = [agent for agent in self.agents if agent.agent_id not in exclude]
@@ -752,7 +777,20 @@ class OrchestratorAgent:
             else None
         )
         # places are not dealt out here: the life planner decides who looks after whom (see `_plan_life`)
-        return assign_units(units, sectors, [], budgets=budgets, concentration=concentration)
+        assigned = assign_units(units, sectors, [], budgets=budgets, concentration=concentration)
+        return self._advised_sectors(assigned, fighters, units, sectors, situation, budgets, concentration)
+
+    def _sector_workability(self, situation: Situation) -> Callable[[Sector], float] | None:
+        """How workable the ground of a front stretch is for a crew on foot (``terrain.py``), or ``None`` when terrain is off or the location unknown."""
+        reader = self._terrain_reader(self._location_id) if self._location_id else None
+        if reader is None:
+            return None
+
+        def workability(sector: Sector) -> float:
+            assessment = reader.assess(sector.position, head_bearing_deg=sector.bearing_deg, tier="squad")
+            return assessment.factor if assessment is not None else 1.0  # ground the backend cannot describe is not penalised
+
+        return workability
 
     def _people_at(self, asset: dict[str, Any], location_id: str) -> tuple[int, str]:
         """How many people are there: the forecast says it for places; for a facility without a count, the area statistics, else an assumption."""
@@ -770,7 +808,8 @@ class OrchestratorAgent:
                 pass
         return ASSUMED_PEOPLE_UNKNOWN_FACILITY, "assumed"
 
-    def _plan_life(self, situation: Situation, location_id: str, assignments: dict[str, Assignment], exclude: set[str] = frozenset()) -> LifePlan | None:  # type: ignore[assignment]
+    def _plan_life(self, situation: Situation, location_id: str, assignments: dict[str, Assignment], exclude: set[str] = frozenset(),  # type: ignore[assignment]
+                   zones: Sequence[BuildingZone] = ()) -> LifePlan | None:
         """Decide who evacuates what (vulnerable and most urgent first) and who shelters; hands each place its units.
 
         Squads (and vehicles that carry passengers) evacuate; fire engines able to defend buildings defend the threatened places.
@@ -779,10 +818,19 @@ class OrchestratorAgent:
         from dataclasses import replace  # local: only this method rewrites assignments
 
         assets = situation.people_in_danger_within(situation.life_horizon_minutes)
-        if not assets:
-            return None
         now = float(situation.at_minute or 0)
         items = []
+        # the houses in the fire's way that belong to no named place (`/threatened` only names places): their people are evacuated or told to shelter too
+        for index, zone in enumerate(zones):
+            if zone.people <= 0:
+                continue
+            asset = zone.asset(index)
+            items.append(AtRisk(
+                id=asset["id"], name=f"casas isoladas ({zone.buildings} edifícios)", kind="building_zone", position=asset["position"], people=zone.people, vulnerable=False,
+                arrival_p10=now + zone.arrival_min, arrival_p50=now + zone.arrival_min, people_source="buildings", asset=asset,
+            ))
+        if not assets and not items:
+            return None
         for asset in assets:
             people, source = self._people_at(asset, location_id)
             arrival = asset["arrivalMinute"]
@@ -799,7 +847,7 @@ class OrchestratorAgent:
             elif obs.passenger_capacity > 0 and obs.capabilities & {"evacuation_transport", "traffic_control", "perimeter_security"}:
                 evacuators.append(Evacuator.by_vehicle(agent.agent_id, obs.passenger_capacity))
         margin = float((((situation.rules or {}).get("safety") or {}).get("withdrawWhenFireArrivesInMinutes")) or 10.0)
-        plan = plan_life(items, evacuators, now=now, margin_min=margin)
+        plan = plan_life(items, evacuators, now=now, margin_min=margin, order=self._advised_evacuation_order(items, len(evacuators), now, margin))
         by_id = {d.item.id: d for d in plan.decisions}
         for decision in plan.decisions:
             for agent_id in decision.responders:
@@ -837,10 +885,10 @@ class OrchestratorAgent:
             return [], {}
         decided_at = situation.at_minute if situation.at_minute is not None else int(situation.latest_milestone.get("tMin") or 0)
         cells = building_cells(grid, features)
-        # A fire that can be attacked is best put out: putting it out is what protects the houses, so only the ones it reaches before the crews can stop it are
-        # defended. A fire too strong to attack has to be contained, and containing it is mostly defending what is in its way: every patch of houses it reaches
-        # while there is still time to prepare it (the engines prepare and leave before the fire arrives, see `_place_safely`).
-        window = (stage_minutes or situation.horizon_minutes) if situation.initial_attack else max(stage_minutes or situation.horizon_minutes, situation.life_horizon_minutes)
+        # Every patch of houses the forecast fire reaches within the life horizon is prepared, whether or not the fire may still be put out: a commander does not
+        # bet the houses on the attack working (structure triage, DECIR), and the engines prepare and leave before the fire arrives (`_place_safely`). Defending
+        # only what burns before the crews could stop it left the plan with no house defended at all on a fire whose first house burns 75 min out.
+        window = max(stage_minutes or situation.horizon_minutes, situation.life_horizon_minutes)
         if whole_run and self._run_minutes:  # plan B: every patch of houses the forecast fire reaches in the whole run, whether the fire can be attacked or not
             window = max(window, self._run_minutes - int(decided_at))
         zones = zones_to_defend(
@@ -1022,10 +1070,10 @@ class OrchestratorAgent:
         return self._gnr_org
 
     def _plan_traffic(self, situation: Situation, location_id: str, result: CycleResult, *, travel: bool, duration: int | None = None) -> GnrPlan:
-        """The GNR's part: close every road the fire cuts until the end of the simulation, and a patrol at each end (see ``gnr.py``).
+        """The GNR's part: seal off the zone the fire reaches until the end of the simulation, one patrol at every access into it (see ``gnr.py``).
 
-        Not only the next hour: a road is closed *before* the fire reaches it (the action's trigger is its predicted cut minus a lead), so the
-        plan has to name them all. The most urgent get the patrols, which are few.
+        Not only the next hour: an access is closed *before* the fire reaches the roads behind it (the action's trigger is that cut minus a lead), so the
+        plan names them all. The most urgent get the patrols, which are few.
         """
         plan = GnrPlan()
         decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
@@ -1038,22 +1086,25 @@ class OrchestratorAgent:
         except ApiProblem as error:  # no road status or no roads: the plans simply have no traffic actions
             result.issues.append(AgentIssue("gnr", "road closures", f"not planned [{error.code}]: {error}"))
             return plan
-        no_effect = float(((situation.rules or {}).get("suppression") or {}).get("noEffectFromKwm") or DEFAULT_NO_EFFECT_KWM)
         horizon = max(float(duration) - decided_at, float(situation.horizon_minutes)) if duration else float(situation.life_horizon_minutes)
-        plan.closures = plan_closures(
-            statuses, self._roads[location_id], decided_at=decided_at, horizon=horizon, intensity_at=intensity_lookup(situation.summary), no_effect_kwm=no_effect,
-        )
+        plan.closures = plan_cordon(statuses, self._roads[location_id], decided_at=decided_at, horizon=horizon, intensity_at=intensity_lookup(situation.summary))
         # a vehicle already fighting the fire (the GNR's all-terrain patrols also attack it) is not sent to a road as well
         fighting = {str(r.get("resourceId")) for message in result.decisions for proposal in message.proposals for r in proposal.resources}
         units = [u for u in units if str(u["id"]) not in fighting]
+        plan.closures = self._advised_closures(plan.closures, len(units), result, decided_at)
         planner = TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes)
         stations = {u["stationId"]: planner.station_position(u["stationId"]) for u in units if u.get("stationId")}
         stations = {sid: pos for sid, pos in stations.items() if pos}
         taken: set[str] = set()
         kept: list[Any] = []
         for closure in plan.closures:
-            # a patrol is worth sending only if it is there before the fire cuts the road (or, if the fire has cut it, while it stays cut)
-            deadline = (closure.reopen_p50 - decided_at - LEAD_MINUTES) if closure.already_cut(decided_at) else (closure.cut_p10 - decided_at)
+            # a patrol is worth sending only if it is there before the fire cuts the road (or, if the fire has cut it, while it stays cut). An access into the
+            # fire zone is the exception: a patrol that gets there after the fire reaches the roads behind it still stops people driving into it, so it goes as
+            # long as the roads stay cut (the closure starts when it arrives, and the plan says it is late)
+            if closure.already_cut(decided_at) or closure.access:
+                deadline = closure.reopen_p50 - decided_at - (0.0 if closure.access else closure.lead_minutes)
+            else:
+                deadline = closure.cut_p10 - decided_at
             patrols: list[tuple[dict[str, Any], Any]] = []
             missing: str | None = None
             for end_index, end in enumerate(closure.ends):
@@ -1069,20 +1120,22 @@ class OrchestratorAgent:
                     chosen = (vehicle, route)
                     break
                 if chosen is None:
-                    missing = f"{'no GNR unit gets to' if late else 'no GNR unit can reach'} end {end_index + 1} in time"
+                    missing = "nenhuma patrulha da GNR livre chega lá a tempo" if late else "nenhuma patrulha da GNR livre o alcança"
                     break
                 patrols.append(chosen)
             if missing is not None:
-                # drivers only know a road is closed if someone stands at each way in: without a patrol at every end the road is not closed at all
-                plan.issues.append(f"{closure.name}: not closed: {missing} (a closure needs a patrol at every end)")
+                # drivers only know a road is closed if someone stands where they come in: an access without its patrol is open
+                plan.issues.append(f"acesso por {closure.name} (T+{closure.cut_p10:.0f}): fica aberto: {missing}")
                 continue
             index = len(kept)
             kept.append(closure)
             taken.update(str(v["id"]) for v, _r in patrols)
             # the road is closed from the moment the last patrol is there (never before), and not later than planned
             arrivals = [float(r.eta_minutes) for _v, r in patrols if r is not None and r.eta_minutes is not None]
-            planned = 0.0 if closure.already_cut(decided_at) else max(closure.cut_p10 - decided_at - LEAD_MINUTES, 0.0)
+            planned = 0.0 if closure.already_cut(decided_at) else max(closure.cut_p10 - decided_at - closure.lead_minutes, 0.0)
             opens = max([planned, *arrivals])
+            if closure.access and not closure.already_cut(decided_at) and decided_at + opens > closure.cut_p10:
+                plan.issues.append(f"acesso por {closure.name}: a patrulha chega às T+{decided_at + opens:.0f}, depois de o fogo chegar às estradas para lá dele (T+{closure.cut_p10:.0f}); fecha logo que chega")
             checkpoints: list[dict[str, Any]] = []
             points: list[dict[str, Any]] = []
             for end_index, (vehicle, route) in enumerate(patrols):
@@ -1092,8 +1145,11 @@ class OrchestratorAgent:
                 if route is not None and route.eta_minutes is not None:
                     resource["etaMinutes"] = round(eta, 1)
                     resource["fromStationId"] = route.from_station
-                checkpoints.append({"position": end, "label": f"{closure.name} · ponta {end_index + 1}", "organizationId": organization, "personnel": resource["personnel"], "vehicles": 1})
-                points.append(control_point_action(closure, index, end_index, organization, decided_at, resource, leaves=max(opens - eta, 0.0)))
+                checkpoints.append({"position": end, "label": f"Acesso por {closure.name}", "organizationId": organization, "personnel": resource["personnel"], "vehicles": 1})
+                # the patrol stays at its access as long as the road is closed (until the fire has passed and it reopens, or to the end of the run)
+                closed_until = (closure.reopen_p90 - decided_at) if math.isfinite(closure.reopen_p90) else (float(self._run_minutes or 720) - decided_at)
+                points.append(control_point_action(closure, index, end_index, organization, decided_at, resource, leaves=max(opens - eta, 0.0),
+                                                   stay=max(closed_until - opens, 30.0)))
             plan.actions.append(closure_action(closure, index, organization, decided_at, checkpoints, opens=opens))
             plan.actions.extend(points)
         plan.closures = kept
@@ -1240,6 +1296,185 @@ class OrchestratorAgent:
             })
         return actions
 
+    # -- the advisor: an LLM commander that chooses among the options the rules offer -------
+    def _begin_advice(self, use_advisor: bool) -> None:
+        self._advising = bool(use_advisor) and self.advisor.name != "rules"
+        self._advice = AdvisorLog(advisor=self.advisor.name if self._advising else "rules")
+        self._advice_calls = 0
+
+    def _ask_advisor(self, method: str, brief: dict[str, Any]) -> Any:
+        """Ask the advisor one question. Whatever it raises, the cycle goes on with the rules: a commander that fails must not cost the plan."""
+        try:
+            return getattr(self.advisor, method)(brief)
+        except Exception as error:  # noqa: BLE001 — an advisor is a guest; its failure is logged and the rules decide
+            log.warning("advisor %s failed on %s: %s: %s", self.advisor.name, method, type(error).__name__, str(error)[:200])
+            self._advice.discarded.append(f"{method}: o comando falhou ({type(error).__name__})")
+            return None
+
+    def _note_advice(self, applied: str | None = None, discarded: list[str] | None = None) -> None:
+        """Keep what the advisor said (its reasons) and what became of its choices: taken, or thrown away and why."""
+        self._advice.notes.extend(self.advisor.drain_notes())
+        if applied:
+            self._advice.applied.append(applied)
+        self._advice.discarded.extend(discarded or [])
+
+    def _advised_sectors(
+        self, assigned: dict[str, Assignment], fighters: list[Any], units: list[tuple[str, str]], sectors: list[Sector], situation: Situation,
+        budgets: dict[str, float] | None, concentration: int | None,
+    ) -> dict[str, Assignment]:
+        """The units' sectors as the commander sees them fit (Bombeiros): it is shown the front, the ground on each stretch and every unit, and the rules' own assignment."""
+        if not self._advising or not sectors or not fighters or self._advice_calls >= MAX_ADVICE_SECTOR_CALLS:
+            return assigned
+        self._advice_calls += 1
+        reader = self._terrain_reader(self._location_id) if self._location_id else None
+        index_of = {id(sector): i for i, sector in enumerate(sectors)}
+        brief = {
+            "decidedAtMin": situation.at_minute, "initialAttack": bool(getattr(situation, "initial_attack", False)),
+            "sectors": sector_brief(sectors, lambda sector: reader.assess(sector.position, head_bearing_deg=sector.bearing_deg, tier="squad") if reader else None),
+            "units": [unit_brief(agent, self._arrival.get(agent.agent_id), None) for agent in fighters],
+            "rulesAssignment": {agent_id: sector_id(index_of[id(a.sector)]) for agent_id, a in assigned.items() if a.sector is not None and id(a.sector) in index_of},
+        }
+        choice, problems = valid_sector_choice(self._ask_advisor("assign_sectors", brief), (a for a, _t in units), (sector_id(i) for i in range(len(sectors))))
+        by_id = {sector_id(i): i for i in range(len(sectors))}
+        preferred = {unit: by_id[sector] for unit, sector in choice.items() if assigned.get(unit) is None or assigned[unit].sector is not sectors[by_id[sector]]}
+        if preferred:
+            assigned = with_preferences(assigned, units, sectors, preferred, budgets=budgets, concentration=concentration)
+        self._note_advice(f"setores: {len(preferred)} unidade(s) mudadas de setor" if preferred else None, problems)
+        return assigned
+
+    def _advised_evacuation_order(self, items: list[Any], evacuators: int, now: float, margin: float) -> list[str] | None:
+        """The order the places are evacuated in (Proteção Civil), when a commander weighs them differently from "vulnerable first, then the soonest"."""
+        if not self._advising or len(items) < 2:
+            return None
+        places = evacuation_brief(items, now, margin)
+        asked = self._ask_advisor("order_evacuations", {"places": places, "evacuatorsAvailable": evacuators, "decidedAtMin": now})
+        if asked is None:  # no opinion: not a mistake to record
+            self._note_advice()
+            return None
+        order, problems = valid_evacuation_order(asked, places)
+        self._note_advice("evacuações: ordem escolhida pelo comando" if order else None, problems)
+        return order
+
+    def _advised_shelters(self, agents: SupportAgents | None, plan: dict[str, Any], people: dict[str, tuple[int, bool, str]]) -> dict[str, str] | None:
+        """The shelter each evacuation goes to (Proteção Civil), among the ones that are far enough and that the fire does not reach in time."""
+        if not self._advising or agents is None:
+            return None
+        choices = agents.evacuation_choices(plan, people)
+        if not choices:
+            return None
+        options = {c["placeId"]: [o["id"] for o in c["options"]] for c in choices}
+        chosen, problems = valid_shelters(self._ask_advisor("choose_shelters", {"evacuations": choices}), options)
+        by_place = {c["placeId"]: c for c in choices}
+        # the choice is keyed by the place id the advisor saw; the support code looks a shelter up by any of the action's place ids
+        mapped = {pid: shelter for place, shelter in chosen.items() for pid in by_place[place]["placeIds"] or [place]}
+        self._note_advice(f"abrigos: {len(chosen)} escolha(s) do comando" if chosen else None, problems)
+        return mapped or None
+
+    def _advised_closures(self, closures: list[Any], patrols: int, result: CycleResult, decided_at: float) -> list[Any]:
+        """In what order the (few) patrols are committed to the accesses (GNR). Every access stays in the plan: one the commander leaves out goes last, never away
+        (a cordon with a gap in it is no cordon)."""
+        if not self._advising or len(closures) < 2:
+            return closures
+        ids = {f"C{i + 1}": closure for i, closure in enumerate(closures)}
+        places = [d.item for d in (result.life.decisions if result.life else ())]
+
+        def near(closure: Any) -> list[str]:
+            return sorted({p.name for p in places for end in closure.ends if p.position and distance_m(end["lat"], end["lon"], float(p.position["lat"]), float(p.position["lon"])) <= 2000.0})[:4]
+
+        brief = {"decidedAtMin": decided_at, "patrolsAvailable": patrols, "closures": [{
+            "id": cid, "road": closure.name, "class": closure.road_class, "lengthM": round(closure.length_m), "alreadyCut": closure.already_cut(decided_at),
+            "fireCutsAtMin": {"pessimistic": round(closure.cut_p10), "likely": round(closure.cut_p50)}, "reopensAtMin": round(closure.reopen_p50),
+            "probability": round(closure.probability, 2), "intensityKwM": round(closure.max_intensity_kwm), "nearThreatenedPlaces": near(closure),
+        } for cid, closure in ids.items()]}
+        order = self._ask_advisor("order_closures", brief)
+        if order is None:
+            self._note_advice()
+            return closures
+        kept, problems = valid_closures(order, ids)
+        if not kept:
+            self._note_advice(discarded=[*problems, "o comando não manteve nenhum corte: ficam os das regras"])
+            return closures
+        left_out = [cid for cid in ids if cid not in kept]
+        self._note_advice(f"acessos: ordem das patrulhas escolhida pelo comando ({len(kept)} de {len(ids)} ordenados; os restantes a seguir)", problems)
+        return [ids[cid] for cid in [*kept, *left_out]]
+
+    def _advised_standby(self, agents: SupportAgents, sites: list[dict[str, float]], head_bearing: float, ambulances: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Where the ambulances wait and how many (INEM), among the distances behind the crews that the fire never reaches."""
+        if not self._advising or not sites or not ambulances:
+            return None
+        _middle, options = agents.standby_options(sites, head_bearing)
+        if len(options) < 2 and len(ambulances) < 2:
+            return None
+        distances = [d for d, _spot in options]
+        brief = {"safeDistancesBehindCrewsM": distances, "ambulancesAvailable": len(ambulances), "defaultAmbulances": STANDBY_AMBULANCES, "crewSites": len(sites),
+                 "hospitals": [{"name": f.get("name"), "distanceKm": round(distance_m(_middle["lat"], _middle["lon"], f["position"]["lat"], f["position"]["lon"]) / 1000, 1)}
+                               for f in sorted((f for f in agents.facilities if f.get("kind") == "hospital" and f.get("position")), key=lambda f: distance_m(_middle["lat"], _middle["lon"], f["position"]["lat"], f["position"]["lon"]))[:3]] if _middle else []}
+        asked = self._ask_advisor("choose_standby", brief)
+        if asked is None:  # no opinion
+            self._note_advice()
+            return None
+        choice, problems = valid_standby(asked, distances, len(ambulances))
+        self._note_advice(f"INEM: prevenção a {choice['backM']:.0f} m, {choice['ambulances']} ambulância(s)" if choice else None, problems)
+        return choice
+
+    def _advised_review(self, result: CycleResult, plan: dict[str, Any], situation: Situation) -> None:
+        """A commander's last look at the plan's picture (a note for the operator; it changes nothing)."""
+        if not self._advising:
+            return
+        actions = plan.get("actions", [])
+        by_type: dict[str, int] = {}
+        for action in actions:
+            by_type[str(action.get("type"))] = by_type.get(str(action.get("type")), 0) + 1
+        brief = {
+            "assessment": result.assessment(self._load_rules()), "actionsByType": by_type, "unitsCommitted": len(result.decisions), "unitsHeld": len(result.held), "unitsWithoutSafeSpot": len(result.unsafe_units),
+            "evacuations": [d.reason for d in (result.life.decisions if result.life else ())][:6], "closures": len(result.traffic.closures) if result.traffic else 0,
+            "actionsOnDifficultGround": sum(1 for a in actions if "Terreno:" in (a.get("safetyNotes") or "")),
+            "issues": [f"{i.agent_id}: {i.problem}" for i in result.issues][:8],
+            "advisorDecisions": list(self._advice.applied),
+        }
+        self._advice.review = self._ask_advisor("review", brief)
+        self._note_advice()
+
+    # -- the ground and the water where a crew works ---------------------------------
+    def _terrain_reader(self, location_id: str) -> TerrainReader | None:
+        if not self.terrain_enabled:
+            return None
+        if location_id not in self._terrain:
+            self._terrain[location_id] = TerrainReader(self.client, location_id)
+        return self._terrain[location_id]
+
+    def _terrain_effect(self, location_id: str, intervention: dict[str, Any], site: dict[str, float] | None, unit: Any, situation: Situation) -> str:
+        """Scale a ground crew's effect by how workable its ground is (slope, fuel, the fire running uphill, distance to a road: ``terrain.py``), and say so.
+
+        The backend slows a *road trip* on a slope but not a crew working on one, so this is where "fighting fire on a steep slope is hard" enters the plan.
+        Returns the note for the action's ``safetyNotes`` ('' when the ground is easy, unknown, or the unit flies).
+        """
+        reader = self._terrain_reader(location_id)
+        tier = getattr(getattr(unit, "tier", None), "value", "")
+        if reader is None or tier not in {"squad", "truck"} or intervention.get("type") not in {"crew_deployment", "fire_line", "fuel_removal"}:
+            return ""
+        assessment = reader.assess(site, head_bearing_deg=situation.head_bearing_deg, tier=tier)
+        if assessment is None:
+            return ""
+        return assessment.note(applied=apply_terrain_effect(intervention, assessment))
+
+    def _refill_gap(self, location_id: str, site: dict[str, float] | None, unit: Any, situation: Situation) -> float | None:
+        """Minutes an engine at ``site`` is away on each refill, from the real drive to water (``None``: use the backend's generic shuttle)."""
+        reader = self._terrain_reader(location_id) if self.real_refill else None
+        if reader is None or getattr(getattr(unit, "tier", None), "value", "") != "truck":
+            return None
+        return reader.refill_gap_minutes(site, setup_minutes=refill_setup_minutes(situation.rules), water_l=float(unit.observation.water_capacity_l or 0.0), rules=situation.rules)
+
+    def _refill_note(self, location_id: str, site: dict[str, float] | None, unit: Any, situation: Situation) -> str | None:
+        """Where an engine refills and how long each refill keeps it away, for the plan (``ResourceAssignment.notes``)."""
+        reader = self._terrain_reader(location_id) if self.real_refill else None
+        if reader is None or getattr(getattr(unit, "tier", None), "value", "") != "truck" or not unit.observation.water_capacity_l:
+            return None
+        source = reader.refill_source(site, situation.rules)
+        if source is None:
+            return "Sem ponto de água conhecido por estrada: reabastece com o vaivém genérico das regras."
+        return source.note(float(unit.observation.water_capacity_l), refill_setup_minutes(situation.rules))
+
     # -- plan composition -----------------------------------------------------------
     def _compose_plan(
         self,
@@ -1326,12 +1561,23 @@ class OrchestratorAgent:
             action["simulationEffects"] = [intervention]
             action.update({key: value for key, value in proposal.extra_action_fields.items() if value is not None})
             unit = agents_by_id.get(message.agent_id)
+            work_site = proposal.target or centroid(intervention.get("geometry"))
             if unit is not None and intervention.get("type") == "crew_deployment" and intervention.get("responsibility") == "firefighting" and intervention.get("durationMinutes"):
                 # water, refills, fatigue and rest, as the backend counts them (`duty.py`): the crew's strength averaged over its window
                 action.setdefault("expectedDurationMinutes", int(intervention["durationMinutes"]))
                 strength = float(intervention.get("effectiveness") or situation.suppression_effectiveness(int(intervention.get("personnel") or unit.observation.crew_onboard), float(intervention.get("waterL") or 0.0)))
-                factor = duty_factor(float(intervention["durationMinutes"]), unit.observation.water_capacity_l, unit.observation.pump_lpm, situation.rules)
+                gap = self._refill_gap(location_id, work_site, unit, situation)
+                source = self._terrain_reader(location_id).refill_source(work_site, situation.rules) if self.real_refill and gap is not None else None
+                fuel = fuel_of(situation.rules, water_trip_drive_minutes=source.drive_minutes if source else None) if getattr(getattr(unit, "tier", None), "value", "") == "truck" else None
+                factor = duty_factor(float(intervention["durationMinutes"]), unit.observation.water_capacity_l, unit.observation.pump_lpm, situation.rules, gap, fuel)
                 intervention["effectiveness"] = round(max(0.01, min(1.0, strength * factor)), 2)
+            if unit is not None and intervention.get("type") in {"crew_deployment", "fire_line"} and (note := self._refill_note(location_id, work_site, unit, situation)):
+                # where the engine fills up, by road, and how long each refill keeps it away (the backend's unit simulator drives that same trip on the map)
+                for resource in action.get("resources") or []:
+                    if resource.get("resourceType") == "vehicle":
+                        resource["notes"] = f"{resource['notes']} {note}".strip() if resource.get("notes") else note
+            if unit is not None and (note := self._terrain_effect(location_id, intervention, work_site, unit, situation)):
+                action["safetyNotes"] = f"{action['safetyNotes']} {note}".strip() if action.get("safetyNotes") else note
             if unit is not None and intervention.get("type") == "aerial_drop" and intervention.get("effectDurationMinutes"):
                 # an aircraft drops, flies to refill and comes back: its effect is weighed by how much of each rotation a drop keeps the ground wet,
                 # and it ends at sunset (it flies by day only)

@@ -6,7 +6,10 @@ looking at some time later, so the agents look at it at each checkpoint (``REPLA
 * **Is the fire out?** The firefighters' goal is to put the fire out, not to hold it (``firestate.py``). If the plan's what-if shows the fire going out before
   the end of the run, nothing is added; otherwise the free units are sent to finish it.
 * **If not, who is free?** Units the plan has not committed (the reserve, the ones that could not reach the fire in time and wait at a staging point), units
-  whose work has ended and units still on the road (they have not started: their orders can change, see ``redirectable``). They decide again on the what-if
+  whose work has ended, units still on the road (they have not started: their orders can change, see ``redirectable``) and **units whose fire has moved on**:
+  a crew attacking a stretch of front that, in the what-if, no longer burns anywhere near it is moved to where the fire is now (``front_moved_away``); its
+  job there ends at the checkpoint and it leaves from where it stands. A commander repositions crews along the fire all the time; they do not stay on a
+  stretch that has gone quiet while another side runs. They decide again on the what-if
   run as it is at that minute: the same agents, with the fire as the plan left it (a fire that direct attack has beaten back is attacked again where it now
   burns, and a fire that went past it is blocked ahead or has its houses defended).
 * **Did it help, and is it safe?** Every new wave is judged by the engine on the whole plan (``judge.py``: forecast and wrong wind, crews kept clear of the
@@ -21,8 +24,9 @@ import copy
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
+from .buildings import ignition_minutes
 from .alternatives import committed_units, drop_actions, prune_unreachable, set_stay
 from .client import ApiProblem, FiretraceClient
 from .judge import Judge, Verdict
@@ -32,8 +36,13 @@ from .travel import centroid
 
 log = logging.getLogger("firetrace.adaptation")
 
-REPLAN_MINUTES = 45  # how often the agents look at the fire again
-MAX_WAVES = 3
+REPLAN_MINUTES = 30  # how often the agents look at the fire again
+MAX_WAVES = 6
+# a working crew is moved when nothing within this distance of it burns from a little before the checkpoint to an hour after it (assumptions)
+RELOCATE_RADIUS_M = 300.0
+RELOCATE_LOOKBACK_MIN = 15
+RELOCATE_LOOKAHEAD_MIN = 60
+DIRECT_EFFECTS = frozenset({"crew_deployment", "aerial_drop"})
 MIN_GAIN = 0.02  # a wave stays in the plan only if it takes at least this share (or MIN_GAIN_HA) off the burned area
 MIN_GAIN_HA = 0.5
 MIN_MINUTES_BEFORE_END = 30  # a wave at the very end of the run would have nothing left to change
@@ -141,6 +150,56 @@ def last_positions(plan: dict[str, Any], units: set[str], minute: int, run_minut
     return {unit: where for unit, (_end, where) in found.items()}
 
 
+def front_moved_away(plan: dict[str, Any], ignition: Sequence[int], grid: dict[str, Any], minute: int, run_minutes: int) -> dict[str, tuple[str, dict[str, float]]]:
+    """Units at work at ``minute`` on a direct attack (crews, aircraft) where the what-if fire no longer burns nearby -> (the action, where they are).
+
+    "Nearby" is ``RELOCATE_RADIUS_M`` around the job; "burns" is any cell there the fire reaches from ``RELOCATE_LOOKBACK_MIN`` before the checkpoint to
+    ``RELOCATE_LOOKAHEAD_MIN`` after it. Lines and fuel breaks are left alone (a line ahead of the fire is waiting for it on purpose), and so is an action
+    several units share (moving one would break the group).
+    """
+    width, height = int(grid["width"]), int(grid["height"])
+    reach_rows = max(1, int(RELOCATE_RADIUS_M / (float(grid["dLat"]) * 111_000.0)))
+    reach_cols = max(1, int(RELOCATE_RADIUS_M / (float(grid["dLon"]) * 111_000.0 * 0.75)))
+    moved: dict[str, tuple[str, dict[str, float]]] = {}
+    for action in plan["actions"]:
+        effects = action.get("simulationEffects") or []
+        resources = action.get("resources") or []
+        if action.get("type") != "fire_attack" or len(resources) != 1 or not effects or any(e.get("type") not in DIRECT_EFFECTS for e in effects):
+            continue
+        if not (_start_minute(action) <= minute < _end_minute(action, run_minutes)) or (where := _where(action)) is None:
+            continue
+        col = int((where["lon"] - float(grid["lonWest"])) / float(grid["dLon"]))
+        row = int((float(grid["latNorth"]) - where["lat"]) / float(grid["dLat"]))
+        if not (0 <= col < width and 0 <= row < height):
+            continue
+        active = any(
+            minute - RELOCATE_LOOKBACK_MIN < ignition[r * width + c] <= minute + RELOCATE_LOOKAHEAD_MIN
+            for r in range(max(0, row - reach_rows), min(height, row + reach_rows + 1))
+            for c in range(max(0, col - reach_cols), min(width, col + reach_cols + 1))
+        )
+        if not active:
+            moved[str(resources[0].get("resourceId"))] = (str(action["id"]), where)
+    return moved
+
+
+def end_at(plan: dict[str, Any], action_ids: set[str], minute: int) -> None:
+    """The jobs in ``action_ids`` end at ``minute``: their effects and stay are cut there (the unit has been moved elsewhere)."""
+    for action in plan["actions"]:
+        if str(action["id"]) not in action_ids:
+            continue
+        start = _start_minute(action)
+        for effect in action.get("simulationEffects") or []:
+            begin = float((effect.get("start") or {}).get("offsetMinutes") or start)
+            length = max(1, int(minute - begin))
+            if effect.get("durationMinutes"):
+                effect["durationMinutes"] = min(int(effect["durationMinutes"]), length)
+            if effect.get("effectDurationMinutes"):
+                effect["effectDurationMinutes"] = min(int(effect["effectDurationMinutes"]), length)
+        if action.get("expectedDurationMinutes") and start != float("inf"):
+            action["expectedDurationMinutes"] = max(1, min(int(action["expectedDurationMinutes"]), int(minute - start)))
+        action["title"] = f"{action.get('title', '')} (até T+{minute}: o fogo afastou-se, a equipa é reposicionada)"
+
+
 @contextmanager
 def only(orchestrator: OrchestratorAgent, unit_ids: set[str], origins: dict[str, dict[str, float]] | None = None) -> Iterator[None]:
     """The orchestrator plans with these units alone (the others are busy), each leaving from where it is (``origins``; its station otherwise)."""
@@ -239,20 +298,37 @@ def adapt(
             break
         busy = engaged_until(out.plan, run_minutes, checkpoint)
         leaving = redirectable(out.plan, checkpoint)
-        free = {a.agent_id for a in orchestrator.agents if busy.get(a.agent_id, 0.0) <= checkpoint or a.agent_id in leaving}
+        moving = _moving(client, current.run_id, out.plan, checkpoint, run_minutes, cycle.get("location_id"))
+        free = {a.agent_id for a in orchestrator.agents if busy.get(a.agent_id, 0.0) <= checkpoint or a.agent_id in leaving or a.agent_id in moving}
         if not free:
             checkpoint += replan_minutes
             continue
         waves += 1
-        out.waves.append(_try_wave(orchestrator, client, simulation_id, out, judge, free, leaving, checkpoint, decided_at, run_minutes, lean, house_zones, cycle))
+        out.waves.append(_try_wave(orchestrator, client, simulation_id, out, judge, free, leaving, checkpoint, decided_at, run_minutes, lean, house_zones, cycle, moving))
         checkpoint += replan_minutes
     for wave in out.waves:
         log.info("baseline %s: %s", simulation_id, wave.line())
     return out
 
 
+def _moving(client: FiretraceClient, run_id: str, plan: dict[str, Any], minute: int, run_minutes: int, location_id: str | None) -> dict[str, tuple[str, dict[str, float]]]:
+    """``front_moved_away`` on the what-if as the plan leaves it; nothing when the grid or the fire's arrival times cannot be read."""
+    if not location_id:
+        return {}
+    try:
+        grid = client.get_location(location_id)["grid"]
+        return front_moved_away(plan, ignition_minutes(client.get_ignition_grid(run_id)), grid, minute, run_minutes)
+    except (ApiProblem, KeyError) as error:
+        log.info("no repositioning at T+%s: %s", minute, error)
+        return {}
+
+
 def _helps(client: FiretraceClient, current: Any, judged: Any) -> bool:
-    """A wave helps if it puts out a fire the plan did not, or brings forward when it goes out, or takes enough off the burned area."""
+    """A wave helps if it saves houses, puts out a fire the plan did not, brings forward when it goes out, or takes enough off the burned area.
+
+    Houses come before hectares (the plans' priorities): a wave that defends buildings the fire would have burned is kept even if the burned area is the same."""
+    if int(getattr(judged, "buildings", 0) or 0) < int(getattr(current, "buildings", 0) or 0):
+        return True
     if current.burned_ha - judged.burned_ha >= max(MIN_GAIN_HA, MIN_GAIN * current.burned_ha):
         return True
     before, after = fire_state(client, current.run_id), fire_state(client, judged.run_id)
@@ -264,12 +340,15 @@ def _helps(client: FiretraceClient, current: Any, judged: Any) -> bool:
 def _try_wave(
     orchestrator: OrchestratorAgent, client: FiretraceClient, simulation_id: str, out: Adapted, judge: Judge, free: set[str], leaving: dict[str, list[str]],
     minute: int, decided_at: int, run_minutes: int, lean: bool, house_zones: int, cycle: dict[str, Any],
+    moving: dict[str, tuple[str, dict[str, float]]] | None = None,
 ) -> Wave:
     """Try the strategies in turn at ``minute``; the first that takes enough off the burned area, with no casualties, is kept."""
     assert out.verdict is not None
     current = out.verdict.forecast
     last = Wave(minute, "no_actions", "os meios livres não têm nada útil a fazer.")
     origins = last_positions(out.plan, free - set(leaving), minute, run_minutes)  # a crew that finished a job leaves from there, not from its station
+    moving = moving or {}
+    origins.update({unit: where for unit, (_action, where) in moving.items()})  # and a crew moved off a quiet stretch leaves from where it is
     for index, strategy in enumerate(STRATEGIES):
         zones = house_zones if index == 1 else 0
         try:
@@ -289,6 +368,7 @@ def _try_wave(
         added, units = merge_wave(candidate, wave_plan, minute, decided_at, leaving)
         if not added or not units:
             continue
+        end_at(candidate, {action for unit, (action, _where) in moving.items() if unit in units}, minute)  # the moved crews stop their old job at the checkpoint
         set_stay(candidate)
         try:
             prune_unreachable(client, candidate)
