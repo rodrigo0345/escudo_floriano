@@ -96,9 +96,20 @@ public sealed class ResourceSeeder(
                 UpdatedAt = now,
                 OrganizationId = "org-bombeiros",
                 Role = PersonnelRole.Firefighter,
-                Total = 40,
-                Available = 35,
-                Notes = "Equipas de intervenção florestal e combate urbano"
+                Total = 280,
+                Available = 250,
+                Notes = "Equipas de intervenção florestal e combate urbano (Guimarães e concelhos limítrofes do Ave)"
+            },
+            new()
+            {
+                Id = "pool-bombeiros-florestal",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-bombeiros",
+                Role = PersonnelRole.ForestFirefighter,
+                Total = 80,
+                Available = 75,
+                Notes = "Equipas de Intervenção Permanente (EIP) e brigadas de combate florestal"
             },
             new()
             {
@@ -107,9 +118,20 @@ public sealed class ResourceSeeder(
                 UpdatedAt = now,
                 OrganizationId = "org-gnr",
                 Role = PersonnelRole.GnrSoldier,
-                Total = 24,
-                Available = 20,
-                Notes = "Militares GNR / UEPS para vigilância, corte de vias e ataque inicial"
+                Total = 90,
+                Available = 80,
+                Notes = "Militares GNR / Destacamento de Trânsito para corte de vias, evacuação forçada e perímetro"
+            },
+            new()
+            {
+                Id = "pool-gnr-ueps",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-gnr",
+                Role = PersonnelRole.GnrSoldier,
+                Total = 40,
+                Available = 35,
+                Notes = "Militares UEPS para ataque inicial, ações helitransportadas e reconhecimento tático"
             },
             new()
             {
@@ -118,9 +140,20 @@ public sealed class ResourceSeeder(
                 UpdatedAt = now,
                 OrganizationId = "org-inem",
                 Role = PersonnelRole.Paramedic,
-                Total = 12,
-                Available = 10,
-                Notes = "Socorristas e equipas de emergência pré-hospitalar"
+                Total = 80,
+                Available = 70,
+                Notes = "Médicos VMER, Enfermeiros SIV, TEPH e equipas de emergência pré-hospitalar integradas"
+            },
+            new()
+            {
+                Id = "pool-inem-pma",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-inem",
+                Role = PersonnelRole.Paramedic,
+                Total = 30,
+                Available = 25,
+                Notes = "Equipas de Posto Médico Avançado (PMA), triagem em catástrofe e apoio psicológico CAPE/UMIPE"
             },
             new()
             {
@@ -129,9 +162,31 @@ public sealed class ResourceSeeder(
                 UpdatedAt = now,
                 OrganizationId = "org-prociv",
                 Role = PersonnelRole.CivilProtectionTechnician,
-                Total = 300,
-                Available = 300,
-                Notes = "Força Operacional Conjunta da Proteção Civil / ANEPC (300 operacionais disponíveis para comando, combate, apoio e evacuação)"
+                Total = 450,
+                Available = 420,
+                Notes = "Força Operacional Conjunta da Proteção Civil / ANEPC e SMPC Guimarães (comando, apoio a evacuações e logística)"
+            },
+            new()
+            {
+                Id = "pool-sapadores",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Role = PersonnelRole.ForestFirefighter,
+                Total = 70,
+                Available = 65,
+                Notes = "Brigadas de Sapadores Florestais (CIM do Ave / ICNF / CMG) para faixas corta-fogo, aceiros e rescaldo"
+            },
+            new()
+            {
+                Id = "pool-prociv-evac",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Role = PersonnelRole.CivilProtectionTechnician,
+                Total = 90,
+                Available = 85,
+                Notes = "Técnicos de Ação Social, Cruz Vermelha e voluntários para gestão de centros de acolhimento e transporte de evacuados"
             }
         };
 
@@ -151,8 +206,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-bombeiros",
                 Kind = EquipmentKind.PortablePump,
                 Label = "Motobombas portáteis de combate",
-                Quantity = 8,
-                Available = 8
+                Quantity = 30,
+                Available = 30
             },
             new()
             {
@@ -162,8 +217,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-bombeiros",
                 Kind = EquipmentKind.HoseLine,
                 Label = "Linhas de mangueira 45mm e 70mm",
-                Quantity = 50,
-                Available = 50
+                Quantity = 250,
+                Available = 250
             },
             new()
             {
@@ -172,9 +227,9 @@ public sealed class ResourceSeeder(
                 UpdatedAt = now,
                 OrganizationId = "org-bombeiros",
                 Kind = EquipmentKind.Chainsaw,
-                Label = "Motosserras para corte de combustível",
-                Quantity = 12,
-                Available = 12
+                Label = "Motosserras para corte de combustível e abertura de faixas",
+                Quantity = 40,
+                Available = 40
             },
             new()
             {
@@ -184,8 +239,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-gnr",
                 Kind = EquipmentKind.RoadBarrier,
                 Label = "Barreiras de corte e sinalização de vias",
-                Quantity = 40,
-                Available = 40
+                Quantity = 120,
+                Available = 120
             },
             new()
             {
@@ -195,8 +250,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-prociv",
                 Kind = EquipmentKind.ShelterTent,
                 Label = "Tendas de acolhimento e abrigo de emergência para deslocados",
-                Quantity = 20,
-                Available = 20,
+                Quantity = 60,
+                Available = 60,
                 Notes = "Estruturas de montagem rápida para centros de apoio temporário aos cidadãos evacuados"
             },
             new()
@@ -207,8 +262,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-prociv",
                 Kind = EquipmentKind.Stretcher,
                 Label = "Macas de evacuação e transporte de feridos/acamados",
-                Quantity = 30,
-                Available = 30,
+                Quantity = 80,
+                Available = 80,
                 Notes = "Macas de campo e colheres de resgate para evacuação de cidadãos com mobilidade reduzida"
             },
             new()
@@ -219,8 +274,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-prociv",
                 Kind = EquipmentKind.Megaphone,
                 Label = "Megafones de aviso sonoro e orientação de evacuação",
-                Quantity = 15,
-                Available = 15,
+                Quantity = 40,
+                Available = 40,
                 Notes = "Megafones com sirene integrada para aviso porta-a-porta e orientação de evacuação"
             },
             new()
@@ -231,8 +286,8 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-prociv",
                 Kind = EquipmentKind.RoadBarrier,
                 Label = "Barreiras móveis de balizamento e controlo de zona de evacuação",
-                Quantity = 50,
-                Available = 50,
+                Quantity = 150,
+                Available = 150,
                 Notes = "Delimitação de corredores de segurança e pontos de concentração de evacuados"
             },
             new()
@@ -243,9 +298,20 @@ public sealed class ResourceSeeder(
                 OrganizationId = "org-prociv",
                 Kind = EquipmentKind.MedicalKit,
                 Label = "Malas de primeiros socorros para postos de acolhimento",
-                Quantity = 25,
-                Available = 25,
+                Quantity = 75,
+                Available = 75,
                 Notes = "Estojos com material de penso, oxigénio e hidratação para apoio às pessoas evacuadas"
+            },
+            new()
+            {
+                Id = "eq-generator-lights",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = "org-prociv",
+                Kind = EquipmentKind.LightingTower,
+                Label = "Torres de iluminação e geradores para apoio noturno",
+                Quantity = 20,
+                Available = 20
             }
         };
 
@@ -270,6 +336,7 @@ public sealed class ResourceSeeder(
 
             int stationCount = 0;
             int vehicleCount = 0;
+            var seenKinds = new HashSet<StationKind>();
 
             foreach (var fac in facilities)
             {
@@ -285,9 +352,18 @@ public sealed class ResourceSeeder(
                 };
 
                 if (orgId is null || stationKind is null) continue;
+                seenKinds.Add(stationKind.Value);
 
                 var pos = new LatLon(fac.Lat, fac.Lon);
                 var stationId = $"st-{fac.Id}";
+                var bays = stationKind.Value switch
+                {
+                    StationKind.FireStation => 14,
+                    StationKind.CivilProtectionHq => 20,
+                    StationKind.InemBase => 12,
+                    StationKind.GnrPost => 10,
+                    _ => 6
+                };
                 var station = new Station
                 {
                     Id = stationId,
@@ -299,7 +375,7 @@ public sealed class ResourceSeeder(
                     LocationId = location.Id,
                     Position = pos,
                     FacilityId = fac.Id.ToString(),
-                    VehicleBays = stationKind == StationKind.FireStation ? 6 : 4,
+                    VehicleBays = bays,
                     Status = StationStatus.Operational
                 };
 
@@ -317,10 +393,25 @@ public sealed class ResourceSeeder(
                 }
             }
 
-            // Se o local não tiver nenhum quartel de bombeiros descoberto, cria um posto de referência
-            if (stationCount == 0)
+            // Assegura postos e viaturas para TODAS as organizações essenciais caso o mapa/OSM não as tenha descoberto
+            async Task EnsureFallbackStation(Station st)
             {
-                var fallbackStation = new Station
+                var existingSt = await stationStore.GetAsync(st.Id, ct);
+                await stationStore.UpsertAsync(existingSt is null ? st : st with { CreatedAt = existingSt.CreatedAt }, ct);
+                stationCount++;
+
+                var vList = CreateVehiclesForStation(st, null, now);
+                foreach (var v in vList)
+                {
+                    var existingV = await vehicleStore.GetAsync(v.Id, ct);
+                    await vehicleStore.UpsertAsync(existingV is null ? v : v with { CreatedAt = existingV.CreatedAt }, ct);
+                    vehicleCount++;
+                }
+            }
+
+            if (!seenKinds.Contains(StationKind.FireStation))
+            {
+                await EnsureFallbackStation(new Station
                 {
                     Id = $"st-bombeiros-{location.Id}",
                     CreatedAt = now,
@@ -330,22 +421,63 @@ public sealed class ResourceSeeder(
                     Kind = StationKind.FireStation,
                     LocationId = location.Id,
                     Position = location.Center,
-                    VehicleBays = 6,
+                    VehicleBays = 14,
                     Status = StationStatus.Operational
-                };
-                var existingSt = await stationStore.GetAsync(fallbackStation.Id, ct);
-                await stationStore.UpsertAsync(existingSt is null ? fallbackStation : fallbackStation with { CreatedAt = existingSt.CreatedAt }, ct);
-
-                var vList = CreateVehiclesForStation(fallbackStation, null, now);
-                foreach (var v in vList)
-                {
-                    var existingV = await vehicleStore.GetAsync(v.Id, ct);
-                    await vehicleStore.UpsertAsync(existingV is null ? v : v with { CreatedAt = existingV.CreatedAt }, ct);
-                    vehicleCount++;
-                }
+                });
             }
 
-            // 2 helicópteros de combate a incêndios por omissão (CMA - Centro de Meios Aéreos)
+            if (!seenKinds.Contains(StationKind.GnrPost))
+            {
+                await EnsureFallbackStation(new Station
+                {
+                    Id = $"st-gnr-{location.Id}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-gnr",
+                    Name = $"GNR — Destacamento Territorial ({location.Name})",
+                    Kind = StationKind.GnrPost,
+                    LocationId = location.Id,
+                    Position = new LatLon(location.Center.Lat + 0.003, location.Center.Lon + 0.003),
+                    VehicleBays = 10,
+                    Status = StationStatus.Operational
+                });
+            }
+
+            if (!seenKinds.Contains(StationKind.InemBase))
+            {
+                await EnsureFallbackStation(new Station
+                {
+                    Id = $"st-inem-{location.Id}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-inem",
+                    Name = $"INEM / Hospital Distrital ({location.Name})",
+                    Kind = StationKind.InemBase,
+                    LocationId = location.Id,
+                    Position = new LatLon(location.Center.Lat + 0.004, location.Center.Lon - 0.006),
+                    VehicleBays = 12,
+                    Status = StationStatus.Operational
+                });
+            }
+
+            if (!seenKinds.Contains(StationKind.CivilProtectionHq))
+            {
+                await EnsureFallbackStation(new Station
+                {
+                    Id = $"st-prociv-{location.Id}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-prociv",
+                    Name = $"Serviço Municipal de Proteção Civil ({location.Name})",
+                    Kind = StationKind.CivilProtectionHq,
+                    LocationId = location.Id,
+                    Position = new LatLon(location.Center.Lat - 0.003, location.Center.Lon - 0.002),
+                    VehicleBays = 20,
+                    Status = StationStatus.Operational
+                });
+            }
+
+            // CMA - Centro de Meios Aéreos com esquadrilha completa (helicópteros pesados, ligeiros e coordenação)
             var heliStation = new Station
             {
                 Id = $"st-cma-{location.Id}",
@@ -356,78 +488,165 @@ public sealed class ResourceSeeder(
                 Kind = StationKind.Helipad,
                 LocationId = location.Id,
                 Position = new LatLon(location.Center.Lat + 0.005, location.Center.Lon - 0.005),
-                VehicleBays = 4,
+                VehicleBays = 6,
                 Status = StationStatus.Operational
             };
             var existingHeliSt = await stationStore.GetAsync(heliStation.Id, ct);
             await stationStore.UpsertAsync(existingHeliSt is null ? heliStation : heliStation with { CreatedAt = existingHeliSt.CreatedAt }, ct);
             stationCount++;
 
-            var heli1 = new Vehicle
+            var airFleet = new List<Vehicle>
             {
-                Id = $"v-hebp-{location.Id}-01",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = "org-prociv",
-                StationId = heliStation.Id,
-                Callsign = "HEBP 01",
-                Type = VehicleType.Helicopter,
-                TypeCode = "UH-60A",
-                CrewCapacity = 3,
-                MinimumCrew = 2,
-                OffRoad = true,
-                CruiseSpeedKmh = 260,
-                RangeKm = 580,
-                FuelCapacityL = 1360,
-                WaterCapacityL = 3000,
-                PumpFlowLpm = 6000,
-                Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
-                Aerial = new AerialSpec(BucketCapacityL: 3000, LoadMinutes: 1.0, DropMinutes: 0.5, CruiseSpeedKmh: 260, MaxWindKmh: 50, MinVisibilityM: 2000, DayOnly: true),
-                State = new()
+                new()
                 {
-                    Status = VehicleStatus.Available,
-                    Position = heliStation.Position,
-                    CrewOnboard = 2,
-                    Water = new WaterStatus(3000, 3000),
-                    UpdatedAt = now
+                    Id = $"v-hebp-{location.Id}-01",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-prociv",
+                    StationId = heliStation.Id,
+                    Callsign = "HEBP 01",
+                    Type = VehicleType.Helicopter,
+                    TypeCode = "UH-60A",
+                    CrewCapacity = 3,
+                    MinimumCrew = 2,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 260,
+                    RangeKm = 580,
+                    FuelCapacityL = 1360,
+                    WaterCapacityL = 3000,
+                    PumpFlowLpm = 6000,
+                    Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                    Aerial = new AerialSpec(BucketCapacityL: 3000, LoadMinutes: 1.0, DropMinutes: 0.5, CruiseSpeedKmh: 260, MaxWindKmh: 50, MinVisibilityM: 2000, DayOnly: true),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = heliStation.Position,
+                        CrewOnboard = 2,
+                        Water = new WaterStatus(3000, 3000),
+                        UpdatedAt = now
+                    }
+                },
+                new()
+                {
+                    Id = $"v-hebp-{location.Id}-02",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-prociv",
+                    StationId = heliStation.Id,
+                    Callsign = "HEBP 02",
+                    Type = VehicleType.Helicopter,
+                    TypeCode = "Ka-32A11BC",
+                    CrewCapacity = 3,
+                    MinimumCrew = 2,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 240,
+                    RangeKm = 650,
+                    FuelCapacityL = 2400,
+                    WaterCapacityL = 4500,
+                    PumpFlowLpm = 7500,
+                    Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                    Aerial = new AerialSpec(BucketCapacityL: 4500, LoadMinutes: 1.5, DropMinutes: 0.6, CruiseSpeedKmh: 240, MaxWindKmh: 55, MinVisibilityM: 2000, DayOnly: true),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = heliStation.Position,
+                        CrewOnboard = 2,
+                        Water = new WaterStatus(4500, 4500),
+                        UpdatedAt = now
+                    }
+                },
+                new()
+                {
+                    Id = $"v-hebl-{location.Id}-01",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-bombeiros",
+                    StationId = heliStation.Id,
+                    Callsign = "HEBL 01",
+                    Type = VehicleType.Helicopter,
+                    TypeCode = "AS350B3",
+                    CrewCapacity = 5,
+                    MinimumCrew = 1,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 250,
+                    RangeKm = 650,
+                    FuelCapacityL = 540,
+                    WaterCapacityL = 1000,
+                    PumpFlowLpm = 3000,
+                    Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                    Aerial = new AerialSpec(BucketCapacityL: 1000, LoadMinutes: 0.7, DropMinutes: 0.3, CruiseSpeedKmh: 250, MaxWindKmh: 45, MinVisibilityM: 2000, DayOnly: true),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = heliStation.Position,
+                        CrewOnboard = 2,
+                        Water = new WaterStatus(1000, 1000),
+                        UpdatedAt = now
+                    }
+                },
+                new()
+                {
+                    Id = $"v-hebl-{location.Id}-02",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-bombeiros",
+                    StationId = heliStation.Id,
+                    Callsign = "HEBL 02",
+                    Type = VehicleType.Helicopter,
+                    TypeCode = "Bell-412",
+                    CrewCapacity = 6,
+                    MinimumCrew = 2,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 230,
+                    RangeKm = 700,
+                    FuelCapacityL = 1200,
+                    WaterCapacityL = 1500,
+                    PumpFlowLpm = 4000,
+                    Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
+                    Aerial = new AerialSpec(BucketCapacityL: 1500, LoadMinutes: 0.8, DropMinutes: 0.4, CruiseSpeedKmh: 230, MaxWindKmh: 50, MinVisibilityM: 2000, DayOnly: true),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = heliStation.Position,
+                        CrewOnboard = 2,
+                        Water = new WaterStatus(1500, 1500),
+                        UpdatedAt = now
+                    }
+                },
+                new()
+                {
+                    Id = $"v-heco-{location.Id}-01",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = "org-prociv",
+                    StationId = heliStation.Id,
+                    Callsign = "HECO 01",
+                    Type = VehicleType.Helicopter,
+                    TypeCode = "EC135",
+                    CrewCapacity = 4,
+                    MinimumCrew = 2,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 250,
+                    RangeKm = 635,
+                    FuelCapacityL = 700,
+                    Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.CommandAndControl, VehicleCapability.Communications },
+                    Aerial = new AerialSpec(BucketCapacityL: 0, LoadMinutes: 0, DropMinutes: 0, CruiseSpeedKmh: 250, MaxWindKmh: 55, MinVisibilityM: 1500, DayOnly: true),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = heliStation.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
                 }
             };
-            var existingHeli1 = await vehicleStore.GetAsync(heli1.Id, ct);
-            await vehicleStore.UpsertAsync(existingHeli1 is null ? heli1 : heli1 with { CreatedAt = existingHeli1.CreatedAt }, ct);
-            vehicleCount++;
 
-            var heli2 = new Vehicle
+            foreach (var h in airFleet)
             {
-                Id = $"v-hebl-{location.Id}-02",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = "org-bombeiros",
-                StationId = heliStation.Id,
-                Callsign = "HEBL 02",
-                Type = VehicleType.Helicopter,
-                TypeCode = "AS350B3",
-                CrewCapacity = 5,
-                MinimumCrew = 1,
-                OffRoad = true,
-                CruiseSpeedKmh = 250,
-                RangeKm = 650,
-                FuelCapacityL = 540,
-                WaterCapacityL = 1000,
-                PumpFlowLpm = 3000,
-                Capabilities = new() { VehicleCapability.AerialWaterDrop, VehicleCapability.AerialRecon },
-                Aerial = new AerialSpec(BucketCapacityL: 1000, LoadMinutes: 0.7, DropMinutes: 0.3, CruiseSpeedKmh: 250, MaxWindKmh: 45, MinVisibilityM: 2000, DayOnly: true),
-                State = new()
-                {
-                    Status = VehicleStatus.Available,
-                    Position = heliStation.Position,
-                    CrewOnboard = 2,
-                    Water = new WaterStatus(1000, 1000),
-                    UpdatedAt = now
-                }
-            };
-            var existingHeli2 = await vehicleStore.GetAsync(heli2.Id, ct);
-            await vehicleStore.UpsertAsync(existingHeli2 is null ? heli2 : heli2 with { CreatedAt = existingHeli2.CreatedAt }, ct);
-            vehicleCount++;
+                var existingH = await vehicleStore.GetAsync(h.Id, ct);
+                await vehicleStore.UpsertAsync(existingH is null ? h : h with { CreatedAt = existingH.CreatedAt }, ct);
+                vehicleCount++;
+            }
 
             log.LogInformation("Recursos semeados para '{Location}': {Stations} postos, {Vehicles} viaturas.", location.Id, stationCount, vehicleCount);
         }
@@ -453,406 +672,234 @@ public sealed class ResourceSeeder(
         var existingClosure = await closureStore.GetAsync(penhaRoadClosure.Id, ct);
         await closureStore.UpsertAsync(existingClosure is null ? penhaRoadClosure : penhaRoadClosure with { CreatedAt = existingClosure.CreatedAt }, ct);
 
-        // 5. Planos de Resposta Operacionais (Plano A e Plano B)
-        var planA = new Plan
-        {
-            Id = "plan-penha-a",
-            CreatedAt = now,
-            UpdatedAt = now,
-            LocationId = "guimaraes",
-            Title = "Plano A — Ataque Inicial Direto e Contenção de Flancos",
-            Variant = "A",
-            Strategy = "Ataque direto ao flanco esquerdo com linhas de mangueira e autotanques, corte preventivo de vias e vigilância UEPS",
-            Summary = "Mobilização rápida de equipas de combate para conter a cabeça do incêndio na Penha antes da linha de cumeada, estabelecendo perímetro de segurança.",
-            Basis = new PlanBasis(ScenarioId: "sc-penha-pior-hora-2026", SituationAsOf: now),
-            AlertLevel = AlertLevel.Orange,
-            Status = PlanStatus.Active,
-            ActivatedAt = now.AddMinutes(-30),
-            Objectives = new()
-            {
-                new("Proteger aglomerados habitacionais e santuário da Penha", 0.9),
-                new("Conter a progressão do flanco esquerdo na encosta oeste", 0.8)
-            },
-            Actions = new()
-            {
-                new FireAttackAction
-                {
-                    Id = "act-penha-a1",
-                    Title = "Ataque direto ao flanco com linhas de mangueira 45mm",
-                    OrganizationId = "org-bombeiros",
-                    SupportingOrganizationIds = new() { "org-gnr" },
-                    Priority = ActionPriority.Critical,
-                    Status = ActionStatus.InProgress,
-                    Tactic = "Ataque direto e ancoragem",
-                    AnchorPoint = new LatLon(41.4305, -8.2690),
-                    Objective = "Travar avanço do fogo em direção ao parque de campismo",
-                    ExpectedDurationMinutes = 120,
-                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-25), Note: "Combate ativo com 1 linha de 45mm")
-                },
-                new RoadClosureAction
-                {
-                    Id = "act-penha-a2",
-                    Title = "Corte de trânsito na subida à Penha",
-                    OrganizationId = "org-gnr",
-                    Priority = ActionPriority.High,
-                    Status = ActionStatus.InProgress,
-                    RoadIds = new() { "rd-penha-access" },
-                    Kind = ClosureKind.Full,
-                    Reason = ClosureReason.FirePredicted,
-                    ClosureId = "clo-penha-access",
-                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-30), Note: "Via cortada e sinalizada")
-                },
-                new MedicalStandbyAction
-                {
-                    Id = "act-penha-a3",
-                    Title = "Prontidão médica pré-hospitalar no Posto Médico Avançado",
-                    OrganizationId = "org-inem",
-                    Priority = ActionPriority.High,
-                    Status = ActionStatus.InProgress,
-                    Positions = new() { new Target(Label: "PMA Penha", Position: new LatLon(41.4320, -8.2725)) },
-                    HospitalAlert = "Hospital Senhora da Oliveira (Guimarães)",
-                    Progress = new ActionProgress(StartedAt: now.AddMinutes(-20), Note: "PMA operacional")
-                },
-                new StructureProtectionAction
-                {
-                    Id = "act-penha-a4",
-                    Title = "Proteção perimetral do Santuário e Parque de Campismo",
-                    OrganizationId = "org-bombeiros",
-                    Priority = ActionPriority.Normal,
-                    Status = ActionStatus.Planned,
-                    Targets = new() { new Target(Label: "Santuário da Penha", Position: new LatLon(41.4300, -8.2700)) },
-                    Tactic = "Cortina de proteção e arrefecimento de estruturas"
-                }
-            }
-        };
-        var existingPlanA = await planStore.GetAsync(planA.Id, ct);
-        await planStore.UpsertAsync(existingPlanA is null ? planA : planA with { CreatedAt = existingPlanA.CreatedAt }, ct);
+        // 5. Planos e despachos: já não se semeiam. Os planos vêm dos agentes (um par A/B por pedido): um plano de demonstração fixo, Ativo e sempre de volta no arranque,
+        //    aparecia ao lado do plano mais recente e gastava o operador (e os tokens dos agentes) com planos que ninguém pediu.
 
-        var planB = new Plan
-        {
-            Id = "plan-penha-b",
-            CreatedAt = now,
-            UpdatedAt = now,
-            LocationId = "guimaraes",
-            Title = "Plano B — Contenção Indireta e Faixas de Gestão de Combustível",
-            Variant = "B",
-            Strategy = "Contenção indireta apoiada na rede de faixas corta-fogo, estabelecimento de PCO municipal e pontos de controlo de tráfego GNR",
-            Summary = "Estratégia defensiva de contingência: recuo para faixas corta-fogo consolidadas com abertura de aceiros e controlo rigoroso de acessos.",
-            Basis = new PlanBasis(ScenarioId: "sc-penha-pior-hora-2026", SituationAsOf: now),
-            AlertLevel = AlertLevel.Red,
-            Status = PlanStatus.Proposed,
-            Objectives = new()
-            {
-                new("Criar linha de paragem em aceiro estratégico", 0.85),
-                new("Evacuação preventiva de pontos vulneráveis", 0.95)
-            },
-            Actions = new()
-            {
-                new EstablishCommandPostAction
-                {
-                    Id = "act-penha-b1",
-                    Title = "Instalação do Posto de Comando Operacional (PCO) Conjunto",
-                    OrganizationId = "org-prociv",
-                    Priority = ActionPriority.Critical,
-                    Status = ActionStatus.Planned,
-                    Location = new Target(Label: "Campo de São Mamede / PCO", Position: new LatLon(41.4475, -8.2910)),
-                    RadioChannel = "SIRESP-CANAL-EMERG-GMR-01"
-                },
-                new FuelBreakAction
-                {
-                    Id = "act-penha-b2",
-                    Title = "Consolidação e limpeza da faixa corta-fogo sul",
-                    OrganizationId = "org-bombeiros",
-                    Priority = ActionPriority.High,
-                    Status = ActionStatus.Planned,
-                    Line = Gf.CreateLineString(new[] { new Coordinate(-8.2670, 41.4280), new Coordinate(-8.2720, 41.4300) }),
-                    Removal = Core.Domain.Interventions.FuelRemoval.Understory,
-                    WidthM = 15
-                },
-                new TrafficControlPointAction
-                {
-                    Id = "act-penha-b3",
-                    Title = "Ponto de controlo de trânsito e triagem de moradores",
-                    OrganizationId = "org-gnr",
-                    Priority = ActionPriority.High,
-                    Status = ActionStatus.Planned,
-                    Position = new LatLon(41.4330, -8.2740),
-                    Mode = "resident_access_only",
-                    Instructions = "Apenas moradores com comprovativo e veículos de socorro"
-                },
-                new PublicAlertAction
-                {
-                    Id = "act-penha-b4",
-                    Title = "Aviso à população para confinamento e encerramento de acessos",
-                    OrganizationId = "org-prociv",
-                    Priority = ActionPriority.High,
-                    Status = ActionStatus.Planned,
-                    Channels = new() { "sms", "siren", "broadcast" },
-                    Messages = new()
-                    {
-                        new("pt", "Aviso Proteção Civil Guimarães: Incêndio florestal ativo na Penha. Evite a circulação nas imediações e siga as instruções das autoridades.")
-                    }
-                }
-            }
-        };
-        var existingPlanB = await planStore.GetAsync(planB.Id, ct);
-        await planStore.UpsertAsync(existingPlanB is null ? planB : planB with { CreatedAt = existingPlanB.CreatedAt }, ct);
-
-        // 6. Despachos ativos associados ao Plano A
-        var allVehicles = await vehicleStore.ListAsync(ct);
-        var vfci = allVehicles.FirstOrDefault(v => v.Type == VehicleType.ForestFirefightingVehicle);
-        if (vfci is not null)
-        {
-            var dispVfci = new Dispatch
-            {
-                Id = "disp-vfci-penha",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = vfci.OrganizationId,
-                ResourceType = ResourceType.Vehicle,
-                ResourceId = vfci.Id,
-                Personnel = vfci.CrewCapacity,
-                Responsibility = Responsibility.Firefighting,
-                Target = new Target(Label: "Flanco Sul da Penha", Position: new LatLon(41.4305, -8.2690)),
-                FromStationId = vfci.StationId,
-                Status = DispatchStatus.OnScene,
-                PlanId = "plan-penha-a",
-                ActionId = "act-penha-a1",
-                ArrivedAt = now.AddMinutes(-20),
-                StartAt = now.AddMinutes(-30),
-                Water = new WaterStatus(3000, 3500),
-                Notes = "Combate direto ao flanco com 5 operacionais e linha de 45mm."
-            };
-            var existingDisp = await dispatchStore.GetAsync(dispVfci.Id, ct);
-            await dispatchStore.UpsertAsync(existingDisp is null ? dispVfci : dispVfci with { CreatedAt = existingDisp.CreatedAt }, ct);
-
-            await vehicleStore.UpsertAsync(vfci with
-            {
-                State = vfci.State with
-                {
-                    Status = VehicleStatus.Assigned,
-                    Responsibility = Responsibility.Firefighting,
-                    CurrentPlanId = "plan-penha-a",
-                    CurrentActionId = "act-penha-a1",
-                    CurrentDispatchId = dispVfci.Id,
-                    UpdatedAt = now
-                }
-            }, ct);
-        }
-
-        var gnrVeh = allVehicles.FirstOrDefault(v => v.Type == VehicleType.TrafficUnit);
-        if (gnrVeh is not null)
-        {
-            var dispGnr = new Dispatch
-            {
-                Id = "disp-gnr-penha",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = gnrVeh.OrganizationId,
-                ResourceType = ResourceType.Vehicle,
-                ResourceId = gnrVeh.Id,
-                Personnel = gnrVeh.CrewCapacity,
-                Responsibility = Responsibility.TrafficControl,
-                Target = new Target(Label: "Corte de Via Penha Norte", Position: new LatLon(41.4330, -8.2740)),
-                FromStationId = gnrVeh.StationId,
-                Status = DispatchStatus.OnScene,
-                PlanId = "plan-penha-a",
-                ActionId = "act-penha-a2",
-                ArrivedAt = now.AddMinutes(-25),
-                StartAt = now.AddMinutes(-30),
-                Notes = "Corte e sinalização de trânsito com 2 militares."
-            };
-            var existingDisp = await dispatchStore.GetAsync(dispGnr.Id, ct);
-            await dispatchStore.UpsertAsync(existingDisp is null ? dispGnr : dispGnr with { CreatedAt = existingDisp.CreatedAt }, ct);
-
-            await vehicleStore.UpsertAsync(gnrVeh with
-            {
-                State = gnrVeh.State with
-                {
-                    Status = VehicleStatus.Assigned,
-                    Responsibility = Responsibility.TrafficControl,
-                    CurrentPlanId = "plan-penha-a",
-                    CurrentActionId = "act-penha-a2",
-                    CurrentDispatchId = dispGnr.Id,
-                    UpdatedAt = now
-                }
-            }, ct);
-        }
-
-        var inemVeh = allVehicles.FirstOrDefault(v => v.Type == VehicleType.Ambulance);
-        if (inemVeh is not null)
-        {
-            var dispInem = new Dispatch
-            {
-                Id = "disp-inem-penha",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = inemVeh.OrganizationId,
-                ResourceType = ResourceType.Vehicle,
-                ResourceId = inemVeh.Id,
-                Personnel = inemVeh.CrewCapacity,
-                Responsibility = Responsibility.Medical,
-                Target = new Target(Label: "PMA Penha", Position: new LatLon(41.4320, -8.2725)),
-                FromStationId = inemVeh.StationId,
-                Status = DispatchStatus.OnScene,
-                PlanId = "plan-penha-a",
-                ActionId = "act-penha-a3",
-                ArrivedAt = now.AddMinutes(-18),
-                StartAt = now.AddMinutes(-25),
-                Notes = "Prontidão socorrista no Posto Médico Avançado."
-            };
-            var existingDisp = await dispatchStore.GetAsync(dispInem.Id, ct);
-            await dispatchStore.UpsertAsync(existingDisp is null ? dispInem : dispInem with { CreatedAt = existingDisp.CreatedAt }, ct);
-
-            await vehicleStore.UpsertAsync(inemVeh with
-            {
-                State = inemVeh.State with
-                {
-                    Status = VehicleStatus.Assigned,
-                    Responsibility = Responsibility.Medical,
-                    CurrentPlanId = "plan-penha-a",
-                    CurrentActionId = "act-penha-a3",
-                    CurrentDispatchId = dispInem.Id,
-                    UpdatedAt = now
-                }
-            }, ct);
-        }
-
-        log.LogInformation("Planos, ações, cortes de via e despachos operacionais semeados com sucesso.");
+        log.LogInformation("Cortes de via operacionais semeados com sucesso (sem planos nem despachos de demonstração).");
     }
 
     static List<Vehicle> CreateVehiclesForStation(Station st, Facility? fac, DateTimeOffset now)
     {
         var list = new List<Vehicle>();
-        string idPrefix = fac is not null ? fac.Id.ToString() : st.LocationId;
+        string idPrefix = fac is not null ? fac.Id.ToString() : st.Id.Replace("st-", "");
         string suffix = fac is not null ? $"{fac.Id % 1000:D3}" : "01";
 
         if (st.Kind == StationKind.FireStation)
         {
-            // VFCI - Veículo Florestal de Combate a Incêndios
-            list.Add(new Vehicle
+            // VFCI - 4 Veículos Florestais de Combate a Incêndios (Ataque direto e proteção de estruturas)
+            for (int i = 1; i <= 4; i++)
             {
-                Id = $"v-vfci-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VFCI {suffix}",
-                Type = VehicleType.ForestFirefightingVehicle,
-                TypeCode = "VFCI",
-                CrewCapacity = 5,
-                MinimumCrew = 3,
-                WaterCapacityL = 3500,
-                FoamCapacityL = 100,
-                PumpFlowLpm = 1500,
-                OffRoad = true,
-                MaxSlopePercent = 35,
-                Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.StructureProtection, VehicleCapability.WaterSupply },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 5,
-                    Water = new WaterStatus(3500, 3500),
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-vfci-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VFCI {suffix}-{i:D2}",
+                    Type = VehicleType.ForestFirefightingVehicle,
+                    TypeCode = "VFCI",
+                    CrewCapacity = 5,
+                    MinimumCrew = 3,
+                    WaterCapacityL = 3500,
+                    FoamCapacityL = 100,
+                    PumpFlowLpm = 1500,
+                    OffRoad = true,
+                    MaxSlopePercent = 35,
+                    Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.StructureProtection, VehicleCapability.WaterSupply },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 5,
+                        Water = new WaterStatus(3500, 3500),
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // VTTU - Veículo Tanque Tático Urbano/Florestal
-            list.Add(new Vehicle
+            // VTTU - 2 Veículos Tanque Tático (Abastecimento de água e combate pesado)
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-vttu-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VTTU {suffix}",
-                Type = VehicleType.TankerForest,
-                TypeCode = "VTTU",
-                CrewCapacity = 2,
-                MinimumCrew = 2,
-                WaterCapacityL = 10000,
-                PumpFlowLpm = 2000,
-                OffRoad = false,
-                Capabilities = new() { VehicleCapability.WaterSupply },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    Water = new WaterStatus(10000, 10000),
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-vttu-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VTTU {suffix}-{i:D2}",
+                    Type = VehicleType.TankerForest,
+                    TypeCode = "VTTU",
+                    CrewCapacity = 2,
+                    MinimumCrew = 2,
+                    WaterCapacityL = i == 1 ? 10000 : 12000,
+                    PumpFlowLpm = 2000,
+                    OffRoad = false,
+                    Capabilities = new() { VehicleCapability.WaterSupply, VehicleCapability.WildfireAttack },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        Water = new WaterStatus(i == 1 ? 10000 : 12000, i == 1 ? 10000 : 12000),
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // VLCI - Veículo Ligeiro de Combate a Incêndios
-            list.Add(new Vehicle
+            // VLCI - 2 Veículos Ligeiros de Combate a Incêndios 4x4 (Ataque inicial rápido e reconhecimento)
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-vlci-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VLCI {suffix}",
-                Type = VehicleType.LightFirefightingVehicle,
-                TypeCode = "VLCI",
-                CrewCapacity = 2,
-                MinimumCrew = 2,
-                WaterCapacityL = 600,
-                PumpFlowLpm = 400,
-                OffRoad = true,
-                Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.Reconnaissance },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    Water = new WaterStatus(600, 600),
-                    UpdatedAt = now
-                }
-            });
-        }
-        else if (st.Kind == StationKind.GnrPost)
-        {
-            // UEPS - Unidade de Emergência de Proteção e Socorro (GNR)
+                    Id = $"v-vlci-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VLCI {suffix}-{i:D2}",
+                    Type = VehicleType.LightFirefightingVehicle,
+                    TypeCode = "VLCI",
+                    CrewCapacity = 3,
+                    MinimumCrew = 2,
+                    WaterCapacityL = 800,
+                    PumpFlowLpm = 500,
+                    OffRoad = true,
+                    Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.Reconnaissance },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 3,
+                        Water = new WaterStatus(800, 800),
+                        UpdatedAt = now
+                    }
+                });
+            }
+
+            // VCOT - Veículo de Comando Operacional Tático
             list.Add(new Vehicle
             {
-                Id = $"v-ueps-{idPrefix}",
+                Id = $"v-vcot-{idPrefix}-01",
                 CreatedAt = now,
                 UpdatedAt = now,
                 OrganizationId = st.OrganizationId,
                 StationId = st.Id,
-                Callsign = $"UEPS {suffix}",
-                Type = VehicleType.AllTerrainPatrol,
-                TypeCode = "UEPS",
+                Callsign = $"VCOT {suffix}",
+                Type = VehicleType.CommandVehicle,
+                TypeCode = "VCOT",
                 CrewCapacity = 4,
                 MinimumCrew = 2,
                 OffRoad = true,
-                Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.TrafficControl, VehicleCapability.Reconnaissance },
+                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Reconnaissance },
                 State = new()
                 {
                     Status = VehicleStatus.Available,
                     Position = st.Position,
-                    CrewOnboard = 4,
+                    CrewOnboard = 3,
                     UpdatedAt = now
                 }
             });
 
-            // BT - Destacamento de Trânsito
+            // ABSC - 2 Ambulâncias de Socorro do Corpo de Bombeiros (Apoio aos operacionais e emergência)
+            for (int i = 1; i <= 2; i++)
+            {
+                list.Add(new Vehicle
+                {
+                    Id = $"v-absc-bv-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"ABSC-BV {suffix}-{i:D2}",
+                    Type = VehicleType.Ambulance,
+                    TypeCode = "ABSC",
+                    CrewCapacity = 2,
+                    MinimumCrew = 2,
+                    StretcherCapacity = 1,
+                    Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.EvacuationTransport },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
+        }
+        else if (st.Kind == StationKind.GnrPost)
+        {
+            // UEPS - 3 Unidades de Emergência de Proteção e Socorro (GNR) 4x4
+            for (int i = 1; i <= 3; i++)
+            {
+                list.Add(new Vehicle
+                {
+                    Id = $"v-ueps-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"UEPS {suffix}-{i:D2}",
+                    Type = VehicleType.AllTerrainPatrol,
+                    TypeCode = "UEPS",
+                    CrewCapacity = 4,
+                    MinimumCrew = 2,
+                    OffRoad = true,
+                    Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.TrafficControl, VehicleCapability.Reconnaissance },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 4,
+                        UpdatedAt = now
+                    }
+                });
+            }
+
+            // BT - 3 Viaturas de Trânsito / Patrulha Territorial (Cortes de via e segurança)
+            for (int i = 1; i <= 3; i++)
+            {
+                list.Add(new Vehicle
+                {
+                    Id = $"v-bt-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"GNR-BT {suffix}-{i:D2}",
+                    Type = VehicleType.TrafficUnit,
+                    TypeCode = "BT",
+                    CrewCapacity = 2,
+                    MinimumCrew = 2,
+                    OffRoad = false,
+                    Capabilities = new() { VehicleCapability.TrafficControl, VehicleCapability.PerimeterSecurity },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
+
+            // VRR - Viatura de Reconhecimento Rápido GNR 4x4
             list.Add(new Vehicle
             {
-                Id = $"v-bt-{idPrefix}",
+                Id = $"v-vrr-{idPrefix}-01",
                 CreatedAt = now,
                 UpdatedAt = now,
                 OrganizationId = st.OrganizationId,
                 StationId = st.Id,
-                Callsign = $"GNR-BT {suffix}",
-                Type = VehicleType.TrafficUnit,
-                TypeCode = "BT",
+                Callsign = $"GNR-VRR {suffix}",
+                Type = VehicleType.PatrolCar,
+                TypeCode = "VRR",
                 CrewCapacity = 2,
                 MinimumCrew = 2,
-                OffRoad = false,
-                Capabilities = new() { VehicleCapability.TrafficControl, VehicleCapability.PerimeterSecurity },
+                OffRoad = true,
+                Capabilities = new() { VehicleCapability.Reconnaissance, VehicleCapability.TrafficControl },
                 State = new()
                 {
                     Status = VehicleStatus.Available,
@@ -864,21 +911,122 @@ public sealed class ResourceSeeder(
         }
         else if (st.Kind == StationKind.InemBase)
         {
-            // ABSC - Ambulância de Socorro
+            // VMER - Viatura Médica de Emergência e Reanimação (Médico + Enfermeiro)
             list.Add(new Vehicle
             {
-                Id = $"v-absc-{idPrefix}",
+                Id = $"v-vmer-{idPrefix}-01",
                 CreatedAt = now,
                 UpdatedAt = now,
                 OrganizationId = st.OrganizationId,
                 StationId = st.Id,
-                Callsign = $"ABSC {suffix}",
-                Type = VehicleType.Ambulance,
-                TypeCode = "ABSC",
+                Callsign = $"VMER {suffix}",
+                Type = VehicleType.AdvancedMedicalVehicle,
+                TypeCode = "VMER",
                 CrewCapacity = 2,
                 MinimumCrew = 2,
-                StretcherCapacity = 1,
-                Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.EvacuationTransport },
+                CruiseSpeedKmh = 140,
+                OffRoad = false,
+                Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.AdvancedLifeSupport, VehicleCapability.CommandAndControl },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    UpdatedAt = now
+                }
+            });
+
+            // SIV - Suporte Imediato de Vida (Enfermeiro + TEPH)
+            list.Add(new Vehicle
+            {
+                Id = $"v-siv-{idPrefix}-01",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"SIV {suffix}",
+                Type = VehicleType.ImmediateLifeSupportVehicle,
+                TypeCode = "SIV",
+                CrewCapacity = 2,
+                MinimumCrew = 2,
+                CruiseSpeedKmh = 130,
+                OffRoad = false,
+                Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.AdvancedLifeSupport },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 2,
+                    UpdatedAt = now
+                }
+            });
+
+            // ABSC - 6 Ambulâncias de Socorro do INEM (Prevenção e Transporte Sanitário)
+            for (int i = 1; i <= 6; i++)
+            {
+                list.Add(new Vehicle
+                {
+                    Id = $"v-absc-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"ABSC {suffix}-{i:D2}",
+                    Type = VehicleType.Ambulance,
+                    TypeCode = "ABSC",
+                    CrewCapacity = 2,
+                    MinimumCrew = 2,
+                    StretcherCapacity = 1,
+                    Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.EvacuationTransport },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
+
+            // PMA - Posto Médico Avançado Móvel (Triagem e Catástrofe)
+            list.Add(new Vehicle
+            {
+                Id = $"v-pma-{idPrefix}-01",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"PMA {suffix}",
+                Type = VehicleType.OperationsVehicle,
+                TypeCode = "PMA",
+                CrewCapacity = 4,
+                MinimumCrew = 2,
+                OffRoad = false,
+                Capabilities = new() { VehicleCapability.MedicalTransport, VehicleCapability.CommandAndControl, VehicleCapability.Logistics },
+                State = new()
+                {
+                    Status = VehicleStatus.Available,
+                    Position = st.Position,
+                    CrewOnboard = 4,
+                    UpdatedAt = now
+                }
+            });
+
+            // UMIPE - Unidade Móvel de Intervenção Psicológica de Emergência
+            list.Add(new Vehicle
+            {
+                Id = $"v-umipe-{idPrefix}-01",
+                CreatedAt = now,
+                UpdatedAt = now,
+                OrganizationId = st.OrganizationId,
+                StationId = st.Id,
+                Callsign = $"UMIPE {suffix}",
+                Type = VehicleType.CommandVehicle,
+                TypeCode = "UMIPE",
+                CrewCapacity = 2,
+                MinimumCrew = 2,
+                OffRoad = false,
+                Capabilities = new() { VehicleCapability.Logistics, VehicleCapability.Communications },
                 State = new()
                 {
                     Status = VehicleStatus.Available,
@@ -890,10 +1038,10 @@ public sealed class ResourceSeeder(
         }
         else if (st.Kind == StationKind.CivilProtectionHq)
         {
-            // PCO - Posto de Comando Operacional
+            // PCO - Posto de Comando Operacional Móvel
             list.Add(new Vehicle
             {
-                Id = $"v-pco-{idPrefix}",
+                Id = $"v-pco-{idPrefix}-01",
                 CreatedAt = now,
                 UpdatedAt = now,
                 OrganizationId = st.OrganizationId,
@@ -907,196 +1055,216 @@ public sealed class ResourceSeeder(
                 {
                     Status = VehicleStatus.Available,
                     Position = st.Position,
-                    CrewOnboard = 4,
+                    CrewOnboard = 5,
                     UpdatedAt = now
                 }
             });
 
-            // VCOT - Veículo de Comando Operacional Tático 4x4
-            list.Add(new Vehicle
+            // VCOT - 2 Veículos de Comando Operacional Tático 4x4
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-vcot-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VCOT {suffix}",
-                Type = VehicleType.CommandVehicle,
-                TypeCode = "VCOT",
-                CrewCapacity = 4,
-                OffRoad = true,
-                CruiseSpeedKmh = 130,
-                Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Reconnaissance },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-vcot-pc-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VCOT-PC {suffix}-{i:D2}",
+                    Type = VehicleType.CommandVehicle,
+                    TypeCode = "VCOT",
+                    CrewCapacity = 4,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 130,
+                    Capabilities = new() { VehicleCapability.CommandAndControl, VehicleCapability.Reconnaissance },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // VETA - Veículo Especial de Telecomunicações e Apoio
-            list.Add(new Vehicle
+            // VETA - 2 Veículos Especiais de Telecomunicações e Apoio
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-veta-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VETA {suffix}",
-                Type = VehicleType.CommandCommsVehicle,
-                TypeCode = "VETA",
-                CrewCapacity = 4,
-                Capabilities = new() { VehicleCapability.Communications, VehicleCapability.Reconnaissance },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-veta-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VETA {suffix}-{i:D2}",
+                    Type = VehicleType.CommandCommsVehicle,
+                    TypeCode = "VETA",
+                    CrewCapacity = 4,
+                    Capabilities = new() { VehicleCapability.Communications, VehicleCapability.Reconnaissance },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // VTTP - Veículo Tático de Transporte de Pessoal
-            list.Add(new Vehicle
+            // VTTP - 4 Veículos Táticos de Transporte de Pessoal / Sapadores Florestais (9 operacionais cada)
+            for (int i = 1; i <= 4; i++)
             {
-                Id = $"v-vttp-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"VTTP {suffix}",
-                Type = VehicleType.PersonnelTransport,
-                TypeCode = "VTTP",
-                CrewCapacity = 9,
-                PassengerCapacity = 8,
-                OffRoad = true,
-                CruiseSpeedKmh = 110,
-                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 1,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-vttp-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VTTP {suffix}-{i:D2}",
+                    Type = VehicleType.PersonnelTransport,
+                    TypeCode = "VTTP",
+                    CrewCapacity = 9,
+                    PassengerCapacity = 8,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 110,
+                    Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics, VehicleCapability.StructureProtection },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 9,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // AUTOCARRO - Autocarro de Evacuação de Populações
-            list.Add(new Vehicle
+            // AUTOCARRO - 3 Autocarros de Evacuação de Populações (55 passageiros cada = 165 evacuações por vaga)
+            for (int i = 1; i <= 3; i++)
             {
-                Id = $"v-bus-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"AUTOCARRO {suffix}",
-                Type = VehicleType.Bus,
-                TypeCode = "AUTOCARRO",
-                CrewCapacity = 2,
-                MinimumCrew = 1,
-                PassengerCapacity = 55,
-                OffRoad = false,
-                CruiseSpeedKmh = 95,
-                RangeKm = 900,
-                FuelCapacityL = 280,
-                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 1,
-                    FuelPct = 100,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-bus-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"AUTOCARRO {suffix}-{i:D2}",
+                    Type = VehicleType.Bus,
+                    TypeCode = "AUTOCARRO",
+                    CrewCapacity = 2,
+                    MinimumCrew = 1,
+                    PassengerCapacity = 55,
+                    OffRoad = false,
+                    CruiseSpeedKmh = 95,
+                    RangeKm = 900,
+                    FuelCapacityL = 280,
+                    Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        FuelPct = 100,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // ABEV - Ambulância de Evacuação Múltipla / Transporte de Acamados
-            list.Add(new Vehicle
+            // ABEV - 3 Ambulâncias de Evacuação Múltipla / Transporte de Acamados
+            for (int i = 1; i <= 3; i++)
             {
-                Id = $"v-abev-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"ABEV {suffix}",
-                Type = VehicleType.Ambulance,
-                TypeCode = "ABEV",
-                CrewCapacity = 3,
-                MinimumCrew = 2,
-                StretcherCapacity = 4,
-                PassengerCapacity = 6,
-                OffRoad = false,
-                CruiseSpeedKmh = 110,
-                RangeKm = 750,
-                FuelCapacityL = 85,
-                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.MedicalTransport, VehicleCapability.Rescue },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    FuelPct = 90,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-abev-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"ABEV {suffix}-{i:D2}",
+                    Type = VehicleType.Ambulance,
+                    TypeCode = "ABEV",
+                    CrewCapacity = 3,
+                    MinimumCrew = 2,
+                    StretcherCapacity = 4,
+                    PassengerCapacity = 6,
+                    OffRoad = false,
+                    CruiseSpeedKmh = 110,
+                    RangeKm = 750,
+                    FuelCapacityL = 85,
+                    Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.MedicalTransport, VehicleCapability.Rescue },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 3,
+                        FuelPct = 90,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // DRONE - Reconhecimento Térmico e Apoio à Evacuação
-            list.Add(new Vehicle
+            // DRONE - 2 Equipas de Drones de Reconhecimento Térmico e Rastreio
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-drone-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"DRONE {suffix}",
-                Type = VehicleType.Drone,
-                TypeCode = "DRONE",
-                CrewCapacity = 2,
-                MinimumCrew = 1,
-                OffRoad = true,
-                CruiseSpeedKmh = 80,
-                RangeKm = 30,
-                Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.Reconnaissance },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    FuelPct = 100,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-drone-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"DRONE {suffix}-{i:D2}",
+                    Type = VehicleType.Drone,
+                    TypeCode = "DRONE",
+                    CrewCapacity = 2,
+                    MinimumCrew = 1,
+                    OffRoad = true,
+                    CruiseSpeedKmh = 80,
+                    RangeKm = 30,
+                    Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.Reconnaissance },
+                    Aerial = new AerialSpec(BucketCapacityL: 0, LoadMinutes: 0, DropMinutes: 0, CruiseSpeedKmh: 80, MaxWindKmh: 40, MinVisibilityM: 500, DayOnly: false),
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 2,
+                        UpdatedAt = now
+                    }
+                });
+            }
 
-            // AUTOCARRO 02 - Segundo autocarro de evacuação
-            list.Add(new Vehicle
+            // VFCI-SF - 2 Veículos Florestais dos Sapadores Florestais Municipais (Combate e faixa)
+            for (int i = 1; i <= 2; i++)
             {
-                Id = $"v-bus2-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"AUTOCARRO 02",
-                Type = VehicleType.Bus,
-                TypeCode = "AUTOCARRO",
-                CrewCapacity = 2,
-                MinimumCrew = 1,
-                PassengerCapacity = 50,
-                OffRoad = false,
-                CruiseSpeedKmh = 95,
-                RangeKm = 850,
-                FuelCapacityL = 280,
-                Capabilities = new() { VehicleCapability.EvacuationTransport, VehicleCapability.Logistics },
-                State = new()
+                list.Add(new Vehicle
                 {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 1,
-                    FuelPct = 95,
-                    UpdatedAt = now
-                }
-            });
+                    Id = $"v-vfci-sf-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VFCI-SF {suffix}-{i:D2}",
+                    Type = VehicleType.ForestFirefightingVehicle,
+                    TypeCode = "VFCI-SF",
+                    CrewCapacity = 5,
+                    MinimumCrew = 3,
+                    WaterCapacityL = 3500,
+                    PumpFlowLpm = 1200,
+                    OffRoad = true,
+                    MaxSlopePercent = 35,
+                    Capabilities = new() { VehicleCapability.WildfireAttack, VehicleCapability.StructureProtection, VehicleCapability.WaterSupply, VehicleCapability.FirebreakConstruction },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 5,
+                        Water = new WaterStatus(3500, 3500),
+                        UpdatedAt = now
+                    }
+                });
+            }
 
             // VLC-PC - Veículo Ligeiro de Coordenação e Reconhecimento 4x4
             list.Add(new Vehicle
@@ -1188,6 +1356,33 @@ public sealed class ResourceSeeder(
                 }
             });
 
+            // VMAT - 2 Veículos de Apoio Logístico a Centros de Acolhimento e Evacuação
+            for (int i = 1; i <= 2; i++)
+            {
+                list.Add(new Vehicle
+                {
+                    Id = $"v-vmat-{idPrefix}-{i:D2}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    OrganizationId = st.OrganizationId,
+                    StationId = st.Id,
+                    Callsign = $"VMAT {suffix}-{i:D2}",
+                    Type = VehicleType.OperationsVehicle,
+                    TypeCode = "VMAT",
+                    CrewCapacity = 3,
+                    MinimumCrew = 2,
+                    OffRoad = false,
+                    Capabilities = new() { VehicleCapability.Logistics, VehicleCapability.EvacuationTransport },
+                    State = new()
+                    {
+                        Status = VehicleStatus.Available,
+                        Position = st.Position,
+                        CrewOnboard = 3,
+                        UpdatedAt = now
+                    }
+                });
+            }
+
             // VLOG - Veículo de Apoio Logístico e Iluminação
             list.Add(new Vehicle
             {
@@ -1212,32 +1407,6 @@ public sealed class ResourceSeeder(
                     Position = st.Position,
                     CrewOnboard = 2,
                     FuelPct = 90,
-                    UpdatedAt = now
-                }
-            });
-
-            // DRONE 02 - Reconhecimento Térmico Noturno
-            list.Add(new Vehicle
-            {
-                Id = $"v-drone2-{idPrefix}",
-                CreatedAt = now,
-                UpdatedAt = now,
-                OrganizationId = st.OrganizationId,
-                StationId = st.Id,
-                Callsign = $"DRONE 02",
-                Type = VehicleType.Drone,
-                TypeCode = "DRONE",
-                CrewCapacity = 2,
-                MinimumCrew = 1,
-                OffRoad = true,
-                CruiseSpeedKmh = 90,
-                Capabilities = new() { VehicleCapability.AerialRecon, VehicleCapability.Reconnaissance },
-                State = new()
-                {
-                    Status = VehicleStatus.Available,
-                    Position = st.Position,
-                    CrewOnboard = 2,
-                    FuelPct = 100,
                     UpdatedAt = now
                 }
             });

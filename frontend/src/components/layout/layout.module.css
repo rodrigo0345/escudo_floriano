@@ -29,6 +29,9 @@
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex-wrap: nowrap;
+  /* never wider than the window: a bar that does not fit is clipped, it does not push the side panel off-screen */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .top > * {
@@ -74,7 +77,15 @@
   align-items: center;
 }
 
+/* the pickers give way first when the bar runs short (the long names end in "…") */
+.top > .selects {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 .selects select {
+  flex: 0 1 175px;
+  min-width: 90px;
   max-width: 175px;
   height: 28px;
   padding: 2px 6px;
@@ -95,6 +106,38 @@
 @media (max-width: 1400px) {
   .period {
     display: none;
+  }
+}
+
+/* Smaller screens (laptops): the bar compacts step by step; large screens keep everything above. */
+@media (max-width: 1280px) {
+  .focusScenario,
+  .helpText {
+    display: none;
+  }
+  .helpLink {
+    padding: 4px 9px;
+  }
+  .tabs button {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .brandName {
+    display: none;
+  }
+  .top {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .tabs button {
+    padding: 0 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+  }
+  .focusChip {
+    padding: 0 8px;
   }
 }
 

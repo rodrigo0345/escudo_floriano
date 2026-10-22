@@ -4,8 +4,10 @@ import type { Plan, PlanAction } from '@/api';
 import { actionWindows } from '@/domain/actionTiming';
 import { lineStringCoordinates, polygonRings, type LonLat } from '@/domain/geojson';
 import type { Georef, WorldPoint } from '@/domain/georef';
+import { decisionKey, whereOf } from '@/domain/planDecisions';
 
 import type { Pickable } from '../picking';
+import { textSprite } from '../sprites';
 
 export type PlanKind =
   | 'fire_line'
@@ -14,7 +16,6 @@ export type PlanKind =
   | 'crew_deployment'
   | 'structure_protection'
   | 'evacuation'
-  | 'safety'
   | 'road_closure'
   | 'traffic_control'
   | 'support';
@@ -26,7 +27,6 @@ export const PLAN_KINDS: Record<PlanKind, { label: string; color: string }> = {
   crew_deployment: { label: 'Zonas das equipas', color: '#33e06a' },
   structure_protection: { label: 'Defesa de edifícios', color: '#c07bff' },
   evacuation: { label: 'Evacuações, rotas e abrigos', color: '#ff7a1a' },
-  safety: { label: 'Vias de fuga, zonas seguras, vigias', color: '#ffffff' },
   road_closure: { label: 'Cortes de estrada (laranja: emergência passa)', color: '#ff3b3b' },
   traffic_control: { label: 'Controlo de trânsito', color: '#4da3ff' },
   support: { label: 'INEM e posto de comando', color: '#ff4fd8' },
@@ -43,6 +43,15 @@ const EMERGENCY_PASSES = '#ff9f1a';
 const PLACE_RING_M = 160;
 const LIFT = 2.2;
 const FOCUS_ROUTE = '#00e5ff';
+// A picked decision's crew safety: the escape route as a dashed arrow ending at its safety zone, and the lookout, each labelled.
+const SAFE_ZONE = '#3dff7a';
+const LOOKOUT = '#ffe14d';
+const DASH = 5; // world units (≈ 50 m)
+const GAP = 3.5;
+const ARROW_LENGTH = 9;
+const ARROW_HALF_WIDTH = 4.5;
+const LABEL_LIFT = 14;
+const LABEL_MAX_CHARS = 48;
 // The plan is an annotation over the map, not a wall over it: translucent at rest, so roads, places and the fire still read through it.
 const LINE_ALPHA = 0.55;
 const FILL_ALPHA = 0.14;
@@ -72,8 +81,8 @@ const DONE = 0.07; // ...and once it is over, or when another action is focused
 const WORKING = 1.35; // a working effect is drawn stronger than the plan at rest, without turning opaque
 
 /** Alpha of a timed element at minute `t`: `onlyActive` hides what is not happening now (nothing faint left on the map), else it dims it. */
-function alphaAt(s: Span, t: number | null, focus: string | null, onlyActive: boolean): number {
-  if (focus) return s.action === focus ? Math.min(1, s.alpha * 2.2) : onlyActive && t !== null ? 0 : s.alpha * DONE;
+function alphaAt(s: Span, t: number | null, focus: ReadonlySet<string> | null, onlyActive: boolean): number {
+  if (focus) return focus.has(s.action) ? Math.min(1, s.alpha * 2.2) : onlyActive && t !== null ? 0 : s.alpha * DONE;
   if (t === null) return s.alpha;
   const active = t >= s.start && t < s.end;
   if (active) return Math.min(1, s.alpha * WORKING);
@@ -94,8 +103,8 @@ class MeshAcc {
     if (win) this.spans.push({ ...win, from, to: this.positions.length / 3, alpha });
   }
 
-  /** Re-weights each timed element's alpha for minute `t` (`null`: as drawn); a focused action is drawn at full strength whatever the time. */
-  retime(t: number | null, focus: string | null, onlyActive: boolean): void {
+  /** Re-weights each timed element's alpha for minute `t` (`null`: as drawn); a focused decision is drawn at full strength whatever the time. */
+  retime(t: number | null, focus: ReadonlySet<string> | null, onlyActive: boolean): void {
     const attr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
     if (!attr || !this.spans.length) return;
     for (const s of this.spans) {
@@ -191,7 +200,7 @@ class PointAcc {
     if (win) this.spans.push({ ...win, from: index, to: index + 1, alpha: 1 });
   }
 
-  retime(t: number | null, focus: string | null, onlyActive: boolean): void {
+  retime(t: number | null, focus: ReadonlySet<string> | null, onlyActive: boolean): void {
     const attr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
     if (!attr || !this.spans.length) return;
     for (const s of this.spans) attr.setW(s.from, alphaAt(s, t, focus, onlyActive));
@@ -262,12 +271,60 @@ function circleRing(lat: number, lon: number, radiusM: number, vertices = 20): L
   return ring;
 }
 
+/** `points` cut into dashes of `dash` world units with `gap` between them (measured on the ground plane). */
+function dashes(points: WorldPoint[], dash: number, gap: number): WorldPoint[][] {
+  const out: WorldPoint[][] = [];
+  let current: WorldPoint[] = [];
+  let drawing = true;
+  let left = dash;
+  for (let i = 0; i < points.length - 1; i++) {
+    const [a, b] = [points[i], points[i + 1]];
+    const length = Math.hypot(b[0] - a[0], b[2] - a[2]);
+    let at = 0;
+    if (drawing && !current.length) current.push(a);
+    while (length - at > left) {
+      at += left;
+      const k = at / length;
+      const p: WorldPoint = [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+      if (drawing) {
+        current.push(p);
+        out.push(current);
+        current = [];
+      } else current = [p];
+      drawing = !drawing;
+      left = drawing ? dash : gap;
+    }
+    left -= length - at;
+    if (drawing) current.push(b);
+  }
+  if (drawing && current.length > 1) out.push(current);
+  return out;
+}
+
+/** A triangle pointing along the last segment of `points`, its tip at the last point. */
+function arrowHead(points: WorldPoint[]): WorldPoint[] | null {
+  if (points.length < 2) return null;
+  const [a, tip] = [points[points.length - 2], points[points.length - 1]];
+  const length = Math.hypot(tip[0] - a[0], tip[2] - a[2]);
+  if (!length) return null;
+  const [dx, dz] = [(tip[0] - a[0]) / length, (tip[2] - a[2]) / length];
+  const base: WorldPoint = [tip[0] - dx * ARROW_LENGTH, tip[1], tip[2] - dz * ARROW_LENGTH];
+  return [
+    [base[0] - dz * ARROW_HALF_WIDTH, base[1], base[2] + dx * ARROW_HALF_WIDTH],
+    tip,
+    [base[0] + dz * ARROW_HALF_WIDTH, base[1], base[2] - dx * ARROW_HALF_WIDTH],
+  ];
+}
+
+const shorten = (text: string): string => (text.length > LABEL_MAX_CHARS ? `${text.slice(0, LABEL_MAX_CHARS - 1)}…` : text);
+
 /**
  * What the agents' plan does, drawn on the terrain: fire lines across the fire's path, aerial-drop curtains, crew zones,
- * building defence and evacuation areas, plus the escape routes / safety zones / lookouts of each attack. Hover shows the
- * action and the agent's reason. The plan's `simulationEffects` are what the backend simulated, so this is what was run.
- * The timed effects follow the playback (`setTime`): bright while the crew works there, faint before it arrives and after it leaves;
- * an action picked in the panel (`setFocus`) is outlined with the road its unit takes.
+ * building defence and evacuation areas. Hover shows the action and the agent's reason. The plan's `simulationEffects` are what
+ * the backend simulated, so this is what was run. The timed effects follow the playback (`setTime`): bright while the crew works
+ * there, faint before it arrives and after it leaves. A decision picked in the panel (`setFocus`: every action sharing its type and
+ * title, i.e. all its units) is outlined with the roads its units take, labelled, and shows its crews' escape routes as dashed
+ * arrows to their labelled safety zones and lookouts (drawn only then: forty attacks' escape routes at once read as noise).
  */
 export class PlanLayer {
   readonly group = new THREE.Group();
@@ -279,7 +336,6 @@ export class PlanLayer {
     crew_deployment: 0,
     structure_protection: 0,
     evacuation: 0,
-    safety: 0,
     road_closure: 0,
     traffic_control: 0,
     support: 0,
@@ -332,7 +388,7 @@ export class PlanLayer {
         if (rings.length) this.counts[kind]++;
       }
     };
-    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind = 'safety', win?: Window) => {
+    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind, win?: Window) => {
       buckets.get(kind)!.markers.add(this.geo.world(lat, lon, 3), color, tip, win);
       this.counts[kind]++;
     };
@@ -420,14 +476,6 @@ export class PlanLayer {
       if (action.type === 'establish_command_post' && action.location.position) {
         marker(action.location.position.lat, action.location.position.lon, new THREE.Color(PLAN_KINDS.support.color), tip, 'support', when);
       }
-      if (action.type === 'fire_attack') {
-        const white = new THREE.Color(PLAN_KINDS.safety.color);
-        for (const route of action.escapeRoutes ?? []) {
-          buckets.get('safety')!.ribbons.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH, white, ROUTE_ALPHA * 0.85, `Via de fuga · ${tip}`, false, when);
-        }
-        for (const zone of action.safetyZones ?? []) marker(zone.lat, zone.lon, new THREE.Color('#3dff7a'), `Zona de segurança · ${action.title}`, 'safety', when);
-        for (const look of action.lookouts ?? []) marker(look.lat, look.lon, new THREE.Color('#ffe14d'), `Vigia · ${action.title}`, 'safety', when);
-      }
     }
 
     KIND_ORDER.forEach((kind) => {
@@ -463,7 +511,7 @@ export class PlanLayer {
     this.retime();
   }
 
-  /** One action picked in the panel: drawn at full strength (the rest dimmed), with the road its unit takes and its escape route. */
+  /** One action picked in the panel: its decision (every action of the same type and title) at full strength, the rest dimmed. */
   setFocus(actionId: string | null): void {
     if (actionId === this.focus) return;
     this.focus = actionId;
@@ -471,12 +519,17 @@ export class PlanLayer {
     this.drawFocus();
   }
 
-  private focused(): PlanAction | undefined {
-    return this.focus ? this.plan?.actions.find((a) => a.id === this.focus) : undefined;
+  /** The focused action and its siblings: the agents publish one action per unit, and the panel picks the decision, not the unit. */
+  private focused(): PlanAction[] {
+    const picked = this.focus ? this.plan?.actions.find((a) => a.id === this.focus) : undefined;
+    if (!picked) return [];
+    const key = decisionKey(picked);
+    return (this.plan?.actions ?? []).filter((a) => decisionKey(a) === key);
   }
 
   private retime(): void {
-    const focus = this.focused() ? this.focus : null;
+    const actions = this.focused();
+    const focus = actions.length ? new Set(actions.map((a) => a.id as string)) : null;
     for (const acc of this.accs) acc.retime(this.time, focus, this.onlyActive);
   }
 
@@ -494,6 +547,12 @@ export class PlanLayer {
 
   private clearFocus(): void {
     for (const child of this.focusGroup.children) {
+      if (child instanceof THREE.Sprite) {
+        // sprites share one geometry across the scene: free only this label's texture and material
+        child.material.map?.dispose();
+        child.material.dispose();
+        continue;
+      }
       const mesh = child as THREE.Mesh;
       mesh.geometry?.dispose();
       (mesh.material as THREE.Material | undefined)?.dispose();
@@ -504,30 +563,58 @@ export class PlanLayer {
     this.group.remove(this.focusGroup);
   }
 
+  private label(text: string, lat: number, lon: number, color: string): void {
+    const sprite = textSprite(text, { color, bg: 'rgba(8,12,16,.82)', size: 24 });
+    sprite.position.copy(new THREE.Vector3(...this.geo.world(lat, lon, LABEL_LIFT)));
+    this.focusGroup.add(sprite);
+  }
+
   private drawFocus(): void {
     this.clearFocus();
-    const action = this.focused();
-    if (!action) return;
+    const actions = this.focused();
+    if (!actions.length) return;
     const acc = new MeshAcc();
     const world = (ring: LonLat[]): WorldPoint[] => ring.map(([lon, lat]) => this.geo.world(lat, lon, LIFT + 0.4));
     const white = new THREE.Color('#ffffff');
-    const tip = tipOf(action);
-    for (const r of action.resources ?? []) {
-      const route = (r as { route?: Parameters<typeof lineStringCoordinates>[0] }).route;
-      if (route) acc.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH * 1.6, new THREE.Color(FOCUS_ROUTE), 0.95, `Caminho do meio · ${tip}`);
+    const green = new THREE.Color(SAFE_ZONE);
+    const labelled = new Set<string>();
+    const once = (kind: string, lat: number, lon: number) => {
+      const key = `${kind}:${lat.toFixed(4)},${lon.toFixed(4)}`;
+      if (labelled.has(key)) return false;
+      labelled.add(key);
+      return true;
+    };
+
+    for (const action of actions) {
+      const tip = tipOf(action);
+      for (const r of action.resources ?? []) {
+        const route = (r as { route?: Parameters<typeof lineStringCoordinates>[0] }).route;
+        if (route) acc.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH * 1.6, new THREE.Color(FOCUS_ROUTE), 0.95, `Caminho do meio · ${tip}`);
+      }
+      for (const effect of action.simulationEffects ?? []) {
+        if (effect.geometry?.type === 'LineString') acc.ribbon(world(lineStringCoordinates(effect.geometry)), LINE_HALF_WIDTH * 1.3, white, 1, tip);
+        else for (const ring of polygonRings(effect.geometry)) acc.ribbon(world(ring), OUTLINE_HALF_WIDTH * 1.8, white, 1, tip, true);
+      }
+      if (action.type !== 'fire_attack') continue;
+      // the crew's way out: a dashed arrow from where it works to its safety zone
+      for (const route of action.escapeRoutes ?? []) {
+        const points = world(lineStringCoordinates(route));
+        for (const dash of dashes(points, DASH, GAP)) acc.ribbon(dash, ROUTE_HALF_WIDTH * 1.2, green, 0.95, `Via de fuga da equipa · ${action.title}`);
+        const head = arrowHead(points);
+        if (head) acc.fan(head, green, 0.95, `Via de fuga da equipa · ${action.title}`);
+      }
+      for (const zone of action.safetyZones ?? []) if (once('safe', zone.lat, zone.lon)) this.label('Zona segura', zone.lat, zone.lon, SAFE_ZONE);
+      for (const look of action.lookouts ?? []) if (once('look', look.lat, look.lon)) this.label('Vigia', look.lat, look.lon, LOOKOUT);
     }
-    if (action.type === 'fire_attack') {
-      for (const route of action.escapeRoutes ?? []) acc.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH * 1.4, white, 1, `Via de fuga · ${tip}`);
-    }
-    for (const effect of action.simulationEffects ?? []) {
-      if (effect.geometry?.type === 'LineString') acc.ribbon(world(lineStringCoordinates(effect.geometry)), LINE_HALF_WIDTH * 1.3, white, 1, tip);
-      else for (const ring of polygonRings(effect.geometry)) acc.ribbon(world(ring), OUTLINE_HALF_WIDTH * 1.8, white, 1, tip, true);
-    }
+    const where = actions.map(whereOf).find(Boolean);
+    if (where) this.label(shorten(actions[0].title), where.lat, where.lon, '#ffffff');
+
     const mesh = acc.build(9);
-    if (!mesh) return;
-    this.focusGroup.add(mesh);
-    this.group.add(this.focusGroup);
-    this.pickables.push(mesh as unknown as Pickable);
+    if (mesh) {
+      this.focusGroup.add(mesh);
+      this.pickables.push(mesh as unknown as Pickable);
+    }
+    if (this.focusGroup.children.length) this.group.add(this.focusGroup);
   }
 
   isVisible(kind: PlanKind): boolean {
