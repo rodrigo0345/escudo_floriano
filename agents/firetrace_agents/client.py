@@ -251,6 +251,10 @@ class FiretraceClient:
         """``GET /locations/{id}/facilities``: schools, shelters, hospitals, stations... (``id``, ``name``, ``kind``, ``position``, ``vulnerable``)."""
         return list(self._request("GET", self._fill("/locations/{locationId}/facilities", locationId=location_id), params={"limit": 2000}).get("items", []))
 
+    def get_weather(self, simulation_id: str) -> dict[str, Any]:
+        """``GET /simulations/{id}/weather``: the weather the run used (``samples``: ``time``, ``windKmh``, ``windFromDeg``, ``gustKmh``, ``tempC``, ``humidityPct``, ...)."""
+        return dict(self._request("GET", self._fill("/simulations/{simulationId}/weather", simulationId=simulation_id)))
+
     def water_points_near(
         self, location_id: str, lat: float, lon: float, *, helicopter_only: bool = False, truck_only: bool = False, limit: int = 1,
         radius_m: float | None = None, route_from: dict[str, float] | None = None, kinds: list[str] | None = None,

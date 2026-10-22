@@ -102,13 +102,15 @@ services:
       AGENTS_POLL_SECONDS: "${AGENTS_POLL_SECONDS:-10}"
       AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
-      AGENTS_NAME: "${AGENTS_NAME:-firetrace-agents}"   # who claims the operator's plan requests (shown in the Planos tab)
-      # The LLM commander (agents/firetrace_agents/llm): `llm` makes one more candidate plan that the engine judges against the rules'. Off unless asked for; with no key
-      # or a model the account cannot use, the service starts anyway and the rules decide. Every call is logged (brief, answer, tokens) under data/agents-logs.
+      # LLM commander (agents/LLM_COMMANDER_PLAN.md): "llm" to let it choose the strategy of plans A and B, "rules" (default) to keep the rules.
+      # The model and the key come from a local .env (git-ignored): never put the key in this file.
       AGENTS_COMMANDER: "${AGENTS_COMMANDER:-rules}"
+      AGENTS_LLM_BASE_URL: "${AGENTS_LLM_BASE_URL:-https://api.openai.com/v1}"
       AGENTS_LLM_MODEL: "${AGENTS_LLM_MODEL:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      AGENTS_NAME: "${AGENTS_NAME:-firetrace-agents}"   # who claims the operator's plan requests (shown in the Planos tab)
       AGENTS_LLM_LOG_DIR: "${AGENTS_LLM_LOG_DIR:-/app/logs}"
+      AGENTS_SEED_DEMO: "${AGENTS_SEED_DEMO:-1}"   # on start, registers the aircraft, pre-positioned crews and reinforcements (skips what is there)
     volumes:
       - ./api-spec:/app/api-spec:ro
       - ./data/agents-logs:/app/logs

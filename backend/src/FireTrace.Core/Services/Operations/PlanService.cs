@@ -30,21 +30,21 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
     public async Task<Plan> CreateAsync(Plan input, CancellationToken ct = default)
     {
         var begin = System.Diagnostics.Stopwatch.GetTimestamp();
-        input = await router.ApplyAsync(input, ct);
-        var routed = System.Diagnostics.Stopwatch.GetElapsedTime(begin);
+        (input, var routedKeys) = await router.ApplyWithKeysAsync(input, ct);
+        var routingDuration = System.Diagnostics.Stopwatch.GetElapsedTime(begin);
         // validar uma só vez: a política do plano valida ao criar, o que repetia a mesma conta cara (rotas e fumo por ação) sobre o mesmo conteúdo
-        var validation = await validator.ValidateAsync(input, ct);
+        var validation = await validator.ValidateAsync(input, ct, routedKeys);
         if (validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(validation.Issues);
         var plan = input with
         {
             Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = validation,
             ActivatedAt = null, CompletedAt = null,
         };
-        var validated = System.Diagnostics.Stopwatch.GetElapsedTime(begin) - routed;
+        var validated = System.Diagnostics.Stopwatch.GetElapsedTime(begin) - routingDuration;
         var saved = await plans.CreateValidatedAsync(plan, ct);
         // onde se gasta o tempo de publicar um plano: sem isto "é lento" não se mede
         log.LogInformation("plano criado: {Actions} ações, rotas {RoutesMs:F0} ms, validação {ValidateMs:F0} ms, total {TotalMs:F0} ms",
-            input.Actions.Count, routed.TotalMilliseconds, validated.TotalMilliseconds, System.Diagnostics.Stopwatch.GetElapsedTime(begin).TotalMilliseconds);
+            input.Actions.Count, routingDuration.TotalMilliseconds, validated.TotalMilliseconds, System.Diagnostics.Stopwatch.GetElapsedTime(begin).TotalMilliseconds);
         return saved;
     }
 
@@ -65,8 +65,8 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
 
         // o que o servidor gere não se altera por PATCH
         var merged = MergePatch.Apply(plan, patch) with { Status = plan.Status, StatusHistory = plan.StatusHistory, Author = plan.Author, ActivatedAt = plan.ActivatedAt, CompletedAt = plan.CompletedAt };
-        merged = await router.ApplyAsync(merged, ct);
-        merged = merged with { Validation = await validator.ValidateAsync(merged, ct) };
+        (merged, var routedMerged) = await router.ApplyWithKeysAsync(merged, ct);
+        merged = merged with { Validation = await validator.ValidateAsync(merged, ct, routedMerged) };
         if (merged.Validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(merged.Validation.Issues);
         return await plans.SaveAsync(merged, ct);
     }

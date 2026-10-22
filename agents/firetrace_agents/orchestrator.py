@@ -225,6 +225,10 @@ class OrchestratorAgent:
         fuel_breaks: bool = False,
         air_support: bool = False,
         reserve_share: float = 0.0,
+        defend_whole_run: bool = False,
+        defenders_per_zone: int = DEFENDERS_PER_ZONE,
+        force_contain: bool = False,
+        early_air: bool = True,
         validate: bool = True,
         use_advisor: bool = False,
     ) -> CycleResult:
@@ -244,6 +248,10 @@ class OrchestratorAgent:
         ``fuel_breaks`` sends the squads that are not on the fire's outline to clear a strip of fuel ahead of it, where they can finish before it arrives (see ``fuelbreak.py``).
         ``air_support`` (implied by ``fuel_breaks``) times the aircraft with the crews: each drops on the stretch the next crews go in to (see ``_air_support``).
         ``reserve_share`` keeps that share of the combat units at their stations as a tactical reserve (the farthest ones): free for the re-plans along the fire.
+        ``defend_whole_run`` (plan B) defends every patch of houses the forecast fire reaches in the whole run, not only those it reaches before the crews could
+        stop it, with ``defenders_per_zone`` engines each (each prepares its patch and leaves before the fire arrives, see ``_place_safely``).
+        ``force_contain`` contains the fire even when the engine's test would attack it; ``early_air=False`` keeps the aircraft timed with the crews
+        instead of the early air attack on the head (both are the LLM commander's choices, see ``commander/schema.py``).
         ``lean`` and ``reserve_share`` only apply when the fire must be contained: while it can be put out (``initial_attack``) every unit that arrives in time attacks.
         A combat unit that would arrive with under ``MIN_USEFUL_WORK_MIN`` of the run left is not sent.
         Every crew is placed where it is safe (``placement.py``): an initial attack works from the burned side of the edge at the minute the crew arrives, and a
@@ -275,10 +283,12 @@ class OrchestratorAgent:
 
         result = CycleResult(simulation_id=simulation_id, advice=self._advice)
         situation, result.attack_lead, result.initial_attack = self._initial_attack(situation, location_id, travel)
+        if force_contain and result.initial_attack:  # the commander chose to contain although the engine's test would attack
+            situation, result.initial_attack = replace(situation, initial_attack=False, work_minutes=AHEAD_STAY_MIN), False
         decided = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
         result.arrival_intensity = intensity_lookup(situation.summary)(decided + (result.attack_lead or 0.0))  # what the crews find when they get there
         # The engines that defend houses are set aside first: taken out of a barrier already laid they would leave a gap in it.
-        result.zones, reserved = self._plan_buildings(situation, location_id, building_zones, stage_minutes, result)
+        result.zones, reserved = self._plan_buildings(situation, location_id, building_zones, stage_minutes, result, whole_run=defend_whole_run, per_zone=defenders_per_zone)
         groups = self._arrival_groups(situation, [a.agent_id for a in self.agents if a.agent_id not in reserved]) if result.initial_attack else []
         if groups:
             everyone = {a.agent_id for a in self.agents}
@@ -296,7 +306,7 @@ class OrchestratorAgent:
         if travel:
             result.unsafe_units = self._place_safely(situation, location_id, result)
         if (fuel_breaks or air_support) and travel:
-            self._air_support(result, situation)
+            self._air_support(result, situation, early=early_air)
         # A reserve only makes sense when the fire must be contained: while it can still be put out, every unit that gets there in time attacks
         # (B too; on Penha, holding back two engines meant for the head let the fire escape: 9 ha with them, 612 ha without).
         holding = not result.initial_attack
@@ -564,7 +574,7 @@ class OrchestratorAgent:
             result.issues.append(AgentIssue("support", "Proteção Civil / INEM", message))
         return plan, agents
 
-    def _air_support(self, result: CycleResult, situation: Situation) -> None:
+    def _air_support(self, result: CycleResult, situation: Situation, *, early: bool = True) -> None:
         """The aircraft (A and B) prepare the ground for the crews: each drops on the stretch where the next crews go in, ``AIR_LEAD_MIN`` before they get there.
 
         The drop cools the edge the crew is about to work from (its effect is temporary), instead of every aircraft hitting the head on its own.
@@ -581,7 +591,7 @@ class OrchestratorAgent:
         # next to the fire is not an attack: the aircraft hold the fire until the bulk of the crews is there
         etas = [e for e, _a in crews] or list(self._arrival.values())
         first_ground = float(statistics.median(etas)) if etas else None
-        if aircraft and first_ground is not None and self._early_air_attack(situation, result, aircraft, first_ground + AIR_LEAD_MIN):
+        if early and aircraft and first_ground is not None and self._early_air_attack(situation, result, aircraft, first_ground + AIR_LEAD_MIN):
             return
         if not result.initial_attack:
             return  # no crews on the outline to prepare the ground for: the aircraft keep their own sectors
@@ -852,7 +862,7 @@ class OrchestratorAgent:
         return plan if by_id else None
 
     def _plan_buildings(
-        self, situation: Situation, location_id: str, max_zones: int, stage_minutes: int | None, result: CycleResult
+        self, situation: Situation, location_id: str, max_zones: int, stage_minutes: int | None, result: CycleResult, *, whole_run: bool = False, per_zone: int = DEFENDERS_PER_ZONE
     ) -> tuple[list[BuildingZone], dict[str, dict[str, Any]]]:
         """Pick the houses the forecast fire reaches soonest and set aside three fire engines for each patch of them.
 
@@ -879,13 +889,15 @@ class OrchestratorAgent:
         # bet the houses on the attack working (structure triage, DECIR), and the engines prepare and leave before the fire arrives (`_place_safely`). Defending
         # only what burns before the crews could stop it left the plan with no house defended at all on a fire whose first house burns 75 min out.
         window = max(stage_minutes or situation.horizon_minutes, situation.life_horizon_minutes)
+        if whole_run and self._run_minutes:  # plan B: every patch of houses the forecast fire reaches in the whole run, whether the fire can be attacked or not
+            window = max(window, self._run_minutes - int(decided_at))
         zones = zones_to_defend(
             cells, ignition, after_min=decided_at, until_min=decided_at + window, radius_m=situation.zone_radius_m,
-            max_zones=min(max_zones, max(1, len(engines) // DEFENDERS_PER_ZONE)),
+            max_zones=min(max_zones, max(1, len(engines) // per_zone)),
         )
         reserved: dict[str, dict[str, Any]] = {}
         for index, zone in enumerate(zones):
-            for agent in engines[index * DEFENDERS_PER_ZONE:(index + 1) * DEFENDERS_PER_ZONE]:
+            for agent in engines[index * per_zone:(index + 1) * per_zone]:
                 reserved[agent.agent_id] = zone.asset(index)
         return zones, reserved
 

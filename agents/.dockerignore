@@ -3,4 +3,3 @@
 *.py[cod]
 .venv/
 tests/
-scripts/

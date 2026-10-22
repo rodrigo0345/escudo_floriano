@@ -37,6 +37,7 @@ WITHDRAW_MARGIN_MIN = 5  # a crew leaves this long before the fire reaches its g
 MIN_USEFUL_WORK_MIN = 10  # a crew that could work less than this before the fire arrives is not sent
 HOUSE_ZONES_FOR_B = 10
 HOUSE_ZONES_FOR_A = 4  # A defends the houses the fire reaches first and sends the rest of the engines at the fire
+DEFENDERS_PER_ZONE_B = 5  # plan B puts more engines on each patch of houses (A: buildings.DEFENDERS_PER_ZONE = 3)
 RESERVE_SHARE_B = 0.25  # B keeps a quarter of its combat units at their stations, ready for the re-plans
 CANDIDATES = 2  # candidates judged per plan before the best is kept (1 = the first, unjudged choice)
 ALT_CONCENTRATION = 3  # the second candidate spends the barrier metres on fewer, stronger stretches
@@ -108,7 +109,11 @@ def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str, en
     """
     started = time.monotonic()
     title = str(plan.get("title") or "")
-    created = client.create_plan({**plan, "title": title if title.startswith(CANDIDATE_PREFIX) else f"{CANDIDATE_PREFIX}{title}"})
+    # The candidate is created only to be simulated and deleted: without `basis.simulationId` the backend skips the smoke and crew-exposure warnings it
+    # computes on the baseline (~30 s of a ~38 s create, measured on Penha) — the what-if below counts the crews the fire reaches itself, and gives the
+    # same result (measured: identical area, buildings and casualties). The published plan keeps its basis and gets the full validation.
+    created = client.create_plan({**plan, "title": title if title.startswith(CANDIDATE_PREFIX) else f"{CANDIDATE_PREFIX}{title}",
+                                  "basis": {k: v for k, v in (plan.get("basis") or {}).items() if k != "simulationId"}})
     plan_id = str(created["id"])
     published_in = time.monotonic() - started
     try:
@@ -338,6 +343,7 @@ def build_alternatives(
     replan_minutes: int | None = None,
     max_waves: int | None = None,
     candidates: int = CANDIDATES,
+    commander: Any = None,
     progress: Callable[[str, float, str], None] | None = None,
     plan_metadata: dict[str, Any] | None = None,
     **cycle: Any,
@@ -367,12 +373,28 @@ def build_alternatives(
     # Both put lives first (crews and the people evacuated), then houses, then the burned area; they differ in how: A attacks the fire with everything that
     # can work safely and defends only the houses the fire reaches first, B defends people and houses first, attacks only where it is safe and keeps a reserve when the fire must be contained (never while it can still be put out).
     # Each is the best of a few candidates (how the barrier metres are spread, how many houses are defended), judged by the engine in that same order.
+    # The LLM commander (when configured, see commander/): it reads the environment, retrieves the tactics that fit it and chooses the strategy of
+    # each plan; its choice replaces the candidates below. Without it, or when it fails, the rules choose (the decision says which).
+    decision = None
+    if commander is not None:
+        try:
+            from .commander import build_brief  # noqa: PLC0415 — only needed with a commander
+
+            brief = build_brief(orchestrator, client, simulation_id, location_id=str(cycle.get("location_id") or "guimaraes-concelho"), at_minute=decided_at,
+                                horizon_minutes=int(cycle.get("horizon_minutes") or 60))
+            decision = commander.decide(brief, house_zones_b=house_zones, concentration=cycle.get("concentration"))
+            log.info("baseline %s: strategy chosen by %s%s", simulation_id, decision.source, f" ({decision.error})" if decision.error else "")
+        except ApiProblem as error:
+            issues.append(f"commander could not read the environment [{error.code}]: {error}")
     options = {
         "A": [{"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True}, {"building_zones": HOUSE_ZONES_FOR_A, "fuel_breaks": True, "concentration": ALT_CONCENTRATION}],
         # B's aircraft are timed with its crews too: on Penha that alone takes B from 176 ha to 8.6 ha (A: 9 ha)
-        "B": [{"building_zones": house_zones, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B},
-              {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B}],
+        # B defends every patch of houses the fire reaches in the whole run, with more engines on each: it saves houses, A saves area
+        "B": [{"building_zones": house_zones, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B},
+              {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B, "defend_whole_run": True, "defenders_per_zone": DEFENDERS_PER_ZONE_B}],
     }
+    if decision is not None:
+        options = {variant: [decision.plans[variant].cycle_kwargs()] for variant in ("A", "B")}
     chosen: dict[str, tuple[CycleResult, dict[str, Any], Any, int, int]] = {}
     # An LLM commander (``advisor.py``, ``llm/``) makes one more candidate, on top of the rules': the same plan as the first, with its choices where it has them. The
     # engine judges them all the same way and the best ships; a tie goes to the rules (they come first), so the LLM plan has to be better, not just different.
@@ -425,6 +447,10 @@ def build_alternatives(
             [("protect_life", 1.0), ("protect_buildings", 0.7), ("minimize_burned_area", 0.6)])
     relabel(plan_b, "B", "Plano B — defensivo: proteger pessoas e casas", "Prioridades: 1.º vidas (equipas e população), 2.º casas, 3.º área ardida. Evacua e defende as povoações e as casas no caminho do fogo e ataca onde o perímetro deixa trabalhar com segurança. Enquanto o fogo se pode apagar, todos os meios que chegam a tempo atacam; se é forte demais e tem de ser contido, guarda um quarto dos meios em reserva avançada, para as reavaliações. Mais casas defendidas que o A e apoio aéreo coordenado com as equipas, sem faixas corta-fogo. Zero baixas previstas, na previsão e com o vento errado em 30°.",
             [("protect_life", 1.0), ("protect_buildings", 0.9), ("minimize_burned_area", 0.3)])
+    if decision is not None and decision.source == "llm":  # the commander's own words for what each plan does and why
+        for variant, plan in (("A", plan_a), ("B", plan_b)):
+            chosen_plan = decision.plans[variant]
+            plan["strategy"] = f"Prioridades: 1.º vidas (equipas e população), 2.º casas, 3.º área ardida. {chosen_plan.rationale}".strip()
 
     verdicts: dict[str, Any] = {}
     report("judging", 40, "O motor avalia a segurança das equipas nos dois planos (previsão e vento errado)")
@@ -506,6 +532,10 @@ def build_alternatives(
         if (outcome := llm_outcome.get(variant)) is not None:
             plan["metadata"] = {**(plan.get("metadata") or {}), "agents.llm": outcome["metadata"]}
             plan["summary"] = outcome["summary"] + plan["summary"]
+    if decision is not None:
+        for variant, plan in (("A", plan_a), ("B", plan_b)):
+            plan["metadata"] = {**(plan.get("metadata") or {}), "agents.commander": decision.metadata(variant)}
+            plan["summary"] = decision.summary(variant) + plan["summary"]
     if out.eval_a and out.eval_b:
         plan_a["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_a["summary"]
         plan_b["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_b["summary"]

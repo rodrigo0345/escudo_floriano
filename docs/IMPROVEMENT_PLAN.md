@@ -1,47 +1,68 @@
-# FireTrace — Improvement Plan (audit of 2026-10-20)
+# FireTrace — Improvement Plan
 
+> Audit of **2026-10-20**, re-verified against the code on **2026-10-22** (`main` = `eb977c6`, clean tree).
+>
 > **Goal of every task below:** one authoritative loop of data
 > **Scenario (incl. dynamic weather) → Backend + fire engine → Agents propose A/B → Operator decides → Backend simulates the operation (fire *and* units on roads) → Frontend renders only what the backend says → feedback into the next decision.**
 >
 > The tool is for Bombeiros, GNR and Proteção Civil to **train** and to **support decisions** in a real incident. That means: every number on screen must come from the backend, every vehicle must move on a real road, and the operator must always know *which* fire, *which* plan and *which* minute they are looking at.
 
-Submission is **23 Oct 2026, 16:30 UTC** (3 days). Tasks are tagged **P0** (needed for a coherent demo), **P1** (next), **P2** (after the hackathon). Each task names its vertical so it can be handed to that teammate's agent. Contract changes follow `PROTOCOL.md` §1 (proposal first, then lockstep).
+Submission is **23 Oct 2026, 16:30 UTC — tomorrow**. Tasks are tagged **P0** (needed for a coherent demo), **P1** (next), **P2** (after the hackathon), and each names its vertical. Contract changes follow `PROTOCOL.md` §1 (proposal first, then lockstep).
+
+**How to read the status column:** ✅ code-verified landed · ◐ partially landed, with the gap named · ❌ not started · ⚠️ new defect found in this audit. A status here is derived from reading the code and the spec, not from commit messages. No `dotnet test` and no live run were made in this audit (see §6).
 
 ---
 
-## Status update — 2026-10-21 (post-#17 merge)
+## Status update — 2026-10-22
 
-`main` is now `8dff00a` (PR #17 merged). The original audit was accurate on 20 Oct, but a large part of the P0 work landed in the following 24 hours. This file is now a **backlog with status**, not a day-by-day schedule.
+`main` is `eb977c6`, the tree is clean, there is no `.github/` CI, no `scripts/` directory, and the frontend has no test script (`package.json` has `dev`, `build`, `preview`, `typecheck`, `generate:api-types`). The spec has 71 paths and 261 schemas.
 
-- **Landed:** A1 (agents compose service + watcher), A5 (dead scenario file removed), B1/B2/B4/B5 and the vehicle half of B3, F1 (agent travel time via `/routing/route`), D1 (gusts, rain, cloud cover), E2–E5/E7/E8 (3D wind/sky/clouds/rain and the weather panel/HUD), and A8 partly (service titles no longer `[lab]`; plans carry `variant`/`strategy`/`alertLevel`).
-- **Landed on 2026-10-21 (Task 2):** Rothermel surface fire + dynamic fuel moisture/weather/terrain is integrated as commit `db782b9` on `integrate/native-physics-weather` (cherry-pick of `2defb3a`; `835cc0d` explicitly excluded). Calibrated in `19629f4` with Byram (1959) and Albini (1979) fireline intensity-dependent rain extinction (`RainFactor` in `FireBehaviorModel.cs:88-99`). `dotnet test` passes 216/216 against PostgreSQL.
-- **Landed on 2026-10-21 (Task 3):** A3 (select → activate → complete/close, per-organization action grouping, visible rationale/status; plan closure unblocked in `PlanValidator.cs`), A4 (persistent scenario · base/plan · simulation id · T+min chip; TopBar responsive single-row layout), A2 (browser planner deleted), C1 (`OperationSimulator` with both DB async endpoints and pure static `Simulate` harmonized with Abreu's `UnitTimeline`), C2 (`GET /units` + `/units/{unitId}/track`), C4 (map reads backend `/units` + per-minute tracks), and G3 as the read-only comparison card. 3D geospatial coordinate/mesh mismatch between 8 km Penha and 22 km Concelho resolved in `05dd699` with automatic cross-location navigation. All 6 of Abreu's unit tests in `OperationSimulatorTests.cs` pass (commit `c283e00`). Fire coupling (C3) and live mode (C5) remain open.
-- **Partly landed:** B3 (vehicles use server ETAs; personnel pools and the unknown-origin fallback still trust `etaMinutes`), D2 (rain wetting, cloud→solar, and fireline intensity-dependent rain extinction are in; gusts are still unused by the fire model), E1 (weather event chips + preview; not a full keyframe editor for all nine events), E6 (procedural lightning; no storm-cell path/outflow), G3 (comparison table done; split-screen/swipe is P1).
-- **Still open:** A6/A7, B6/B7/B8, C3/C5, D3/D4, F2–F9, G1/G2/G4–G8, H1–H5, I1–I4.
-- **Capability note (C2):** the `Capabilities` schema has no `units` flag, so there is nothing to "flip"; the endpoints are implemented and are discoverable by path. Adding a flag would require a spec PR.
-- **Corrected execution order (A2 vs A3):** the original plan was inverted. A3/A4 had to land **before** A2. `frontend/src/usecases/dispatchDemo.ts:223-240` was the only caller of `plansApi.select`/`plansApi.activate`; deleting the browser planner first would have left the operator unable to approve a plan. The order actually executed was A3/A4 → C1 → C2 → C4 → A2 → G3.
-- **Audit findings status:** R5 is mostly resolved (server routing/ETAs and plan validation are in); R6–R10 are **outdated** — they describe the 20 Oct state before the agent service, weather pipeline, atmosphere and tab cleanup landed. Treat them as history, not as current defects.
-- **Contract deviation (B7):** B7 was marked P0 but never landed. `api-spec/openapi.json`'s `Route` schema (line 11704) has no `access/parkAt/walk*`, and the codes `no_road_access`, `route_off_network` and `target_unreachable` are emitted by the backend but not documented in the spec. This must be a spec PR before the UI can show the park/walk leg.
-- **Physics task (#18):** the Rothermel work is commit `2defb3a`; the ELMFIRE runner optimisation is `835cc0d`. Only `2defb3a` is in scope for the demo. Do not merge the `engine-not-tested` tip.
+**Landed since the previous status update (`8dff00a`):**
+
+- **A7 — plan requests, end to end.** `POST /simulations/{id}/plan-requests`, `GET /plan-requests/{id}`, `PATCH /plan-requests/{id}`, `POST /plan-requests/{id}/claim`; backend service + tests; the watcher claims and reports progress; `PlanRequestBox` in the Planos panel.
+- **F2–F5 — the other organizations.** GNR road closures/checkpoints (`agents/firetrace_agents/gnr.py`), Proteção Civil evacuation/shelters/command post/alerts (`support.py`, `life.py`), INEM medical standby, and water/refill/fatigue duty cycles (`duty.py`), all composed by the orchestrator.
+- **F6/F7/F9 — plans judged by the engine.** Candidate comparison, ±30° wrong-wind robustness, and a Reviser that watches selected/active plans and PATCHes them (`alternatives.py`, `judge.py`, `revision.py`, `campaign.py`).
+- **Backoffice + API protection.** `frontend/src/components/resources/ResourcesView.tsx` (organizations, stations, vehicles, personnel, equipment); global + `planning`-policy rate limiting (`backend/src/FireTrace.Core/Hosting/ServiceCollectionExtensions.cs:102-135`, `Program.cs:19`).
+- **Combat timeline + logos + map work** (`AttackTimeline.tsx`, `#28`, `#24`), demo resource seeding (`AGENTS_SEED_DEMO=1`), and the native physics/weather integration (`948563e`).
+- **New subsystem not in the original plan:** the LLM commander (`agents/firetrace_agents/commander/`, `agents/LLM_COMMANDER_PLAN.md`), opt-in via `AGENTS_COMMANDER=llm` (default `rules`). See Epic K.
+
+**Corrections to the previous status update (these were false positives):**
+
+1. **B4 is not landed.** `PlanValidator.CheckAccess` (`PlanValidator.cs:216-222`) and `ArrivalEstimator.EstimateAsync` (`ArrivalEstimator.cs:49-50`) never pass `simulationId`/`avoid.predictedFire`; only the agents' `/routing/route` calls do. The plan is validated against *active closures*, not against the predicted fire. The previous "closures + predicted fire" claim was wrong.
+2. **D2's "gusts are informational" is wrong.** `FireBehaviorModel.cs:46` blends the gust into the midflame wind (`GustFactor: 0.5` in `appsettings.json:227`). The stale statement lives in code: `CapabilityCatalog.cs:17` still says "só informativa: o motor usa o vento médio" — a truthfulness bug (J2).
+3. **R10's "7 top tabs" is wrong.** There are 6 (`TopBar.tsx:9-16`).
+4. **A6 is not implemented in the UI.** `PATCH /plans/{id}/actions/{actionId}` exists in the spec and backend, and `plansApi.patchAction` exists (`frontend/src/api/services/plans.ts:85`), but nothing calls it. It is **UNWIRED** in the frontend.
+5. **F9 is landed, not open.** `revision.py` polls `selected`/`active` plans, re-plans from their own basis and PATCHes actions + summary. It does not use `/locations/{id}/deployment`, and `campaign.py` remains an offline evaluator — but the rolling re-plan outcome is there.
+6. **F8 is partial, not open.** The spec and the agents use `on_fire_arrival` and `on_action_complete`; the backend accepts them but ignores them when timing a plan (J3).
+7. **G7 is landed, not open.** `PlansPanel.tsx:339-346` has loading / error / "no plans yet" states; `useSimulationActions.ts:228-231` surfaces a failed simulation's `error.detail` instead of drawing nothing.
+
+**New defects found on 2026-10-22 (Epic J):**
+
+- **J1 (P0, one line):** `DispatchService.cs:46` comments out `Notes`, `Status`, `EtaMinutes` and `Position` in the `Dispatch` initializer. `POST /dispatches` stores `etaMinutes: null`, `notes: null` and no position; `ResourceOverview.cs:70` then shows a blank ETA. `Status` survives only because its default is `Ordered`.
+- **J2 (P1, one line):** the stale gust note in `CapabilityCatalog.cs:17`.
+- **J3 (P1):** `PlanTiming.StartMinutes` (`PlanTiming.cs`) only understands `AtTimeTrigger`; `on_fire_arrival` / `on_action_complete` start at minute 0 in validation, what-if and unit tracks.
+- **J4 (P1):** the pure `OperationSimulator.Simulate` entry point draws a straight line when an assignment has no route (`OperationSimulator.cs:122`). The HTTP path always estimates a road route, so the endpoints are safe; the tested entry point can put a vehicle off-road and tests would not catch a routing regression.
+
+**Capability note (C2):** the `Capabilities` schema has no `units` flag, so there is nothing to "flip". The endpoints are implemented and discoverable by path; adding a flag would require a spec PR.
+
+**Contract deviation (B7):** still the only P0 contract item. The `Route` schema has no `access`/`parkAt`/`snapDistanceM`/`walkM`/`walkMinutes`, and `no_road_access`, `route_off_network` and `target_unreachable` are emitted but undocumented.
 
 ---
 
 ## 1. What the audit found (root causes, not symptoms)
 
-> **Historical note (2026-10-21):** R1–R5 have been fixed or mostly fixed by A2/A3/A4/C1/C2/C4/B1/B2/B4. R6–R10 describe the 20 Oct state and are **outdated**; keep them as history, not as a current defect list.
-
-| # | Problem | Evidence |
-|---|---|---|
-| R1 | **Two planners that don't know about each other.** The "Operação" tab still runs the 737-line client-side `DispatchPlanner` and publishes a plan tagged `demo`; the "Planos" tab lists agent plans. Demo plans still mix with A/B. | `frontend/src/domain/dispatchPlanner.ts`, `frontend/src/usecases/dispatchDemo.ts:65-73,180`, `PlansPanel.tsx` |
-| R2 | **The "Operação" tab silently replaces the fire on screen.** It re-runs the baseline itself, so the Planos and Incidente tabs point at a different simulation. | `dispatchDemo.ts:65-73` |
-| R3 | **Two "simulation" entry points with different semantics.** Incidente → "Simular com outra meteorologia" and Operação → "Planear despacho" (baseline re-run + plan). Neither links to the other or to Planos. | `IncidentPanel.tsx`, `SimulationForm.tsx`, `DemoPanel.tsx` |
-| R4 | **Movement authority used to live in the browser.** Unit positions were computed client-side; the backend now produces tracks and `GET /simulations/{id}/units` + `/units/{unitId}/track` serve them. **Resolved by C1/C2/C4.** | `OperationSimulator.cs`, `SimulationResultsController.cs`, `frontend/src/hooks/useUnitsSync.ts` |
-| R5 | **Roads are now mostly mandatory in the backend — but not in the contract.** `RoutingService` enforces `MaxSnapM` and the walk leg, `DispatchService`/`PlanRouter` prefer the server route, and `PlanValidator` checks it. Residual: `PlanInterventions` still trusts `etaMinutes` for personnel pools and when the vehicle origin is unknown; `RoadGraph.AccessTimes` still snaps without a bound. **Mostly resolved; the contract packet (B7) is still missing.** | `RoutingService.cs:44-51`, `PlanRouter.cs:24-27`, `PlanValidator.cs:198-200`, `PlanInterventions.cs:84,112,133`, `RoadGraph.cs:55-65,96-105` |
-| R6 | **Agents are a service and travel by road, but are still only firefighters.** No GNR (closures/traffic/evacuation corridors), INEM (medical/triage) or Proteção Civil (evacuation/shelters/command) agent; no water/fatigue in agent reasoning. | `agents/firetrace_agents/*`, `docker-compose.yaml:94-111`, `agents/README.md` limits |
-| R7 | **Weather is much more capable in the backend than the UI exposes.** The UI now has event chips (rain, storm, clouds, wind shift, wind scale, heat/dry) and a preview; it is not yet a full time-axis keyframe editor for all nine backend events. | `WeatherTimeline.cs`, `SimulationForm.tsx`, `simulationForm.ts` |
-| R8 | **Real weather has gusts/rain/clouds but still no spatial weather.** Open-Meteo now fetches `wind_gusts_10m`, `precipitation`, `cloud_cover`; `visibility`, `cape` and `is_day` are not fetched. Weather is still one point for the whole map; there is no moving storm cell. | `OpenMeteoSource.cs:47`, `CapabilityCatalog.cs:15-23` |
-| R9 | **The 3D scene now has dynamic atmosphere.** Sun position, day/night, sky colour, fog/visibility, clouds, rain and lightning exist; storm cells with a path/outflow are still missing. | `sceneEngine.ts:157-309`, `world.ts:48-49`, `rainLayer.ts`, `cloudLayer.ts` |
-| R10 | **Frontend UX is still tab soup.** 7 top tabs remain; the Meteo tab is now useful; Incidente still mixes live stats with a scenario editor; no frontend tests. `api/scenarios/operationalIncidentScenario.ts` is already gone (A5 done). | `TopBar.tsx:9-16`, `frontend/package.json` (no test script) |
+| # | Status | Problem | Evidence (2026-10-22) |
+|---|---|---|---|
+| R1 | ✅ resolved | **Two planners that don't know about each other.** The client-side `DispatchPlanner` and its demo store are gone; agents are the only planner. | `frontend/src/domain/dispatchPlanner.ts`, `usecases/dispatchDemo.ts`, `store/demoStore.ts`, `hooks/useDemoSync.ts`, `components/demo/` do not exist. |
+| R2 | ✅ resolved | **The "Operação" tab silently replaced the fire.** The tab is gone; nothing re-runs a baseline behind the operator. | 6 tabs in `TopBar.tsx:9-16`; no `dispatchDemo`. |
+| R3 | ✅ resolved | **Two "simulation" entry points with different semantics.** There is one simulation form (Incidente / Meteo) and one response panel; plan requests live in Planos. | `SimulationForm.tsx`, `PlansPanel.tsx:335`. |
+| R4 | ✅ resolved | **Movement authority used to live in the browser.** The backend owns tracks and serves them. | `OperationSimulator.cs`, `SimulationResultsController.cs:67,72`, `useUnitsSync.ts`, `unitLayer.ts`. Residual: J4 in the static simulator. |
+| R5 | ◐ mostly resolved | **Roads are mandatory in the backend, not in the contract.** Routing enforces `MaxSnapM=500` (`appsettings.json:354`) and the walk leg; plans prefer the server route. Residual: personnel-pool ETAs still trust `etaMinutes` (`PlanInterventions.cs:84,112,133`), the access-time helpers still snap without a bound (`RoutingService.cs:120,155`, `FireResults.cs:180-184`), and B7 is missing. | `RoutingService.cs:44-51`, `PlanRouter.cs:21-41`, `PlanValidator.cs:198,216-222`. |
+| R6 | ✅ resolved | **Agents were only firefighters.** GNR, INEM, Proteção Civil, water/refill/fatigue are composed into both plans. | `gnr.py`, `support.py`, `life.py`, `duty.py`; `orchestrator.py:321-331,522-531`. |
+| R7 | ◐ mostly resolved | **Weather is more capable in the backend than the UI exposed.** The timeline now edits ranged events with a popover (rain, storm, clouds, wind shift, gust factor, heat/dry) and previews them; base weather has sliders. Missing: `front_passage`, `wind_set`, explicit `humidity_shift`/`temperature_shift`, and arbitrary keyframe curves. | `PlaybackBar.tsx:89-263`, `SimulationForm.tsx:80-120`; spec event enum at `openapi.json:9814-9821`. |
+| R8 | ◐ partial | **Real weather has gusts/rain/clouds but no spatial weather.** Open-Meteo fetches and stores gusts, precipitation, clouds; the fire model uses all three. `visibility`, `cape`, `is_day` are still not fetched, and weather is one point for the whole map. | `OpenMeteoSource.cs:47,56`; `FireBehaviorModel.cs:46,56`. |
+| R9 | ◐ partial | **The 3D scene has a dynamic atmosphere, not storms.** Sun/sky/fog/clouds/rain/lightning exist; no storm cell with a path or outflow. | `sceneEngine.ts`, `cloudLayer.ts`, `rainLayer.ts`; no `storm_cell` in the spec. |
+| R10 | ◐ partial | **Frontend UX is still tab soup.** 6 top tabs, no workflow stepper; Incidente still mixes live stats with the scenario editor; the Recursos admin view was added; there are no frontend tests. | `TopBar.tsx:9-16`, `package.json`, `ResourcesView.tsx`. |
 
 ---
 
@@ -81,159 +102,191 @@ Legend: **[BE]** backend · **[FE]** frontend · **[AG]** agents · **[EN]** eng
 
 ### Epic A — One operation pipeline (fixes R1, R2, R3)
 
-> **Order correction (2026-10-21): A3/A4 before A2.** `dispatchDemo.ts:223-240` is the only frontend caller of `plansApi.select`/`activate`; `PlansPanel.tsx` has no execution controls. Add the new response flow first, then delete the browser planner.
-
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| A1 ✅ | P0 | [AG] | **Agents as a service.** `agents/Dockerfile` + the `agents` service in `docker-compose.yaml` run `watcher.py`; it polls baselines, skips ones with plans, publishes A/B and requests both what-ifs. | A baseline started from the UI has A and B plans and their what-if runs with no terminal involved. **Landed** (`docker-compose.yaml:94-111`, `agents/firetrace_agents/watcher.py`). |
-| A2 ✅ | P0 | [FE] | **Remove the client-side planner.** Delete `domain/dispatchPlanner.ts`, `usecases/dispatchDemo.ts`, `store/demoStore.ts`, `hooks/useDemoSync.ts`, `components/demo/`. Before deleting, record the features agents lack (water cycles, refuel retreat, air limits by daylight/wind, standoff retries) as input to Epic F. | `grep -r DispatchPlanner frontend/src` is empty; build passes; `PlansPanel` can select/activate/complete a plan and `/units` drives the map. **Landed:** files deleted, `Operação` tab removed, map uses backend tracks. |
-| A3 ✅ | P0 | [FE] | **Merge "Planos" and "Operação" into one "Resposta" flow** for the baseline in focus: plans A/B with status; side-by-side metrics vs baseline; "Ver no mapa" A/B/base at the same minute; "Selecionar" → "Ativar" → "Encerrar"; per-action list grouped by organization with rationale visible. | Planos and Operação tabs are gone; one panel drives the decision. **Landed:** status tags, select/activate/complete, organization groups, visible rationale and action status. |
-| A4 ✅ | P0 | [FE] | **Single focus model.** One store field `focus: { baselineId, shown: 'base' \| planId }`. Nothing re-runs a baseline behind the operator's back. Persistent header chip: *Cenário · base/plano A/B · simulation id · T+min*. | Switching tabs never changes the fire on screen; the chip always tells the truth. **Landed:** the existing `baseSimulationId`/`activePlan` state drives the chip; no separate `focus` field was introduced. |
-| A5 ✅ | P0 | [FE] | Delete `api/scenarios/operationalIncidentScenario.ts` (UNWIRED, buggy). | File gone. **Landed.** |
-| A6 | P1 | [FE] | **Operator edits a plan** instead of building one: remove/add a vehicle, move a target, change a trigger time → `PATCH /plans/{id}` (merge-patch) → `POST /plans/validate` → re-simulate. | An edited plan B′ appears next to A/B with its own what-if. |
-| A7 | P1 | [SPEC]+[BE]+[AG] | Optional: **"Pedir planos" button.** Needs a way for the UI to request plans (e.g. `POST /simulations/{id}/plan-requests` that the agents watcher consumes, with status). Until then A1's watcher is enough. | Proposal approved or rejected. |
-| A8 ◐ | P1 | [AG] | Tag/label hygiene: agents stop titling with `[lab]` in service mode; plans carry `variant`, `strategy`, `alertLevel` and an `objective` the UI can show as "A: vidas primeiro / B: área ardida". | Plans read well in the UI without decoding. **Partial:** service titles and variant/strategy/alertLevel exist; check the objective text. |
+| A1 ✅ | P0 | [AG] | **Agents as a service.** `agents/Dockerfile` + the `agents` service run `watcher.py`; it polls baselines, skips ones with plans, publishes A/B and requests both what-ifs. | **Landed** (`docker-compose.yaml` agents service, `watcher.py`). A baseline started from the UI gets A/B and their what-ifs with no terminal. |
+| A2 ✅ | P0 | [FE] | **Remove the client-side planner.** Delete `domain/dispatchPlanner.ts`, `usecases/dispatchDemo.ts`, `store/demoStore.ts`, `hooks/useDemoSync.ts`, `components/demo/`. | **Landed.** Files gone, the Operação tab gone, the map uses backend tracks. |
+| A3 ✅ | P0 | [FE] | **Merge "Planos" and "Operação" into one "Resposta" flow** for the baseline in focus: plans A/B with status; side-by-side metrics vs baseline; "Ver no mapa" A/B/base at the same minute; "Selecionar" → "Ativar" → "Encerrar"; per-action list grouped by organization with rationale visible. | **Landed** (`PlansPanel.tsx:348-419`). Also: combat timeline per plan (`AttackTimeline.tsx`). |
+| A4 ✅ | P0 | [FE] | **Single focus model.** One store field `focus: { baselineId, shown: 'base' \| planId }`. Nothing re-runs a baseline behind the operator's back. Persistent header chip: *Cenário · base/plano A/B · simulation id · T+min*. | **Landed** with the existing `baseSimulationId`/`activePlan` state; no separate `focus` field. `TopBar.tsx:85-99`. |
+| A5 ✅ | P0 | [FE] | Delete `api/scenarios/operationalIncidentScenario.ts` (UNWIRED, buggy). | **Landed.** |
+| A6 ◐ | P1 | [FE] | **Operator edits a plan** instead of building one: remove/add a vehicle, move a target, change a trigger time → `PATCH /plans/{id}` (merge-patch) → `POST /plans/validate` → re-simulate. | **Backend + client exist, no UI caller.** `plansApi.patchAction` (`api/services/plans.ts:85`) is **UNWIRED**. Done when an edited plan B′ appears next to A/B with its own what-if. |
+| A7 ✅ | P1 | [SPEC]+[BE]+[AG] | **"Pedir planos" button.** The UI asks the agents for a new pair, with status. | **Landed:** spec paths `/simulations/{id}/plan-requests`, `/plan-requests`, `/plan-requests/{id}`, `/plan-requests/{id}/claim`; backend service + tests; watcher claims and reports `claimed → composing → judging → adapting → publishing → simulating → done`; `PlanRequestBox`. |
+| A8 ✅ | P1 | [AG] | Tag/label hygiene: agents stop titling with `[lab]` in service mode; plans carry `variant`, `strategy`, `alertLevel` and `objectives` the UI can show as "A: vidas primeiro / B: área ardida". | **Landed:** `alternatives.relabel` sets `variant`/`title`/`strategy`/`objectives`; `orchestrator.py:1403` sets `alertLevel`; `PlansPanel.tsx:367-369` shows strategy/alert level; `[lab]` is reserved for evaluator runs (`AGENTS_SKIP_LABEL_PREFIX`). |
 
 ### Epic B — Roads are mandatory, enforced by the backend (fixes R5)
 
-> **Contract gap (2026-10-21): B7 did not land.** `RoutingService` already returns `no_road_access` and `ArrivalEstimator` returns `target_unreachable`/`route_off_network`, and `RouteAccess` carries the origin/target walk metres internally, but `api-spec/openapi.json`'s `Route` schema still has no `access`, `parkAt`, `snapDistanceM`, `walkM` or `walkMinutes`, and the new codes are undocumented. The UI cannot show the park/walk leg until a spec PR lands.
-
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| B1 ✅ | P0 | [BE] | **Max snap distance.** `RoutingService` rejects (`no_road_access`) when origin/target is farther than `Routing.MaxSnapM` (500 m in settings) and adds a warning above a lower threshold. | A target 2 km from any road gives `found:false` + reason. **Landed** (`RoutingService.cs:44-51`, `appsettings.json:335`). `RoadGraph.Snap` itself is still unbounded; only `/routing/access` still uses it without a pre-check. |
-| B2 ◐ | P0 | [BE] | **Last-mile leg.** The route returns the parking point and the on-foot distance/time to the target (walking speed from `Rules`). The crew's effect starts at *drive + walk* time. | `RouteAccess` + `ArrivalEstimator.EstimateAsync` use the sum; **internal only**, not exposed in the API (B7). |
-| B3 ◐ | P0 | [BE] | **Backend computes ETAs, never trusts them.** In `PlanInterventions.CrewAsync/LineAsync` and `DispatchService`, compute ETA with `RoutingService` from the vehicle's station/position at the trigger time; only compare client `etaMinutes`. No ETA ⇒ unreachable ⇒ no effect, never 0. | Removing `etaMinutes` does not make crews appear at T+0. **Vehicles done** (`PlanRouter`, `ArrivalEstimator`); personnel pools and the unknown-origin fallback still use `r.EtaMinutes` (`PlanInterventions.cs:84,112,133`). |
-| B4 ✅ | P0 | [BE] | **Validate routes in plans and dispatches.** `DispatchService` does not prefer `input.Route` blindly; `PlanValidator` checks every ground resource is routable at its trigger time (closures + predicted fire + vehicle profile) and emits `target_unreachable` / `route_off_network`. | A hand-drawn straight-line route fails validation. **Landed** (`DispatchService.cs:46,73-74`, `PlanValidator.cs:198-200`). |
-| B5 ✅ | P1 | [BE] | **Vehicle state is road-constrained.** `PATCH /vehicles/{id}/state` snaps ground-vehicle positions to the network (or rejects beyond `MaxSnapM`) unless `source=gps` explicitly. | A ground vehicle cannot be placed in a field via the API. **Landed** (`VehicleStateService.cs:14-25`, `PositionToleranceM=100`). |
-| B6 | P1 | [BE] | Re-route on change: when a road closure is created or the fire cuts a road on an active route, recompute affected active dispatches' routes and ETAs (and log it). | Closing a road mid-operation reroutes units on the next tick. |
-| B7 ❌ | P0 | [SPEC] | Contract packet for B1/B2: `RoutePlan.access { parkAt: LatLon, snapDistanceM, walkM, walkMinutes }`, new issue codes `no_road_access`, `route_off_network`. | **Not landed.** `Route` schema at `openapi.json:11704` has none of these; codes absent. Must be a spec PR before the UI consumes them. |
-| B8 | P1 | [BE] | `RoadCutsCache` key includes road-network version (agents README proposal 5). | No 500 on `/threatened` after re-ingest. |
+| B1 ✅ | P0 | [BE] | **Max snap distance.** `RoutingService` rejects (`no_road_access`) when origin/target is farther than `Routing.MaxSnapM` (500 m) and warns above a lower threshold. | **Landed** (`RoutingService.cs:44-51`, `appsettings.json:354`). `RoadGraph.Snap` itself is still unbounded, and the access-time helpers keep using it directly (`RoutingService.cs:120,155`, `FireResults.cs:180-184`), so those paths snap any point to the nearest edge regardless of distance. |
+| B2 ◐ | P0 | [BE] | **Last-mile leg.** The route returns the parking point and the on-foot distance/time to the target. The crew's effect starts at *drive + walk* time. | **Internal only:** `RouteAccess` + `ArrivalEstimator` use the sum; not exposed in the API (B7). |
+| B3 ◐ | P0 | [BE] | **Backend computes ETAs, never trusts them.** Compute ETA with `RoutingService` from the vehicle's station/position at the trigger time; only compare client `etaMinutes`. No ETA ⇒ unreachable ⇒ no effect, never 0. | **Vehicles done** (`PlanRouter` rewrites route + ETA, `ArrivalEstimator`), **personnel pools still trust `r.EtaMinutes`** (`PlanInterventions.cs:84,112,133`), and the unknown-origin fallback returns the client value. |
+| B4 ◐ | P0 | [BE] | **Validate routes in plans and dispatches.** `DispatchService` does not prefer `input.Route` blindly; `PlanValidator` checks every ground resource is routable at its trigger time (closures + predicted fire + vehicle profile) and emits `target_unreachable` / `route_off_network`. | **Partially landed, corrected:** server routes win (`DispatchService.cs:46,71-76`), off-network routes are replaced with a `route_replaced` warning, unreachable targets are an error, and `PlanValidator` checks active closures + vehicle profile. **Predicted-fire avoidance is NOT checked** (`ArrivalEstimator.EstimateAsync` passes no `SimulationId`/`Avoid`). |
+| B5 ✅ | P1 | [BE] | **Vehicle state is road-constrained.** `PATCH /vehicles/{id}/state` snaps ground-vehicle positions to the network (or rejects beyond `MaxSnapM`) unless `source=gps`. | **Landed** (`VehicleStateService.cs`, `PositionToleranceM=100`). |
+| B6 ❌ | P1 | [BE] | Re-route on change: when a road closure is created or the fire cuts a road on an active route, recompute affected active dispatches' routes and ETAs (and log it). | **Not started.** `MaxReroutes` is only the routing loop inside one request (`RoutingService.cs:62`). |
+| B7 ❌ | P0 | [SPEC] | Contract packet: `RoutePlan.access { parkAt: LatLon, snapDistanceM, walkM, walkMinutes }`, new issue codes `no_road_access`, `route_off_network`, `target_unreachable`. | **Not landed.** The `Route` schema has none of these; the codes are absent. Must be a spec PR before the UI consumes them. |
+| B8 ❌ | P1 | [BE] | `RoadCutsCache` key includes the road-network version (agents README proposal 5). | **Not started.** Key is `{simulationId}:{key}:{radiusCells}` (`RoadCutsCache.cs:19`); re-ingesting a network keeps stale cuts. |
 
-### Epic C — Server-side operation simulation (fixes R4; the keystone for B and the frontend)
+### Epic C — Server-side operation simulation (fixes R4)
 
-> **Dependency correction (2026-10-21): C2 is blocked by C1.** There is no `OperationSimulator` in the backend, so the `/units` endpoints cannot be implemented as a controller wrapper. C4 is blocked by C2. Do C1 → C2 → C4, then C3/C5.
-
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| C1 ✅ | P0 | [BE] | **`OperationSimulator`** in `Services/Operations/`: given a plan (or active dispatches) and the what-if fire run, step every unit minute by minute — order → drive (route geometry from `RoutingService`) → park/walk → work → refill at nearest reachable water point (`/water-points/near` logic) → refuel → rest (`Rules.crews.maxContinuousWorkMinutes`) → return. Port the useful behaviour of the deleted `DispatchPlanner` here. | Deterministic tracks for every unit of a plan's what-if. **Landed and verified live:** supports both plan-action resources and plan-linked dispatches (seeded/activated plans store resources on dispatches); water/refill/rest cycles and deterministic tracks. Static water-point discovery and fire coupling remain for C3. |
-| C2 ✅ | P0 | [BE] | **Implement `GET /simulations/{simulationId}/units` and `/units/{unitId}/track`** (already in the spec) from C1 output; flip the `units` capability to supported. Contract params are `tMin` for `/units` and `stepMin` for `/track`, not `?time=`. | Endpoints return data; `dotnet test` passes contract tests. **Landed:** both endpoints implemented. There is no `units` flag in `Capabilities`; do not invent one without a spec PR. |
-| C3 | P0 | [BE] | Couple C1 with the fire: crew effect windows (`CrewWorkSchedule`) come from the *actual* simulated arrival/refill windows, and a unit whose route is cut by fire is delayed or rerouted. Crew exposures (`crewExposures`) use real positions. | What-if fire and unit tracks agree with each other. |
-| C4 ✅ | P0 | [FE] | **Render units from the backend.** `unitLayer.ts` reads `/units` + `/track`; road-following interpolation uses the track geometry. Remove any client position math. | Units on the map are exactly what the API returns. **Landed:** `useUnitsSync` loads metadata + one-minute tracks; the layer interpolates only between backend samples. The spec exposes positions, not route geometry, so interpolation is linear between samples. |
-| C5 | P1 | [BE] | Live mode: when a plan is active, the backend (not the browser) advances dispatch status and vehicle state from C1 against wall clock or exercise clock (see Epic H). Delete the browser "writer" (`createWriter`). | Closing the browser does not stop or corrupt an exercise. |
+| C1 ✅ | P0 | [BE] | **`OperationSimulator`** in `Services/Operations/`: given a plan (or active dispatches) and the what-if fire run, step every unit minute by minute — order → drive → park/walk → work → refill → rest → return. | **Landed:** deterministic tracks, water/refill/rest (`CrewWorkSchedule`), plan actions *and* plan-linked dispatches; DB and static entry points harmonized. Residual: J4 (static path can fall back to a straight line). |
+| C2 ✅ | P0 | [BE] | **`GET /simulations/{simulationId}/units` and `/units/{unitId}/track`** from C1 output. Contract params are `tMin` and `stepMin`. | **Landed** (`SimulationResultsController.cs:67,72`). There is no `units` capability flag; do not invent one without a spec PR. |
+| C3 ❌ | P0 | [BE] | Couple C1 with the fire: crew effect windows come from the *actual* simulated arrival/refill windows, and a unit whose route is cut by fire is delayed or rerouted. Crew exposures use real positions. | **Not started.** `OperationSimulator` uses `CrewWorkSchedule.Plan(arrive, until, …)` (planned windows), not the fire's arrival; `ArrivalEstimator` has no fire input; `PlanInterventions`/`PlanValidator` never re-route around the predicted fire. This is the biggest remaining product gap. |
+| C4 ✅ | P0 | [FE] | **Render units from the backend.** `unitLayer.ts` reads `/units` + `/track`; interpolation uses the track geometry. Remove any client position math. | **Landed:** `useUnitsSync` loads metadata + one-minute tracks; the layer interpolates between backend samples. The spec exposes positions, not route geometry. |
+| C5 ❌ | P1 | [BE] | Live mode: when a plan is active, the backend (not the browser) advances dispatch status and vehicle state from C1 against wall clock or exercise clock. Delete the browser "writer". | **Not started.** The browser writer is already gone, but nothing advances active dispatches server-side. |
 
 ### Epic D — Dynamic weather in the backend (fixes R8)
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| D1 ◐ | P0 | [BE] | **Fetch more from Open-Meteo:** `wind_gusts_10m`, `precipitation`, `cloud_cover` are in; `visibility`, `cape`, `is_day` are not. Store in cache, expose in `WeatherSample` (`gustKmh`, `precipitationMmH`, `cloudCoverPct` already exist). | `/simulations/{id}/weather` shows rain/clouds for a rainy historical date. **Partial** (`OpenMeteoSource.cs:47`). |
-| D2 ✅ | P1 | [BE]+[EN] | Use what we fetch: precipitation → fuel moisture (landed: `DeadFuelMoisture` wetting), cloud cover → solar term (landed: `SolarRadiation.Wm2`), and intensity-dependent rain extinction threshold (landed in `FireBehaviorModel.cs:88-99`). Gusts in spotting remain informational. | Capability notes match behaviour. **Landed.** |
-| D3 | P1 | [SPEC]+[BE] | **Storm cells (spatial weather).** New event `storm_cell { path: LineString, speedKmh, radiusM, start/end, outflowWindKmh, gustKmh, precipitationMmH, lightningPerMin }`. Backend turns it into per-member `wind_<m>.f32` grids (the engine seam already accepts them) + local precipitation. Expose `GET /simulations/{id}/weather/field?tMin=` (wind u/v + precip grid, coarse) for rendering. | A thunderstorm crossing the map visibly bends the fire and wets it locally. |
-| D4 | P2 | [SPEC]+[BE] | **Dry lightning ignitions:** optional `lightningIgnitions: true` on a storm cell → new ignitions with probability by fuel moisture, listed in the simulation. Great for training. | New fires appear under a dry storm, deterministic by seed. |
-| D5 ◐ | P1 | [BE] | `POST /weather/resolve` returns the effective series in one call so the UI preview equals what the engine will see (already close; it returns `samples` + `warnings`, not an echo of the event list). Verify with keyframes + all events. | Preview and run are byte-identical in weather. **Partial.** |
+| D1 ◐ | P0 | [BE] | **Fetch more from Open-Meteo:** `wind_gusts_10m`, `precipitation`, `cloud_cover` are in; `visibility`, `cape`, `is_day` are not. | **Partial** (`OpenMeteoSource.cs:47,56` and `weather_obs` `detail_version`). `/simulations/{id}/weather` shows rain/clouds for a rainy date. |
+| D2 ✅ | P1 | [BE]+[EN] | Use what we fetch: precipitation → dead-fuel wetting, cloud cover → solar term, intensity-dependent rain extinction. | **Landed, corrected:** gusts **do** affect the fire (`FireBehaviorModel.cs:46` with `GustFactor=0.5`), rain wets fuel and damps spread (`RainFactor`), clouds reduce solar heating. The capability note in code is stale (J2). |
+| D3 ❌ | P1 | [SPEC]+[BE] | **Storm cells (spatial weather).** Event `storm_cell { path: LineString, speedKmh, radiusM, start/end, outflowWindKmh, gustKmh, precipitationMmH, lightningPerMin }`, per-member wind grids, `GET /simulations/{id}/weather/field?tMin=`. | **Not started.** No `storm_cell`, no `weather/field` in the spec. |
+| D4 ❌ | P2 | [SPEC]+[BE] | **Dry lightning ignitions:** `lightningIgnitions: true` on a storm cell → deterministic new ignitions by fuel moisture. | **Not started.** |
+| D5 ◐ | P1 | [BE] | `POST /weather/resolve` returns the effective series so the UI preview equals what the engine will see. | **Partial:** `WeatherResolveResponse` returns `samples`, optional `ensemble` and `warnings`, but no echo of the event list; preview-vs-run equality has not been verified with keyframes + all events. |
 
 ### Epic E — Dynamic weather & visual weather in the frontend (fixes R7, R9)
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| E1 ◐ | P0 | [FE] | **Weather timeline editor** (replaces the 4 sliders): a time axis over the scenario with draggable **keyframes** (wind speed, direction, gust, humidity, temp, rain) and **event chips** for every backend event. Base = "real for the date" or "manual". Every edit calls `POST /weather/resolve` and redraws the chart. | Operator builds "NW 20 km/h, front at T+90 swings to SW 45 km/h with rain at T+120" without typing JSON. **Partial:** range event chips for rain/storm/clouds/wind_shift/wind_scale/heat_dry + preview exist; no full keyframe editor for all nine events. |
-| E2 ✅ | P0 | [FE] | **Wind on the map:** animated wind particles/streamlines over the terrain following `windFromDeg` (FROM) and speed; gusts as pulses. | Wind direction is readable at a glance in 3D. **Landed** (`windLayer.ts`). |
-| E3 ✅ | P0 | [FE] | **Sky & atmosphere driven by weather + time:** sun position from date/time/location (day/night, dusk), sky colour and fog density from `cloudCoverPct`/`visibility`/smoke, lights dimmed under overcast. | Night looks like night; overcast looks overcast. **Landed** (`sceneEngine.ts:157-309`). |
-| E4 ✅ | P0 | [FE] | **Clouds:** instanced billboard/volume cloud layer whose coverage = `cloudCoverPct`, moving with the wind at altitude. | Coverage visibly changes along the playback. **Landed** (`cloudLayer.ts`). |
-| E5 ✅ | P1 | [FE] | **Rain:** GPU particle rain (density from `precipitationMmH`), wet-terrain darkening, reduced visibility; snow not needed. | Rain starts/stops when the series says so. **Landed** (`rainLayer.ts`, `terrainMesh` wet sheen). |
-| E6 ◐ | P1 | [FE] | **Storms:** cumulonimbus cell mesh following the storm path (D3), lightning flashes (`lightningPerMin`), outflow gust ring, optional thunder audio toggle. | A storm cell crosses the map in sync with the fire's reaction. **Partial:** procedural lightning exists; no D3 storm path/outflow. |
-| E7 ✅ | P1 | [FE] | Meteo tab becomes useful: current conditions card + full chart with gusts/rain/cloud bands + **fire-weather indicators** (30-30-30 rule), fine-fuel moisture. | Operator sees *why* the fire is accelerating. **Landed** (`WeatherPanel.tsx`). |
-| E8 ✅ | P1 | [FE] | Weather HUD: rain, clouds, visibility, day/night, and an "upcoming change in N min" alert from the series. | HUD warns before the wind shift. **Landed** (`WeatherHud.tsx`). |
+| E1 ◐ | P0 | [FE] | **Weather timeline editor** (replaces the 4 sliders): a time axis with draggable **keyframes** (wind, direction, gust, humidity, temp, rain) and **event chips** for every backend event. Every edit calls `POST /weather/resolve` and redraws the chart. | **Substantially landed:** interactive event track — drag a range, click an event to edit it in a popover, delete and re-simulate (`PlaybackBar.tsx:89-263`) — for rain, storm, clouds, wind shift, wind factor and heat/dry; base weather has numeric + wind-rose controls and a preview. **Missing:** `front_passage`, `wind_set`, explicit `humidity_shift`/`temperature_shift`, and arbitrary keyframe curves. |
+| E2 ✅ | P0 | [FE] | **Wind on the map:** animated wind particles/streamlines following `windFromDeg` (FROM) and speed; gusts as pulses. | **Landed** (`windLayer.ts`). |
+| E3 ✅ | P0 | [FE] | **Sky & atmosphere driven by weather + time:** sun position from date/time/location, sky colour and fog from cloud/visibility/smoke, lights dimmed under overcast. | **Landed** (`sceneEngine.ts`, `WeatherHud.tsx`). |
+| E4 ✅ | P0 | [FE] | **Clouds:** instanced layer whose coverage = `cloudCoverPct`, moving with the wind. | **Landed** (`cloudLayer.ts`). |
+| E5 ✅ | P1 | [FE] | **Rain:** GPU particle rain (density from `precipitationMmH`), wet-terrain darkening, reduced visibility. | **Landed** (`rainLayer.ts`, wet sheen). |
+| E6 ◐ | P1 | [FE] | **Storms:** cumulonimbus cell following the storm path (D3), lightning flashes, outflow gust ring, optional thunder. | **Partial:** procedural lightning exists; no D3 storm path or outflow. |
+| E7 ✅ | P1 | [FE] | Meteo tab becomes useful: current conditions + full chart with gusts/rain/cloud bands + **fire-weather indicators** (30-30-30), fine-fuel moisture. | **Landed** (`WeatherPanel.tsx:23-105`). |
+| E8 ✅ | P1 | [FE] | Weather HUD: rain, clouds, visibility, day/night, "upcoming change in N min". | **Landed** (`WeatherHud.tsx`, `Viewport.tsx:45`). |
 
 ### Epic F — Agents grow up (fixes R6)
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| F1 ✅ | P0 | [AG] | **Travel time for every ground unit** via `POST /routing/route` (vehicle profile, `simulationId`, `avoid.predictedFire`); trigger + ETA drive when the action starts. Unreachable units are not assigned. (Until B3 lands the backend still trusts this ETA, so it must be right.) | README "whole fleet on site" limit removed. **Landed** (`agents/firetrace_agents/routing.py` / `plan.py`; see PR #13 / `c15740c`). |
-| F2 | P0 | [AG] | **GNR agent:** road closures on roads the fire cuts within the horizon (`/simulations/{id}/road-status`), traffic-control points at closure ends, keep evacuation corridors open (`keep_access_routes`). | Plans contain GNR actions with reasons. |
-| F3 | P1 | [AG] | **Proteção Civil agent:** owns evacuation vs shelter-in-place (move `life.py` decisions here), assigns transport (buses), opens shelters, establishes the command post (`establish_command_post`). | Evacuations have transport, route and destination. |
-| F4 | P1 | [AG] | **INEM agent:** medical standby near the most exposed crews/places; reacts to `crewExposures` from the what-if. | Medical actions exist and move with exposure. |
-| F5 | P1 | [AG] | **Water & fatigue** in agent reasoning (refill points reachable by road, work/rest windows from `/rules`). Port from the deleted frontend planner (A2 list). | Assignments respect duty cycles. |
-| F6 | P1 | [AG] | **Choose with the engine:** generate N candidate plans, simulate each (`/plans/{id}/simulate`), publish the best two by objective (A lives, B area). Report deltas in the plan `summary`. | A/B are the best of N, not first guesses. |
-| F7 | P1 | [AG] | **Robustness by default:** evaluate each candidate on a perturbed weather ensemble (wrong-forecast wind shift, `scripts/robustness.py` logic) and say so in `rationale`. | Plans carry "robust to ±30° wind" type statements. |
-| F8 | P2 | [AG] | **Conditional triggers:** actions with `trigger` on fire reaching an area / wind change instead of only `at_time`. | Plans express "if the fire crosses the N-101, close…". |
-| F9 | P2 | [AG] | Campaign mode wired to live operations: every stage re-plans from the active plan's state (`/locations/{id}/deployment`) and proposes `PATCH /plans/{id}`. | Rolling re-plan visible in the UI as plan revisions. |
+| F1 ✅ | P0 | [AG] | **Travel time for every ground unit** via `POST /routing/route`; trigger + ETA drive when the action starts; unreachable units are not assigned. | **Landed** (`agents/firetrace_agents/routing.py`, `plan.py`, PR #13). |
+| F2 ✅ | P0 | [AG] | **GNR agent:** closures on roads the fire cuts within the horizon, control points at closure ends, closure timed before the predicted cut. | **Landed** (`gnr.py`, wired at `orchestrator.py:321-331`); plans carry GNR actions with reasons and reopening times. |
+| F3 ✅ | P1 | [AG] | **Proteção Civil agent:** evacuation vs shelter-in-place, transport, shelters, command post, public alerts. | **Landed** (`life.py` transport + `support.py` shelters/`establish_command_post`/alerts; `SupportAgents`). |
+| F4 ✅ | P1 | [AG] | **INEM agent:** medical standby near the most exposed crews/places; reacts to `crewExposures` from the what-if. | **Landed** (`support.py:73-110`, placed behind crew sites). |
+| F5 ✅ | P1 | [AG] | **Water & fatigue** in agent reasoning (reachable refill points, work/rest from `/rules`). | **Landed** (`duty.py`, `water_points_near`, `duty_factor` applied to both effects and metrics). |
+| F6 ◐ | P1 | [AG] | **Choose with the engine:** generate N candidates, simulate each, publish the best two by objective. | **Code landed, off by default:** `alternatives.py` supports N candidates and judges each; the watcher defaults `AGENTS_CANDIDATES=1` (each extra candidate costs ~75 s). Set 2 for the demo if time allows. |
+| F7 ✅ | P1 | [AG] | **Robustness by default:** evaluate each published plan on a ±30° wrong-wind run and say so. | **Landed** (`judge.py`, `alternatives.py:113-131`; `WIND_ERROR_DEG = 30`), with the robustness line in the plan summary. |
+| F8 ◐ | P2 | [AG] | **Conditional triggers:** actions with `trigger` on fire reaching an area / wind change instead of only `at_time`. | **Partial:** `on_fire_arrival` and `on_action_complete` exist in the spec and are emitted by the agents (`support.py:234`, `firefighter.py`), but the backend ignores them when timing a plan (J3), and there is no wind-change or arbitrary geofence trigger. |
+| F9 ✅ | P2 | [AG] | Campaign mode wired to live operations: re-plan from the active plan's state and propose `PATCH /plans/{id}`. | **Landed via `revision.py`:** watches `selected`/`active` plans, re-plans from each plan's basis, PATCHes actions + summary, respects the operator's edit. It does not read `/locations/{id}/deployment`; `campaign.py` is still an offline evaluator. |
 
 ### Epic G — Frontend gets better (fixes R10)
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| G1 | P0 | [FE] | **New navigation = the workflow:** `Cenário → Simulação → Resposta → Execução → Revisão` stepper (left), map always centre, contextual right drawer. Roads/Meios/Meteo become **map layers + drawers**, not top tabs. Recursos stays as an admin view. | ≤ 5 top-level entries; a first-time user follows the steps. |
-| G2 | P0 | [FE] | **Scenario editor** (Cenário step): pick location, click ignition(s), start, duration, weather timeline (E1), ensemble size; save as scenario (`POST /scenarios`) so agents and colleagues see the same thing. | Custom scenarios are saved, not "custom" throwaways. |
-| G3 ◐ | P0 | [FE] | **Comparison view:** split-screen or swipe between base / A / B at the same minute + delta table (area, crown fire, buildings, population, crew exposures, roads cut). | Decision in one screen. **Landed as the read-only comparison card** in `PlansPanel` (base/A/B metrics + deltas); split-screen is the remaining P1 part. |
-| G4 | P1 | [FE] | **Timeline events on the playback bar:** markers for weather events, action triggers, unit arrivals, roads cut, places threatened; click to jump. | The operator can scrub to "what happens at the wind shift". |
-| G5 | P1 | [FE] | **Per-organization view** (filter by Bombeiros / GNR / INEM / PC): each org sees its actions, units and status, can report progress (`PATCH /plans/{id}/actions/{actionId}`). | Matches AGENTS.md step 4 of "what the system does". |
-| G6 | P1 | [FE] | Capability gating everywhere (`/capabilities`): unsupported weather fields/events/interventions disabled with the note as tooltip. | No `422 unsupported_capability` reachable from the UI. |
-| G7 | P1 | [FE] | Error/empty states: failed simulation shows `error.code`/`detail`, "agents still working", "no plans yet", without blank panels. | No silent empty panel. |
-| G8 | P1 | [FE] | Smoke-test suite (Playwright against Prism mock: `npx @stoplight/prism-cli mock api-spec/openapi.json`) for the 5 workflow steps. | CI runs it. |
+| G1 ❌ | P0 | [FE] | **New navigation = the workflow:** `Cenário → Simulação → Resposta → Execução → Revisão` stepper; roads/meios/meteo become map layers + drawers. | **Not started.** 6 top tabs (`TopBar.tsx:9-16`). |
+| G2 ❌ | P0 | [FE] | **Scenario editor:** pick location, click ignition(s), start, duration, weather timeline (E1), ensemble size; save via `POST /scenarios`. | **Not started.** `scenariosApi` only has `listForLocation` and `get` (`api/services/scenarios.ts`). |
+| G3 ◐ | P0 | [FE] | **Comparison view:** split-screen or swipe between base / A / B at the same minute + delta table. | **Read-only comparison card landed** (`CompareTable` in `PlansPanel.tsx:337`, metrics + deltas). Split-screen/swipe remains P1. |
+| G4 ◐ | P1 | [FE] | **Timeline events on the playback bar:** markers for weather events, action triggers, unit arrivals, roads cut, places threatened; click to jump. | **Partial:** weather + ignition markers and an editable event track (`PlaybackBar.tsx:89-106,297-340`); no action/arrival/road-cut markers. |
+| G5 ◐ | P1 | [FE] | **Per-organization view:** each org sees its actions, units and status, and can report progress (`PATCH /plans/{id}/actions/{actionId}`). | **Partial:** actions grouped by organization with logos and rationale (`PlansPanel.tsx:405-419`); no org filter, no progress reporting, `patchAction` unused. |
+| G6 ◐ | P1 | [FE] | Capability gating everywhere (`/capabilities`): unsupported weather fields/events/interventions disabled with the note as tooltip. | **Partial:** capabilities are fetched (`useBootstrap.ts:15-16`) but only `limits` is used (`SimulationForm.tsx:57`); no gating of events/interventions. |
+| G7 ✅ | P1 | [FE] | Error/empty states: failed simulation shows `error.code`/`detail`, "agents still working", "no plans yet", without blank panels. | **Landed** (`PlansPanel.tsx:339-346`, `PlanRequestBox.tsx:100,169,181`, `useSimulationActions.ts:228-231`). No retry button. |
+| G8 ❌ | P1 | [FE] | Smoke-test suite (Playwright against Prism mock) for the 5 workflow steps. | **Not started.** No test script, no Playwright dependency. |
 
 ### Epic H — Training & decision-support features (what makes it a real tool)
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| H1 | P1 | [SPEC]+[BE]+[FE] | **Exercise mode:** an exercise clock (pause/resume/speed) owned by the backend; trainer and trainees see the same minute. | Two browsers stay in sync. |
-| H2 | P1 | [SPEC]+[BE]+[FE] | **Injects:** trainer adds events during an exercise (wind shift, new ignition, road blocked, vehicle breakdown, crew casualty) that re-run the forecast from "now". Needs exact resume (agents README proposal 6). | A wind-shift inject changes the fire and triggers re-planning. |
-| H3 | P1 | [BE]+[FE] | **After-action review:** event log of decisions vs outcome (who ordered what, when, predicted vs simulated), exportable. | A PDF/JSON debrief per exercise. |
-| H4 | P2 | [BE] | **Roles & organizations:** auth with org scope (GNR sees/acts on GNR actions), audit trail. | Actions are attributable. |
-| H5 | P2 | [BE]+[FE] | **Real incident mode:** ingest live weather (forecast) and GPS positions (`source=gps`, B5) to run the same loop on a real fire. | Same UI, live data. |
+| H1 ❌ | P1 | [SPEC]+[BE]+[FE] | **Exercise mode:** an exercise clock (pause/resume/speed) owned by the backend. | **Not started.** No exercise endpoints; playback is client-side. |
+| H2 ❌ | P1 | [SPEC]+[BE]+[FE] | **Injects:** trainer adds events during an exercise that re-run the forecast from "now". | **Not started.** |
+| H3 ❌ | P1 | [BE]+[FE] | **After-action review:** event log of decisions vs outcome, exportable. | **Not started.** |
+| H4 ❌ | P2 | [BE] | **Roles & organizations:** auth with org scope, audit trail. | **Not started.** |
+| H5 ❌ | P2 | [BE]+[FE] | **Real incident mode:** live weather + GPS positions (`source=gps`) on the same loop. | **Not started.** |
 
 ### Epic I — Quality gates that keep the loop flawless
 
-| ID | Pri | Vertical | Task | Done when |
+| ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| I1 | P0 | all | **End-to-end smoke script** (`scripts/e2e.ps1`): compose up → create scenario with a front passage → baseline → agents publish A/B → what-ifs → `/units` tracks all on roads (every track point within N m of a road edge). | One command proves the whole loop. |
-| I2 | P1 | [FE] | Regenerate `src/api/schema.ts` in CI and fail on diff. | No contract drift in the UI. |
-| I3 | P1 | [AG] | Run agent tests against Prism mock in CI, plus one live run in the e2e script. | Agents can't silently break on a contract change. |
-| I4 | P1 | [BE] | Property test: every route geometry point lies on the network; every unit track point of a ground vehicle lies on the network or within the walk leg. | Road rule is tested, not hoped. |
+| I1 ❌ | P0 | all | **End-to-end smoke script** (`scripts/e2e.ps1`): compose up → scenario with a front passage → baseline → agents publish A/B → what-ifs → `/units` tracks on roads. | **Not started.** No `scripts/` directory. |
+| I2 ❌ | P1 | [FE] | Regenerate `src/api/schema.ts` in CI and fail on diff. | **Not started.** The script exists (`generate:api-types`), but there is no CI. |
+| I3 ❌ | P1 | [AG] | Run agent tests against Prism mock in CI, plus one live run in the e2e script. | **Not started.** 9 agent test modules exist (`agents/tests/`), but no CI and no Prism run. |
+| I4 ❌ | P1 | [BE] | Property test: every route point on the network; every ground-unit track point on the network or within the walk leg. | **Not started.** `RoutingTests.cs` is example-based. |
+
+### Epic J — Correctness debt found in the 2026-10-22 audit
+
+| ID | Pri | Vertical | Task | Status / done when |
+|---|---|---|---|---|
+| J1 ⚠️ | P0 | [BE] | **`DispatchService` drops four fields.** `DispatchService.cs:46` ends the initializer with `Route = route ?? input.Route, // … cliente` and comments out `Notes = input.Notes, Status = DispatchStatus.Ordered, EtaMinutes = eta, Position = subject.Position`. `POST /dispatches` therefore stores `etaMinutes: null`, `notes: null`, no position (status survives only because `Ordered` is the default). | A created dispatch echoes `notes`, `etaMinutes` and `position`; `ResourceOverview` shows the ETA. One-line fix + a test. |
+| J2 ⚠️ | P1 | [BE] | **Stale capability note.** `CapabilityCatalog.cs:17` says gusts are informational and the engine uses the mean wind; `FireBehaviorModel.cs:46` uses `GustFactor`. | Note reads "entra no vento de meia-chama com `GustFactor`". |
+| J3 ⚠️ | P1 | [BE] | **Conditional triggers are ignored when timing a plan.** `PlanTiming.StartMinutes` only handles `AtTimeTrigger`; `on_fire_arrival`/`on_action_complete` start at minute 0 in validation, what-if and unit tracks. | Either resolve the trigger to a minute from the run, or make `PlanValidator` warn `trigger_not_simulated` and document the limitation in the spec. |
+| J4 ⚠️ | P1 | [BE] | **Static simulator can go off-road.** `OperationSimulator.Simulate` (`OperationSimulator.cs:122`) draws `home → site` when `r.Route` is null; the HTTP path estimates a road route, so this is a test/entry-point hazard. | The static path requires a route or returns a validation error; tests assert every ground track point is near a road. |
+
+### Epic K — LLM commander (new since the original audit)
+
+> `agents/LLM_COMMANDER_PLAN.md` is the design; `agents/firetrace_agents/commander/` is a working T+0 implementation. It is **opt-in**: `docker-compose.yaml` sets `AGENTS_COMMANDER=rules`, so the demo uses the rule-based planner unless the environment changes.
+
+| ID | Pri | Vertical | Task | Status / done when |
+|---|---|---|---|---|
+| K1 ✅ | P1 | [AG] | **Commander chooses the strategy for A/B at T+0**, with a JSON-schema-validated menu, rules fallback, and the judge still enforcing zero casualties. | **Landed:** `commander/` (6 modules — `commander`, `schema`, `llm`, `retrieval`, `cards`, `environment` — plus `__init__`), wired in `alternatives.py`; `AGENTS_COMMANDER=llm` + key turns it on. |
+| K2 ❌ | P2 | [AG] | **Tactics knowledge base as YAML + embedding retrieval.** | **Not started:** cards are built-in Python (`commander/cards.py`); retrieval is rule-filtered, no embeddings. |
+| K3 ❌ | P2 | [AG] | **Commander drives re-plans and revisions**, not just T+0. | **Not started:** waves call `orchestrator.run_cycle` with the fixed order; `revision.py` does not consult the commander. |
+| K4 ❌ | P1 | [AG] | **Evaluation: commander vs rules on Penha + Falperra** (buildings, area, casualties, fallback rate). | **Not measured.** Needed before claiming the commander is better. |
 
 ---
 
-## 4. Suggested order from 2026-10-21 (Task 2 + Task 3; Task 1 stays out)
+## 4. What to do before 23 Oct 2026, 16:30 UTC
 
-The old "Day 1 / Day 2 / Day 3" schedule is obsolete: Day 1 already happened. The remaining work splits into two parallel tracks.
+The old day-by-day schedule is gone. With one day left, optimize for **demo coherence and truthfulness**, not breadth.
 
-**Task 2 — physics / weather / fuels / terrain (issue #18):**
+### Track 0 — must ship (a few hours)
 
-1. ✅ Branch `integrate/native-physics-weather` from `main` (`8dff00a`); **cherry-pick only `2defb3a`** (landed as `db782b9`).
-2. ✅ Resolve the conflicts by keeping the newer weather pipeline (PR #14/#15/#17) and adding the Rothermel surface-fire model + fuel catalog.
-3. ✅ Verify `DeadFuelMoisture` → `RothermelSurfaceFire` in the native engine; `dotnet test` in `backend/` passes 210/210 against PostgreSQL.
-4. ✅ Do **not** cherry-pick `835cc0d` (ELMFIRE runner optimisation). Task 1 stays out.
+1. **J1** — restore `Notes`, `Status`, `EtaMinutes`, `Position` on their own line in `DispatchService.cs:46` (keep the explanatory comment above it), add a test that `POST /dispatches` echoes them, run `dotnet test`. A visible contract bug for one line of work.
+2. **J2** — fix the capability note. One line; it is the API's own description of what the engine does.
+3. **Live smoke, manually (I1-lite).** `docker compose up -d`, wait for the agents, select the demo scenario, and verify in one pass: baseline succeeds → A/B published → both what-ifs succeed → `/units` and `/track` return road-following tracks → select/activate/complete works → the PlanRequest button produces a new pair. Record the run (screenshots + the simulation ids) as the demo's evidence. Do not block this on writing `scripts/e2e.ps1`.
+4. **B7 spec PR only if the UI will show the park/walk leg.** Otherwise keep it as a documented known gap; it does not block the current UI.
+5. **Freeze the demo.** One scenario, one backup recording, a warm cache of the baseline. Any change after the freeze needs a re-run of step 3.
 
-**Task 3 — EPIC plans (frontend A3/A4 → backend C1/C2/C4 → A2/G3):**
+### Track 1 — stretch, only if Track 0 is green
 
-1. ✅ **A3/A4 first** (frontend): select/activate/complete in `PlansPanel`, actions grouped by organization, visible rationale, and the persistent focus chip.
-2. ✅ **C1** (backend): `OperationSimulator` producing deterministic unit tracks from a plan.
-3. ✅ **C2** (backend): `/units` + `/units/{unitId}/track` from C1. No `units` capability flag exists in the schema; adding one needs a spec PR.
-4. ✅ **C4** (frontend): `unitLayer` reads the backend tracks; no client position math.
-5. ✅ **A2** (frontend): browser planner deleted (`dispatchPlanner` / `dispatchDemo` / `demoStore` / `useDemoSync` / `components/demo`).
-6. ◐ **G3** (frontend): the read-only comparison card (base/A/B metrics + deltas) is in `PlansPanel`; split-screen/swipe at the same minute remains P1.
+- **G5 progress reporting** — wire `plansApi.patchAction` to an action row; small UI, existing endpoint, closes A6/G5 together.
+- **G6 capability gating** — disable unsupported events/interventions with the note as a tooltip; prevents a `422` in front of the jury.
+- **F6 candidates=2** — set `AGENTS_CANDIDATES=2` in the demo environment and re-time the agents. Only if the demo has slack.
+- **C3 fire coupling** — the right next product step, but a half-day with real regression risk. **Do not start it on submission day.**
 
-**Contract and polish (after the critical path):** B7 spec PR, C3 fire coupling, F2 GNR agent, G1/G2 navigation, I1 e2e smoke. Everything P1/P2 goes after submission; storm cells (D3/E6) and exercise mode (H1/H2) are the strongest post-hackathon features.
+### Do not start before submission
 
-## 5. Contract proposals to raise now (PROTOCOL.md §1)
+`G1` navigation refactor, `G2` scenario editor, `D3`/`D4` storm cells, `H1`–`H3` exercise mode, `F8` backend trigger resolution, `I2`–`I4` CI/property tests, `K2`/`K3` commander waves. All are valuable, none is demo-critical, and each can destabilise the loop.
 
-> **B7 is the only P0 contract item and it is still missing.** Land this first; the UI cannot render the park/walk leg until the schema exists.
+**Priority change to flag:** `C3` remains P0 for the product but is removed from the submission-day critical path. The demo shows two coherent simulations (fire and units) rather than one fully coupled one; the gap is stated here rather than hidden.
+
+---
+
+## 5. Contract proposals to raise now (`PROTOCOL.md` §1)
+
+> **B7 is still the only P0 contract item.** The UI cannot render the park/walk leg until the schema exists.
 
 ```markdown
 [CONTRACT PROPOSAL: backend → openapi.json]
 - Endpoint / Schema: RoutePlan / Route, ValidationIssue codes
-- Proposed change: add `access { parkAt: LatLon, snapDistanceM, walkM, walkMinutes }`; new codes `no_road_access`, `route_off_network`
-- Reason: roads mandatory; crews park on the network and walk the last leg (B1/B2/B4). Backend already emits the codes and computes the legs internally.
-- Status: NOT LANDED. `Route` schema at `openapi.json:11704` has none of these fields; the codes are absent.
+- Proposed change: add `access { parkAt: LatLon, snapDistanceM, walkM, walkMinutes }`; new codes `no_road_access`, `route_off_network`, `target_unreachable`
+- Reason: roads mandatory; crews park on the network and walk the last leg (B1/B2/B4). Backend already computes the legs and emits the codes.
+- Status: NOT LANDED. The `Route` schema has none of these fields; the codes are absent.
 
 [CONTRACT PROPOSAL: backend → openapi.json]
 - Endpoint / Schema: WeatherEvent (new `storm_cell`), GET /simulations/{id}/weather/field
 - Proposed change: moving storm cell event + coarse wind/precip field per minute
-- Reason: spatial weather for storms and their rendering (D3/E6)
+- Reason: spatial weather for storms and their rendering (D3/E6). Not needed for the submission.
 
-[CONTRACT PROPOSAL: agents → openapi.json]   (optional, A7)
-- Endpoint / Schema: POST /simulations/{id}/plan-requests
-- Proposed change: UI asks agents for plans; status queued/running/done
-- Reason: "Pedir planos" button instead of a polling-only watcher
+[CONTRACT PROPOSAL: backend → openapi.json]   (correctness, J3)
+- Endpoint / Schema: Trigger / Plan validation
+- Proposed change: state that `on_fire_arrival` and `on_action_complete` are accepted but not simulated yet, or add a `trigger_not_simulated` warning code
+- Reason: `PlanTiming` only honours `at_time`; clients must not assume conditional timing is applied.
 ```
 
-Still open from `agents/README.md` (verify before acting): `InterventionFuelRemoval` shape mismatch, evacuation not reducing `populationExposed`, `fuel_break` missing from `ActionType`, what-if → plan back-link. Also verify whether `RoadCutsCache` still needs the road-network version key (B8) before closing it.
+`POST /simulations/{id}/plan-requests` was the previous optional proposal — it **landed** (A7), so it is no longer listed here.
+
+Still open from `agents/README.md` (verify before acting): `InterventionFuelRemoval` shape mismatch, evacuation not reducing `populationExposed`, `fuel_break` missing from `ActionType`, what-if → plan back-link. B8: confirmed that the cache key has no road-network version (`RoadCutsCache.cs:19`); the `/threatened` failure after a re-ingest was not reproduced.
+
+---
+
+## 6. How this audit was verified
+
+- **Repo state:** `git log`, `git status` (clean), `main = eb977c6` (2026-10-22), no `.github/`, no `scripts/`, frontend `package.json` has no test script.
+- **Contract:** `api-spec/openapi.json` read with targeted searches — 71 paths / 261 schemas; `plan-requests` and `units` present; no `storm_cell`, no `weather/field`; `Route` lacks the access fields; trigger kinds `at_time`, `on_fire_arrival`, `on_action_complete`.
+- **Backend:** `DispatchService`, `PlanRouter`, `PlanValidator`, `ArrivalEstimator`, `PlanInterventions`, `CrewSafety`, `OperationSimulator`, `CrewWorkSchedule`, `RoadCutsCache`, `RoutingService`, `CapabilityCatalog`, `FireBehaviorModel`, `OpenMeteoSource`, `PlanTiming`, rate-limiting wiring.
+- **Frontend:** `TopBar`, `PlaybackBar`, `PlansPanel`, `PlanRequestBox`, `AttackTimeline`, `SimulationForm`, `WeatherPanel`, `WeatherHud`, `useSimulationActions`, `useBootstrap`, `api/services/plans.ts`, `api/services/scenarios.ts`, `package.json`.
+- **Agents:** `watcher.py`, `orchestrator.py`, `gnr.py`, `support.py`, `life.py`, `duty.py`, `judge.py`, `alternatives.py`, `campaign.py`, `revision.py`, `commander/`, `agents/tests/`.
+- **Not verified live:** no backend, agents, engine or frontend were started in this session; `dotnet test` was not run. Statuses are code/spec reads, not runtime checks. The Track 0 smoke is precisely there to close that gap.
