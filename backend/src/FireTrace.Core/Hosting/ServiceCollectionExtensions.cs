@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using FireTrace.Core.Common;
@@ -124,11 +126,42 @@ public static class ServiceCollectionExtensions
 
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             {
-                var forwarded = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-                var clientIp = ctx.Connection.RemoteIpAddress?.ToString() ?? forwarded?.Split(',')[0].Trim() ?? "client";
+                var remote = ctx.Connection.RemoteIpAddress;
+                // `StringValues.ToString()` joins every header line with commas: reading only the first line
+                // (`FirstOrDefault()`) would let a client that sends two X-Forwarded-For lines control
+                // the entry our proxy's `$proxy_add_x_forwarded_for` did not write.
+                var forwarded = ctx.Request.Headers["X-Forwarded-For"].ToString();
+                var hasForwardedFor = forwarded.Length > 0;
+                // Três classes de chamador:
+                // 1. Utilizador real, através do nginx (IP privado + X-Forwarded-For): limita-se POR UTILIZADOR,
+                //    pela ÚLTIMA entrada da lista — a que o nosso próprio proxy acrescentou
+                //    (`$proxy_add_x_forwarded_for`); as anteriores vêm do cliente e são forjáveis.
+                // 2. Serviço interno (a rede do compose — os agentes): IP privado sem proxy à frente; chama em rajada
+                //    durante um ciclo de planeamento e esgotaria a janela de Internet, ficando depois preso em 429
+                //    nos seus próprios polls. Partição própria e generosa (RateLimitInternalPermitLimit).
+                // 3. Todo o resto (Internet direta, loopback): a janela apertada, pela própria origem; quem não está
+                //    atrás do nosso proxy não consegue forjar X-Forwarded-For para ganhar uma partição nova.
+                bool internalLimit;
+                string clientIp;
+                if (remote is not null && IsPrivateAddress(remote) && hasForwardedFor)
+                {
+                    clientIp = forwarded.Split(',').Select(p => p.Trim()).LastOrDefault(p => p.Length > 0) ?? "client";
+                    internalLimit = false;
+                }
+                else
+                {
+                    // Sem peer direto (TestServer, unix socket): o X-Forwarded-For é tudo o que há — última entrada.
+                    // Com peer público, o XFF é ignorado: não se forja a partição.
+                    clientIp = remote?.ToString()
+                        ?? (hasForwardedFor ? forwarded.Split(',').Select(p => p.Trim()).LastOrDefault(p => p.Length > 0) ?? "client" : "client");
+                    internalLimit = IsInternalServiceClient(remote, hasForwardedFor);
+                }
+                // An unset `RateLimitInternalPermitLimit` binds to 0: fall back to the public window instead of
+                // rejecting every internal call (a config typo must not take the agents offline).
+                var internalPermits = limits.RateLimitInternalPermitLimit > 0 ? limits.RateLimitInternalPermitLimit : limits.RateLimitPermitLimit;
                 return RateLimitPartition.GetFixedWindowLimiter(clientIp, _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = limits.RateLimitPermitLimit,
+                    PermitLimit = internalLimit ? internalPermits : limits.RateLimitPermitLimit,
                     Window = TimeSpan.FromSeconds(limits.RateLimitWindowSeconds),
                     QueueLimit = 0,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
@@ -142,4 +175,35 @@ public static class ServiceCollectionExtensions
                 o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             });
         });
+
+    /// <summary>Endereço privado (RFC 1918 / ULA fc00::/7), loopback incluído — reconhece o proxy à frente.</summary>
+    static bool IsPrivateAddress(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        // Docker/Kestrel can surface an IPv4 peer as an IPv4-mapped IPv6 address (`::ffff:172.18.0.5`);
+        // unwrap it, or the internal agents would be mistaken for Internet traffic.
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+        }
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] is 0xfc or 0xfd; // unique local addresses (fc00::/7)
+        }
+        return false;
+    }
+
+    /// <summary>Serviço interno (a rede do compose): IP privado NÃO-loopback, sem proxy à frente. O TestServer
+    /// (loopback) e os clientes externos ficam de fora — o limite apertado é para quem vem da Internet.</summary>
+    static bool IsInternalServiceClient(IPAddress? remote, bool hasForwardedFor)
+    {
+        if (remote is null || hasForwardedFor) return false;
+        // normalize like `IsPrivateAddress`: `::ffff:127.0.0.1` is not `IsLoopback` as IPv6,
+        // and a mapped loopback must stay on the tight limit, as the TestServer does.
+        var ip = remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote;
+        return !IPAddress.IsLoopback(ip) && IsPrivateAddress(ip);
+    }
 }

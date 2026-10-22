@@ -33,6 +33,20 @@ log = logging.getLogger(__name__)
 # The spec's server base is `/api/v1` (`servers[0].url`): the real backend answers 404 on unprefixed paths.
 DEFAULT_BASE_URL = "http://localhost:8080/api/v1"
 
+# A 429 means the request was NOT processed: the rate limiter refused it before any effect. Retrying is
+# therefore safe for every call this client makes; we honour the backend's `Retry-After` instead of hammering.
+_MAX_429_RETRIES = 8
+
+
+def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
+    """Seconds to wait before retrying a rate-limited request (the backend sends `Retry-After`)."""
+    raw = response.headers.get("retry-after")
+    try:
+        delay = float(raw) if raw else 1.5 * (2**attempt)
+    except ValueError:
+        delay = 1.5 * (2**attempt)
+    return min(max(delay, 0.5), 30.0)
+
 
 class ApiProblem(Exception):
     """The server answered ``application/problem+json``."""
@@ -69,8 +83,23 @@ class FiretraceClient:
     def close(self) -> None:
         self._http.close()
 
+    def _retry_on_rate_limit(self, method: str, path: str, json_body: Any | None, params: dict[str, Any] | None) -> httpx.Response:
+        """Retry ``429 rate_limited`` honouring the backend's ``Retry-After``.
+
+        A full planning cycle (routing for every unit, judging candidates, what-ifs) can exhaust the
+        per-client window; without this the watcher would then fail its own progress updates and polls
+        with 429 for the rest of the window."""
+        for attempt in range(_MAX_429_RETRIES):
+            response = self._http.request(method, path, json=json_body, params=params)
+            if response.status_code != 429 or attempt == _MAX_429_RETRIES - 1:
+                return response
+            delay = _retry_after_seconds(response, attempt)
+            log.warning("%s %s -> 429 rate_limited: retrying in %.1fs (%d/%d)", method, path, delay, attempt + 1, _MAX_429_RETRIES)
+            time.sleep(delay)
+        return response  # unreachable; keeps type-checkers happy
+
     def _request(self, method: str, path: str, *, json_body: Any | None = None, params: dict[str, Any] | None = None) -> Any:
-        response = self._http.request(method, path, json=json_body, params=params)
+        response = self._retry_on_rate_limit(method, path, json_body, params)
         if response.status_code >= 400:
             content_type = response.headers.get("content-type", "")
             if "application/problem+json" in content_type:
