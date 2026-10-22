@@ -5,11 +5,15 @@ import { Tag } from '@/components/common/StatCard';
 import {
   actionCentre,
   addVehicleAssignment,
+  addVehicleSuggestions,
   effectWindows,
+  hasNoResources,
   removeAction,
   removeAssignment,
+  responsibilityFor,
   setTriggerMinute,
   shiftAction,
+  suggestVehicles,
   triggerKind,
   triggerStartMinute,
   updateAssignment,
@@ -144,6 +148,11 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
           const centre = actionCentre(action);
           const resources = (action.resources ?? []) as ResourceAssignment[];
           const assigned = new Set(resources.map((r) => `${r.resourceType}:${r.resourceId}`));
+          // Suggestions never propose a vehicle another action of this plan already carries (the validator raises
+          // `resource_conflict`); the manual dropdown still lists everything not on THIS action, for deliberate sequential reuse.
+          const usedIds = new Set(
+            actions.flatMap((a) => ((a.resources ?? []) as ResourceAssignment[]).map((r) => `${r.resourceType}:${r.resourceId}`)),
+          );
           const choices = vehicles.filter((v) => !assigned.has(`vehicle:${v.id}`));
           const windows = effectWindows(action);
           // Every handler reads the ref: two quick edits must compose, not overwrite each other from a stale render closure.
@@ -217,6 +226,18 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
 
               <div className={styles.editorResources}>
                 <small className="note">Meios atribuídos ({resources.length})</small>
+                {hasNoResources(action) ? (
+                  <small className={styles.emptyMeans}>
+                    Os agentes não atribuíram meios a esta ação (comum nos planos de demonstração e nos pedidos sem frota).
+                    Usa <b>Sugerir meios</b> ou escolhe viaturas abaixo.
+                  </small>
+                ) : null}
+                <button
+                  className={styles.suggestButton}
+                  onClick={() => mutate((current) => addVehicleSuggestions(current, suggestVehicles(current, vehicles, usedIds), responsibilityFor(current)))}
+                >
+                  Sugerir meios
+                </button>
                 {resources.map((resource, j) => {
                   const vehicle = vehicleOf.get(resource.resourceId as string);
                   return (
@@ -250,7 +271,7 @@ export function PlanEditor({ plan, baseId, orgName, onCancel, onSaved, onError }
                   value=""
                   onChange={(e) => {
                     const vehicle = vehicleOf.get(e.target.value);
-                    if (vehicle) mutate((current) => addVehicleAssignment(current, vehicle));
+                    if (vehicle) mutate((current) => addVehicleAssignment(current, vehicle, responsibilityFor(current)));
                   }}
                 >
                   <option value="">Adicionar viatura…</option>

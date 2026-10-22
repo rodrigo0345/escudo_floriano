@@ -92,8 +92,9 @@ export class World {
       this.terrain.setCityMode(visible);
       this.engine.setOverlayPass(visible ? { overlays: this.overlays, depthProxy: this.terrain.depthProxy } : null);
     };
-    this.rain = new RainLayer();
-    this.clouds = new CloudLayer();
+    // the sky layers span the loaded map (8 km detail vs 22 km concelho), so rain and the cloud deck never cover the void beyond the terrain
+    this.rain = new RainLayer(geo.W, geo.H);
+    this.clouds = new CloudLayer(geo.W, geo.H);
     this.storm = new StormLayer();
 
     const scene = engine.scene;

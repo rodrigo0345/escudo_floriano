@@ -119,14 +119,17 @@ public sealed class OperationSimulator(
         LatLon home = stationId is not null && stations.TryGetValue(stationId, out var s) ? s
             : r.Route is { NumPoints: > 1 } first ? new LatLon(first.Coordinates[0].Y, first.Coordinates[0].X) : site;
         double eta = Math.Max(0, r.EtaMinutes ?? 0);
-        var route = r.Route is { NumPoints: > 1 } own ? own : Gf.CreateLineString(new[] { new Coordinate(home.Lon, home.Lat), new Coordinate(site.Lon, site.Lat) });
+        bool aerial = v is not null && ArrivalEstimator.IsAerial(v.Type);
+        // a unidade terrestre segue a rota por estrada (obrigatória — J4: sem rota, erro, nunca uma linha reta fora da rede)
+        var route = r.Route is { NumPoints: > 1 } own ? own
+            : aerial ? Gf.CreateLineString(new[] { new Coordinate(home.Lon, home.Lat), new Coordinate(site.Lon, site.Lat) })
+            : throw new ValidationException(new List<ValidationIssue> { new("error", "route_off_network", $"Meio terrestre '{r.ResourceId}' sem rota por estrada (plano '{plan.Id}', ação '{action.Id}').", "/route") });
         var back = (LineString)route.Reverse();
 
         double departAt = PlanTiming.StartAt(plan, action) is { } at ? (at - scenarioStart).TotalMinutes : PlanTiming.StartMinutes(plan, action);
         int depart = (int)Math.Round(Math.Max(0, departAt));
         double arrive = depart + eta, until = arrive + (action.ExpectedDurationMinutes ?? window), backAt = until + eta;
 
-        bool aerial = v is not null && ArrivalEstimator.IsAerial(v.Type);
         double water = aerial ? 0 : v?.WaterCapacityL ?? 0, pump = aerial ? 0 : v?.PumpFlowLpm ?? 0, duty = rules.Water.DutyCycle;
         var segments = CrewWorkSchedule.Plan(arrive, until, water, pump, rules);
         double perFill = water > 0 && pump > 0 && duty > 0 ? water / (pump * duty) : double.PositiveInfinity;

@@ -1,4 +1,4 @@
-import type { Action, LatLon, ResourceAssignment, Vehicle } from '@/api';
+import type { Action, LatLon, Responsibility, ResourceAssignment, Vehicle } from '@/api';
 
 /**
  * The operator's edit of an agent plan (Epic A6): pure functions over the `Action` JSON, so the plan editor does not have to know
@@ -150,7 +150,60 @@ export function effectWindows(action: Action): { start: number; end: number }[] 
 
 export const assignmentKey = (assignment: ResourceAssignment): string => `${assignment.resourceType}:${assignment.resourceId}`;
 
-export function addVehicleAssignment(action: Action, vehicle: Vehicle): Action {
+/**
+ * Which vehicle capability serves each action type, and with what `responsibility` (mirrors the backend's
+ * `PlanService.DefaultResponsibility`, so the validator does not warn `responsibility_not_supported`). Used by the editor's
+ * "Sugerir meios": agent and demo plans often publish actions with no `resources` at all — the operator should not have to
+ * scroll a 60-vehicle dropdown to fix that.
+ */
+const CAPABILITY_BY_TYPE: Record<string, { capabilities: string[]; responsibility?: Responsibility }> = {
+  fire_attack: { capabilities: ['wildfire_attack'], responsibility: 'firefighting' },
+  fuel_break: { capabilities: ['wildfire_attack'], responsibility: 'firefighting' },
+  dispatch_units: { capabilities: ['wildfire_attack'], responsibility: 'firefighting' },
+  air_support_request: { capabilities: ['aerial_water_drop', 'aerial_recon'], responsibility: 'firefighting' },
+  structure_protection: { capabilities: ['structure_protection', 'wildfire_attack'], responsibility: 'structure_protection' },
+  evacuation: { capabilities: ['evacuation_transport'], responsibility: 'evacuation' },
+  shelter_in_place: { capabilities: ['evacuation_transport'], responsibility: 'evacuation' },
+  medical_standby: { capabilities: ['medical_transport', 'advanced_life_support'], responsibility: 'medical' },
+  road_closure: { capabilities: ['traffic_control'], responsibility: 'traffic_control' },
+  traffic_control_point: { capabilities: ['traffic_control'], responsibility: 'traffic_control' },
+  establish_command_post: { capabilities: ['command_and_control', 'communications'], responsibility: 'command' },
+  reconnaissance: { capabilities: ['reconnaissance', 'aerial_recon'], responsibility: 'reconnaissance' },
+  stage_resources: { capabilities: ['wildfire_attack'], responsibility: 'standby' },
+  request_reinforcements: { capabilities: ['wildfire_attack'], responsibility: 'standby' },
+  public_alert: { capabilities: [], responsibility: undefined },
+  custom: { capabilities: [], responsibility: undefined },
+};
+
+/**
+ * Up to `limit` vehicles that can do this action's job, not yet used anywhere else in the plan (two actions with the same
+ * vehicle raise `resource_conflict`). Ground actions never suggest aircraft. Falls back to any unused vehicle of the action's
+ * organization, then to any unused vehicle, so the button always offers something on a small fleet.
+ */
+export function suggestVehicles(action: Action, vehicles: Vehicle[], usedIds: Set<string>, limit = 3): Vehicle[] {
+  const type = String((action as Json).type ?? '');
+  const wanted = CAPABILITY_BY_TYPE[type]?.capabilities ?? [];
+  const organizationId = String((action as Json).organizationId ?? '');
+  const isAerialAction = type === 'air_support_request';
+  const free = vehicles.filter((v) => !usedIds.has(`vehicle:${v.id}`));
+  const ground = (list: Vehicle[]) => list.filter((v) => isAerialAction || !v.aerial);
+  const matching = ground(free.filter((v) => (v.capabilities ?? []).some((c) => wanted.includes(String(c)))));
+  const sameOrg = ground(free.filter((v) => String(v.organizationId) === organizationId));
+  const pool = matching.length >= 2 ? matching : [...matching, ...sameOrg.filter((v) => !matching.includes(v)), ...free.filter((v) => !matching.includes(v) && !sameOrg.includes(v))];
+  return pool.slice(0, limit);
+}
+
+/** The `responsibility` the backend expects for this action type (undefined = let the server default it). */
+export function responsibilityFor(action: Action): Responsibility | undefined {
+  return CAPABILITY_BY_TYPE[String((action as Json).type ?? '')]?.responsibility;
+}
+
+/** Whether this action carries no means at all — the editor explains why instead of showing a bare empty list. */
+export function hasNoResources(action: Action): boolean {
+  return !Array.isArray((action as Json).resources) || ((action as Json).resources as unknown[]).length === 0;
+}
+
+export function addVehicleAssignment(action: Action, vehicle: Vehicle, responsibility?: Responsibility): Action {
   const next = cloneAction(action) as Json;
   const resources = Array.isArray(next.resources) ? (next.resources as ResourceAssignment[]) : [];
   if (resources.some((r) => r.resourceType === 'vehicle' && r.resourceId === vehicle.id)) return next as Action;
@@ -158,9 +211,17 @@ export function addVehicleAssignment(action: Action, vehicle: Vehicle): Action {
     resourceType: 'vehicle',
     resourceId: vehicle.id as string,
     personnel: Math.max(1, vehicle.minimumCrew ?? 1),
+    ...(responsibility ? { responsibility } : {}),
   };
   next.resources = [...resources, assignment];
   return next as Action;
+}
+
+/** Adds a whole suggestion batch ("Sugerir meios"), skipping vehicles the action already carries. */
+export function addVehicleSuggestions(action: Action, vehicles: Vehicle[], responsibility?: Responsibility): Action {
+  let next = action;
+  for (const vehicle of vehicles) next = addVehicleAssignment(next, vehicle, responsibility);
+  return next;
 }
 
 export function removeAssignment(action: Action, index: number): Action {

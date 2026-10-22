@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 const MAX_CLOUDS = 240;
-// Full territory coverage (1 unit = 10m; 2400 units = 24 km spanning the entire Guimarães concelho)
-const TERRITORY_BOUNDS = 2400;
+// The deck spans the loaded map (the constructor takes the map's world size) — never a fixed 24 km box, which on the 8 km
+// detail map put fair-weather clouds over the void beyond the terrain edge.
 
 // High atmospheric altitude (~1450m to 2100m above baseline elevation),
 // comfortably hovering high above all mountain peaks (which top out at ~550m).
@@ -91,6 +91,9 @@ export class CloudLayer {
   private readonly scaleY: Float32Array;
   private readonly driftMult: Float32Array;
   private readonly rotZ: Float32Array;
+  /** Half-extent of the deck per axis, in world units: the loaded map. */
+  private readonly halfX: number;
+  private readonly halfZ: number;
 
   private readonly dummy = new THREE.Object3D();
   private active = false;
@@ -98,7 +101,9 @@ export class CloudLayer {
   private renderedCloudCover = 0;
   private renderedOpacity = 0;
 
-  constructor() {
+  constructor(worldWidthUnits = 2400, worldHeightUnits = 2400) {
+    this.halfX = Math.max(200, worldWidthUnits / 2);
+    this.halfZ = Math.max(200, worldHeightUnits / 2);
     this.texture = createCloudTexture();
     this.geometry = new THREE.PlaneGeometry(1, 1);
 
@@ -124,13 +129,13 @@ export class CloudLayer {
     this.driftMult = new Float32Array(MAX_CLOUDS);
     this.rotZ = new Float32Array(MAX_CLOUDS);
 
-    // Initial 3D volumetric distribution spanning the entire territory
+    // Initial 3D volumetric distribution spanning the loaded map
     for (let i = 0; i < MAX_CLOUDS; i++) {
-      this.cloudX[i] = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      this.cloudX[i] = (Math.random() - 0.5) * this.halfX * 2;
       // Staggered altitude in high sky troposphere band (1450m to 2100m)
       const altProgress = Math.pow(Math.random(), 1.3);
       this.cloudY[i] = ALTITUDE_MIN + altProgress * (ALTITUDE_MAX - ALTITUDE_MIN);
-      this.cloudZ[i] = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      this.cloudZ[i] = (Math.random() - 0.5) * this.halfZ * 2;
 
       // Volumetric cumulus dimensions: wide and tall (1100m-2050m wide, 700m-1400m tall)
       const baseWidth = 100 + Math.random() * 90;
@@ -236,11 +241,11 @@ export class CloudLayer {
         this.cloudX[i] += dirX * speed * dt;
         this.cloudZ[i] += dirZ * speed * dt;
 
-        if (this.cloudX[i] > TERRITORY_BOUNDS / 2) this.cloudX[i] -= TERRITORY_BOUNDS;
-        else if (this.cloudX[i] < -TERRITORY_BOUNDS / 2) this.cloudX[i] += TERRITORY_BOUNDS;
+        if (this.cloudX[i] > this.halfX) this.cloudX[i] -= this.halfX * 2;
+        else if (this.cloudX[i] < -this.halfX) this.cloudX[i] += this.halfX * 2;
 
-        if (this.cloudZ[i] > TERRITORY_BOUNDS / 2) this.cloudZ[i] -= TERRITORY_BOUNDS;
-        else if (this.cloudZ[i] < -TERRITORY_BOUNDS / 2) this.cloudZ[i] += TERRITORY_BOUNDS;
+        if (this.cloudZ[i] > this.halfZ) this.cloudZ[i] -= this.halfZ * 2;
+        else if (this.cloudZ[i] < -this.halfZ) this.cloudZ[i] += this.halfZ * 2;
 
         this.dummy.position.set(this.cloudX[i], this.cloudY[i], this.cloudZ[i]);
       }

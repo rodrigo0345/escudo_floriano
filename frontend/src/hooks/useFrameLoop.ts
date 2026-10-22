@@ -172,9 +172,11 @@ export function useFrameLoop(): void {
           const dirX = -Math.sin(fromRad); // wind FROM: the air (and the cell) move towards the opposite bearing
           const dirZ = Math.cos(fromRad);
           const local = ev.scope === 'local' && ev.centerLat != null && ev.centerLon != null;
-          const radiusUnits = ((ev.radiusKm ?? (local ? 2.5 : 3)) * 1000) / world.geo.unit;
+          // On a small map (8 km detail) the default cell would cover a third of it: cap the footprint at ~30% of the map.
+          const mapSpanUnits = Math.max(world.geo.W, world.geo.H);
+          const radiusUnits = Math.min(((ev.radiusKm ?? (local ? 2.5 : 3)) * 1000) / world.geo.unit, mapSpanUnits * 0.3);
           const progress = Math.max(0, Math.min(1, (tf - activeStorm.buildStart) / Math.max(1, activeStorm.finish - activeStorm.buildStart)));
-          const travel = local ? radiusUnits * 1.1 : Math.max(world.geo.W, world.geo.H) * 0.55;
+          const travel = local ? radiusUnits * 1.1 : mapSpanUnits * 0.55 - radiusUnits;
           let cx = 0, cz = 0;
           if (local) {
             const [u, v] = world.geo.uv(ev.centerLat as number, ev.centerLon as number);
@@ -186,15 +188,20 @@ export function useFrameLoop(): void {
           const gu = Math.max(0, Math.min(1, 0.5 + x / world.geo.W));
           const gv = Math.max(0, Math.min(1, 0.5 + z / world.geo.H));
           stormCell = { x, z, radiusUnits, intensity: stormIntensity, groundY: world.geo.y(world.geo.elevAtUV(gu, gv), x, z) };
-          if (local) cloudSpot = { x, z, radiusUnits }; // rain falls under the moving cell, not at a fixed pin on the map
         }
+
+        // Rain follows the moving cell (local or global storm); a plain local rain/cloud event keeps its fixed pin; otherwise
+        // the rain field spans the loaded map — bounded by the map, never the old 24 km box.
+        const rainSpot = stormCell
+          ? { x: stormCell.x, z: stormCell.z, radiusUnits: stormCell.radiusUnits * 1.25 }
+          : cloudSpot;
 
         world.rain.update(
           rainDt,
           effectivePrecipMmH,
           w?.windKmh ?? 0,
           w?.windFromDeg ?? 0,
-          cloudSpot,
+          rainSpot,
         );
 
         world.clouds.setVisible(s.cloudsEnabled);

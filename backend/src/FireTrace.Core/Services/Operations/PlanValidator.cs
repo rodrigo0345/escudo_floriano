@@ -66,6 +66,9 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
                 foreach (var org in (a.SupportingOrganizationIds ?? new()).Where(o => !knownOrgs.Contains(o))) Add("error", "unknown_organization", $"Organização '{org}' desconhecida.", $"{at}/supportingOrganizationIds", a.Id);
                 foreach (var dep in (a.DependsOn ?? new()).Where(d => d == a.Id || !ids.Contains(d))) Add("error", "unknown_dependency", $"A ação depende de '{dep}', que não existe neste plano.", $"{at}/dependsOn", a.Id);
 
+                if (a.Trigger is not null and not AtTimeTrigger)
+                    Add("warning", "trigger_not_simulated", "Este plano aceita o gatilho, mas ainda não o simula: a ação conta como começando ao ativar (T+0). Não assuma tempo condicional.", $"{at}/trigger", a.Id);
+
                 foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, routed, ct);
 
                 switch (a)

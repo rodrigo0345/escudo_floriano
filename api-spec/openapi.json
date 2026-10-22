@@ -6546,7 +6546,7 @@
           },
           "code": {
             "type": "string",
-            "description": "Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`...)."
+            "description": "Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`, `trigger_not_simulated` — o plano aceita `on_fire_arrival`/`on_action_complete` mas o motor ainda não os simula, pelo que a ação conta como começando ao ativar)."
           },
           "message": {
             "type": "string"

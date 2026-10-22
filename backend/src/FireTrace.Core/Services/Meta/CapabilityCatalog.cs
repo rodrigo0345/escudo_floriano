@@ -14,7 +14,7 @@ public static class CapabilityCatalog
         new("ELMFIRE", License: "Commons Clause"), new(limits.MaxDurationMinutes, limits.MaxIgnitions, limits.MaxEnsembleMembers, limits.MaxKeyframes, limits.MaxActionsPerPlan),
         WeatherVariables: new[]
         {
-            Yes("windKmh"), Yes("windFromDeg"), Yes("tempC"), Yes("humidityPct"), Yes("gustKmh", "só informativa: o motor usa o vento médio"),
+            Yes("windKmh"), Yes("windFromDeg"), Yes("tempC"), Yes("humidityPct"), Yes("gustKmh", "entra no vento de meia-chama com `GustFactor`"),
             Yes("precipitationMmH", "molha o combustível morto (mais depressa o fino) e aumenta a humidade relativa"), No("pressureHpa", "aceite mas não usada"), Yes("cloudCoverPct", "reduz a radiação solar que aquece e seca o combustível"), No("hainesIndex", "aceite mas não usada"),
         },
         WeatherEvents: new[]
