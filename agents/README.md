@@ -57,9 +57,14 @@ backend does not count evacuations), roads closed and left open for lack of a pa
 
 Start the backend first (`docker compose up -d --build backend`; the first start loads the map data, see `backend/README.md`).
 
+The `agents` service registers the demo resources of a maximum-alert day by itself when it starts (`AGENTS_SEED_DEMO=1`, the default): it runs
+`seed_reinforcements.py` and `seed_air_and_prepositioning.py`, which skip what is already there. A `docker compose up` from scratch therefore gets the
+aircraft, the pre-positioned crews and the reinforcements the plans were tuned on; `AGENTS_SEED_DEMO=0` leaves the fleet as the backend seeds it.
+
 ```powershell
 python agents\scripts\seed_fleet.py                         # demo fleet for Guimarães (idempotent; the backend also seeds its own)
 python agents\scripts\seed_reinforcements.py                # reinforcement groups from the neighbouring districts (--dry-run, --remove)
+python agents\scripts\seed_air_and_prepositioning.py        # aircraft and pre-positioned crews (--dry-run, --remove); the agents service runs both on start
 python agents\scripts\compare_plans.py --scenario sc-penha --at-minute 60    # plans A/B with the full fleet, then without helicopters/trucks/squads
 python agents\scripts\robustness.py --scenario sc-penha --at-minute 60       # the same plans on a wrong wind forecast
 python agents\scripts\run_campaign.py --scenario sc-penha --start 60         # decide every 30 min; compares with the chained control
@@ -74,6 +79,11 @@ Open any simulation in the UI with `http://localhost:8081/?sim=<simulation id>` 
 The `agents` service in `docker-compose.yaml` runs `firetrace_agents/watcher.py`: every 10 s it asks `GET /simulations?kind=baseline&status=succeeded&updatedAfter=…`,
 and for each baseline with no plans (`GET /plans?simulationId=`) it publishes plans A and B and asks for both what-if runs (`POST /plans/{id}/simulate`).
 A baseline started from the UI has its plans in tab **Planos** about 45 s later (Falperra, measured), with no terminal involved.
+
+The operator can also ask for a new pair at any time with **Pedir novo plano aos agentes** in tab **Planos** (optional note, and the minute on screen as the
+decision minute), even when the baseline already has plans. That creates a plan request (`POST /simulations/{id}/plan-requests`); each poll the watcher claims the
+oldest queued one (`POST /plan-requests/{id}/claim`), reports every step (`PATCH /plan-requests/{id}`) and closes it `done` with the plan ids or `failed` with the
+reason. The UI follows the request live, so nobody has to tell the agents a simulation id.
 
 ```powershell
 docker compose up -d --build agents      # needs the backend; never `down -v`
@@ -155,7 +165,7 @@ Each was found by running the agents against the live backend; the evidence is i
 4. **A what-if does not point back to its plan** (`parentSimulationId` is empty; `?planId=` is not a filter): add `GET /plans/{id}/simulations` or fill `parentSimulationId`.
 5. **`RoadCutsCache` key** is only the simulation id: after the road network is ingested, cached cuts have 0 edges and `/threatened` answers 500 until a restart. Key it by network version.
 6. **Exact continuation**: `initialFire` from an outline restarts the fire and ends ~9% larger. A "resume from simulation X at minute T" would remove the error.
-7. Nice to have: facilities such as camp sites report no `population`; the seeder creates no helicopters and no evacuation transport.
+7. Nice to have: facilities such as camp sites report no `population`; the backend's seeder now creates two helicopters (HEBP 01, HEBL 02); the rest of the aircraft come from `seed_air_and_prepositioning.py`.
 
 ## Tests
 

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { plansApi, simulationsApi, type Plan, type PlanSummary, type PlanStatus, type Simulation } from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
+import { OrgLogo } from '@/domain/organizationLogos';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
 import { AttackTimeline } from './AttackTimeline';
+import { PlanRequestBox } from './PlanRequestBox';
 import styles from './panels.module.css';
 
 const nf = (n: number) => n.toLocaleString('pt-PT');
@@ -248,6 +250,8 @@ export function PlansPanel() {
     void refresh();
   }, [refresh]);
 
+  const refreshSilently = useCallback(() => void refresh(true), [refresh]);
+
   // The `agents` service publishes plans (and runs their what-ifs) a minute or so after a baseline finishes: keep looking while
   // there are none, a what-if is still running, or a plan is under 3 minutes old and has no what-if yet.
   const waiting =
@@ -328,14 +332,16 @@ export function PlansPanel() {
         </button>
       ) : null}
 
+      <PlanRequestBox baseId={baseId} onPlans={refreshSilently} />
+
       <CompareTable base={base ?? undefined} plans={plans} runs={runs} />
 
       {loading ? <p className="note">A carregar planos…</p> : null}
       {error ? <p className="note">Erro: {error}</p> : null}
       {!loading && !error && !plans.length ? (
         <p className="note">
-          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho poucos minutos depois de a base terminar (avalia cada plano com o motor antes de o publicar); esta lista atualiza-se.
-          Sem o serviço: <code>python -m firetrace_agents --simulation-id {baseId}</code>.
+          Ainda não há planos para esta simulação. O serviço dos agentes (<code>docker compose up -d agents</code>) publica-os sozinho poucos minutos depois de a base terminar
+          (avalia cada plano com o motor antes de o publicar), ou quando os pede acima; esta lista atualiza-se.
         </p>
       ) : null}
 
@@ -399,9 +405,10 @@ export function PlansPanel() {
                 <h3>Todas as ações ({open.actions.length}), por organização</h3>
                 {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
                   <div key={organizationId} className={styles.actionGroup}>
-                    <div className={styles.orgHead}>
+                    <div className={styles.orgHead} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={24} inline />
                       <b>{orgName(organizationId)}</b>
-                      <small className="note">{actions.length} ação(ões)</small>
+                      <small className="note" style={{ marginLeft: 'auto' }}>{actions.length} ação(ões)</small>
                     </div>
                     {actions.map((a) => (
                       <Row key={a.id}>

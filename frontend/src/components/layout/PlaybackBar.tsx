@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
+import { Icon, WEATHER_EVENT_ICON } from '@/components/common/Icon';
 import { compass } from '@/domain/georef';
 import {
   buildSimulationRequest,
@@ -13,8 +14,10 @@ import { useAppStore } from '@/store/appStore';
 
 import styles from './layout.module.css';
 
-const JUMPS = [15, 30, 60, 120, 180, 360];
-const SPEEDS = [1, 5, 10, 30, 60];
+const JUMPS = [15, 30, 60, 120, 180, 360, 540, 720];
+const SPEEDS = [1, 5, 10, 30, 60, 120, 240];
+/** Hour ticks under the scrubber: every hour on short runs, every two on long ones. */
+const tickStepMin = (duration: number) => (duration > 360 ? 120 : 60);
 
 const EVENT_LABEL: Record<string, string> = {
   wind_shift: 'Vento roda',
@@ -60,6 +63,7 @@ export function PlaybackBar() {
   const setTime = useAppStore((s) => s.setTime);
   const setCustomEvents = useAppStore((s) => s.setCustomEvents);
   const setScenario = useAppStore((s) => s.setScenario);
+  const busy = useAppStore((s) => !!s.job && !s.job.auto);
   const { runSimulation } = useSimulationActions();
 
   const duration = run?.durationMinutes ?? 180;
@@ -234,28 +238,28 @@ export function PlaybackBar() {
     setSelection(null);
   };
 
-  // Delete event
-  const handleDeleteEvent = () => {
-    if (!selection?.editingEventId) return;
-    setCustomEvents(customEvents.filter((x) => x.id !== selection.editingEventId));
+  /** Stores `events` as the scenario's weather changes and runs the simulation again with them (the current run's start, duration and base weather). */
+  const rerunWith = (events: TimelineRangeEvent[]) => {
+    setCustomEvents(events);
     setSelection(null);
+    if (!run || !locationId || !ignitions.length || busy) return;
+    const values = defaultFormValues(run);
+    values.customEvents = events;
+    setScenario('custom');
+    void runSimulation(buildSimulationRequest(values, locationId, ignitions));
+  };
+
+  // Remove a weather change from the timeline and simulate without it
+  const removeEvent = (id: string) => rerunWith(customEvents.filter((x) => x.id !== id));
+
+  const handleDeleteEvent = () => {
+    if (selection?.editingEventId) removeEvent(selection.editingEventId);
   };
 
   // Run simulation with this custom weather event immediately (Requirement 1.1)
   const handleSimulateWithEvent = () => {
     const ev = buildCurrentEvent();
-    if (!ev || !run || !locationId || !ignitions.length) return;
-
-    const nextEvents = [...customEvents.filter((x) => x.id !== ev.id), ev];
-    setCustomEvents(nextEvents);
-
-    const values = defaultFormValues(run);
-    values.customEvents = nextEvents;
-    const req = buildSimulationRequest(values, locationId, ignitions);
-
-    setScenario('custom');
-    setSelection(null);
-    void runSimulation(req);
+    if (ev) rerunWith([...customEvents.filter((x) => x.id !== ev.id), ev]);
   };
 
   // Highlight interval for drag or selection
@@ -303,22 +307,31 @@ export function PlaybackBar() {
           {/* Active Range Events rendered on the timeline */}
           {customEvents.map((ev) => {
             const left = Math.min(100, Math.max(0, (ev.startMinute / duration) * 100));
-            const width = Math.min(100 - left, Math.max(3, ((ev.endMinute - ev.startMinute) / duration) * 100));
+            const width = Math.min(100 - left, ((ev.endMinute - ev.startMinute) / duration) * 100);
             return (
               <div
                 key={ev.id}
                 className={`${styles.eventChip} ${styles[`ev_${ev.type}`]}`}
                 style={{ left: `${left}%`, width: `${width}%`, opacity: ev.enabled ? 1 : 0.45 }}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => handleOpenEditEvent(ev, e)}
                 title={`Clique para editar: ${ev.label} (T+${ev.startMinute}–${ev.endMinute} min)`}
               >
-                {ev.type === 'rain' && '🌧️'}
-                {ev.type === 'storm' && '⛈️'}
-                {ev.type === 'clouds' && '🌫️'}
-                {ev.type === 'wind_shift' && '💨'}
-                {ev.type === 'wind_scale' && '🌪️'}
-                {ev.type === 'heat_dry' && '☀️'}{' '}
-                {ev.label}
+                <Icon name={WEATHER_EVENT_ICON[ev.type] ?? 'cloud'} size={12} />
+                <span className={styles.eventChipLabel}>{ev.label}</span>
+                <button
+                  type="button"
+                  className={styles.eventChipRemove}
+                  disabled={busy}
+                  aria-label={`Remover ${ev.label}`}
+                  title={busy ? 'Aguarde o fim da simulação em curso' : 'Remover e simular sem este evento'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeEvent(ev.id);
+                  }}
+                >
+                  <Icon name="close" size={11} />
+                </button>
               </div>
             );
           })}
@@ -359,6 +372,13 @@ export function PlaybackBar() {
               />
             ))}
           </div>
+          <div className={styles.hourTicks} aria-hidden="true">
+            {Array.from({ length: Math.floor(duration / tickStepMin(duration)) + 1 }, (_, i) => i * tickStepMin(duration)).map((m) => (
+              <span key={m} style={{ left: `${(m / duration) * 100}%` }}>
+                {m / 60} h
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* Floating Timeline Event Popover (Requirement 1.1) */}
@@ -371,10 +391,10 @@ export function PlaybackBar() {
           >
             <div className={styles.popoverHead}>
               <span>
-                ⏱️ {selection.editingEventId ? 'Editar Evento' : 'Novo Evento'} (T+{selection.startMin}–{selection.endMin} min)
+                {selection.editingEventId ? 'Editar evento' : 'Novo evento'} (T+{selection.startMin}–{selection.endMin} min)
               </span>
-              <button className={styles.popoverClose} onClick={() => setSelection(null)} title="Fechar">
-                ✕
+              <button className={styles.popoverClose} onClick={() => setSelection(null)} title="Fechar" aria-label="Fechar">
+                <Icon name="close" />
               </button>
             </div>
 
@@ -385,42 +405,42 @@ export function PlaybackBar() {
                 className={`${styles.typePill} ${popoverType === 'rain' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('rain')}
               >
-                🌧️ Chuva
+                <Icon name="rain" /> Chuva
               </button>
               <button
                 type="button"
                 className={`${styles.typePill} ${popoverType === 'storm' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('storm')}
               >
-                ⛈️ Trovoada
+                <Icon name="storm" /> Trovoada
               </button>
               <button
                 type="button"
                 className={`${styles.typePill} ${popoverType === 'clouds' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('clouds')}
               >
-                🌫️ Nuvens
+                <Icon name="cloud" /> Nuvens
               </button>
               <button
                 type="button"
                 className={`${styles.typePill} ${popoverType === 'wind_shift' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('wind_shift')}
               >
-                💨 Vento
+                <Icon name="wind" /> Vento
               </button>
               <button
                 type="button"
                 className={`${styles.typePill} ${popoverType === 'wind_scale' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('wind_scale')}
               >
-                🌪️ Rajada
+                <Icon name="gust" /> Rajada
               </button>
               <button
                 type="button"
                 className={`${styles.typePill} ${popoverType === 'heat_dry' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('heat_dry')}
               >
-                ☀️ Calor
+                <Icon name="sun" /> Calor
               </button>
             </div>
 
@@ -517,7 +537,7 @@ export function PlaybackBar() {
                   />
                 </label>
                 <div className={styles.popoverNote}>
-                  ☁️ <b>Ciclo realista:</b> As nuvens armam-se a partir de T+{Math.max(0, selection.startMin - popoverBuildupMin)} min ({popoverBuildupMin} min antes); a chuva cessa às T+{selection.endMin} min e as nuvens dissipam até T+{selection.endMin + popoverDissipationMin} min.
+                  <b>Ciclo realista:</b> As nuvens armam-se a partir de T+{Math.max(0, selection.startMin - popoverBuildupMin)} min ({popoverBuildupMin} min antes); a chuva cessa às T+{selection.endMin} min e as nuvens dissipam até T+{selection.endMin + popoverDissipationMin} min.
                 </div>
               </>
             )}
@@ -647,7 +667,7 @@ export function PlaybackBar() {
             {/* Action buttons */}
             <div className={styles.popoverActions}>
               {selection.editingEventId && (
-                <button type="button" className={styles.btnDelete} onClick={handleDeleteEvent} title="Remover este evento">
+                <button type="button" className={styles.btnDelete} onClick={handleDeleteEvent} disabled={busy} title="Remover este evento e simular sem ele">
                   Remover
                 </button>
               )}

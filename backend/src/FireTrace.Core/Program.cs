@@ -16,6 +16,7 @@ builder.Services.AddControllers(o => o.ModelBinderProviders.Insert(0, new QueryM
 
 var app = builder.Build();
 app.UseMiddleware<ProblemMiddleware>();
+app.UseRateLimiter();
 app.UseApiDocs();
 app.UseMiddleware<DatabaseReadinessMiddleware>();
 app.MapControllers();

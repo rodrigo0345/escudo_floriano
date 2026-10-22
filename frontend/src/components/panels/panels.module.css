@@ -1013,3 +1013,39 @@
 .attackDetail dd {
   margin: 0;
 }
+
+/* the agents' steps for an operator's plan request */
+.requestSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+}
+
+.requestSteps li {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--mut);
+}
+
+.requestSteps li.stepDone {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+}
+
+.requestSteps li.stepNow {
+  color: var(--fg);
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  animation: stepPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes stepPulse {
+  50% {
+    opacity: 0.55;
+  }
+}

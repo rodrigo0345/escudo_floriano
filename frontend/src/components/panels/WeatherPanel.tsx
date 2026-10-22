@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { Icon } from '@/components/common/Icon';
 import { Row } from '@/components/common/StatCard';
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
@@ -112,9 +113,9 @@ export function WeatherPanel() {
             <b>{weather.precipitationMmH != null && weather.precipitationMmH > 0 ? `${weather.precipitationMmH.toFixed(1)} mm/h` : '0.0 mm/h'}</b>
             <small>
               {weather.precipitationMmH != null && weather.precipitationMmH >= 7.5
-                ? '⚡ Trovoada ativa'
+                ? 'Trovoada ativa'
                 : weather.precipitationMmH != null && weather.precipitationMmH > 0
-                  ? '🌧️ Chuva ativa'
+                  ? 'Chuva ativa'
                   : 'Sem precipitação'}
             </small>
           </div>
@@ -138,7 +139,13 @@ export function WeatherPanel() {
       <div className={is30 ? styles.rule30Active : styles.rule30Normal}>
         <div className={styles.rule30Header}>
           <span style={{ color: is30 ? '#ef4444' : 'var(--fg)' }}>
-            {is30 ? '🚨 ALERTA 30-30-30 ATIVO' : '📐 Regra dos 30-30-30'}
+            {is30 ? (
+              <>
+                <Icon name="alert" /> ALERTA 30-30-30 ATIVO
+              </>
+            ) : (
+              'Regra dos 30-30-30'
+            )}
           </span>
           <small style={{ color: is30 ? '#ef4444' : 'var(--mut)', fontWeight: 600 }}>
             {is30 ? 'RISCO EXTREMO' : `${[tMet, hMet, wMet].filter(Boolean).length}/3 critérios`}
@@ -152,15 +159,21 @@ export function WeatherPanel() {
         <div className={styles.rule30Criteria}>
           <div className={`${styles.criteriaChip} ${tMet ? styles.criteriaMet : styles.criteriaUnmet}`}>
             <span>Temp ≥ 30°C</span>
-            <b>{Math.round(weather.tempC)}°C {tMet ? '✔' : ''}</b>
+            <b>
+              {Math.round(weather.tempC)}°C {tMet ? <Icon name="check" size={12} /> : null}
+            </b>
           </div>
           <div className={`${styles.criteriaChip} ${hMet ? styles.criteriaMet : styles.criteriaUnmet}`}>
             <span>HR ≤ 30%</span>
-            <b>{Math.round(weather.humidityPct)}% {hMet ? '✔' : ''}</b>
+            <b>
+              {Math.round(weather.humidityPct)}% {hMet ? <Icon name="check" size={12} /> : null}
+            </b>
           </div>
           <div className={`${styles.criteriaChip} ${wMet ? styles.criteriaMet : styles.criteriaUnmet}`}>
             <span>Vento ≥ 30</span>
-            <b>{Math.round(weather.windKmh)} km/h {wMet ? '✔' : ''}</b>
+            <b>
+              {Math.round(weather.windKmh)} km/h {wMet ? <Icon name="check" size={12} /> : null}
+            </b>
           </div>
         </div>
       </div>
@@ -213,7 +226,7 @@ export function WeatherPanel() {
               </span>
               <small>
                 {Math.round(x.windKmh ?? 0)} km/h {compass(x.windFromDeg ?? 0)} · {Math.round(x.humidityPct ?? 0)}% · {Math.round(x.tempC ?? 0)}°C
-                {(x.precipitationMmH ?? 0) > 0 ? ` · 🌧️ ${x.precipitationMmH?.toFixed(1)}mm` : ''}
+                {(x.precipitationMmH ?? 0) > 0 ? ` · chuva ${x.precipitationMmH?.toFixed(1)} mm` : ''}
               </small>
             </Row>
           );

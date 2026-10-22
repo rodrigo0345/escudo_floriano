@@ -10,6 +10,7 @@ using FireTrace.Core.Services.Crud;
 using FireTrace.Core.Services.Operations;
 using FireTrace.ExternalData.Store;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace FireTrace.Core.Controllers;
 
@@ -30,6 +31,7 @@ public sealed class PlansController(PlanService service, CrudService<Plan> plans
     }
 
     [HttpPost]
+    [EnableRateLimiting("planning")]
     public async Task<ActionResult<Plan>> Create([FromBody] Plan body, CancellationToken ct)
     {
         var created = await service.CreateAsync(body, ct);
@@ -37,12 +39,14 @@ public sealed class PlansController(PlanService service, CrudService<Plan> plans
     }
 
     [HttpPost("validate")]
+    [EnableRateLimiting("planning")]
     public async Task<ActionResult<PlanValidation>> Validate([FromBody] Plan body, CancellationToken ct) => Ok(await service.ValidateAsync(body, ct));
 
     [HttpGet("{id}")]
     public async Task<ActionResult<Plan>> Get(string id, CancellationToken ct) => Ok(await plans.GetAsync(id, ct));
 
     [HttpPatch("{id}")]
+    [EnableRateLimiting("planning")]
     public async Task<ActionResult<Plan>> Patch(string id, [FromBody] JsonElement patch, CancellationToken ct) => Ok(await service.PatchAsync(id, patch, ct));
 
     [HttpDelete("{id}")]
@@ -60,6 +64,7 @@ public sealed class PlansController(PlanService service, CrudService<Plan> plans
 
     /// <summary>"E se aplicarmos isto?": lança uma simulação com as ações do plano como intervenções.</summary>
     [HttpPost("{id}/simulate")]
+    [EnableRateLimiting("planning")]
     public async Task<ActionResult<Simulation>> Simulate(string id, [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] PlanSimulationRequest? body, CancellationToken ct)
     {
         var simulation = await service.SimulateAsync(id, body ?? new PlanSimulationRequest(), ct);

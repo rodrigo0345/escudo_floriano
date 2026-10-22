@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import { plansApi, simulationsApi, type Simulation, type SimulationRequest } from '@/api';
 import { Impact } from '@/domain/impact';
+import { MILESTONE_MINUTES } from '@/domain/simulationForm';
 import { formatDateTime, formatTime } from '@/domain/weather';
 import { useWorld } from '@/engine/EngineContext';
 import type { Milestone } from '@/engine/layers/fireLayer';
@@ -11,7 +12,6 @@ import { loadRunData } from '@/usecases/loadRun';
 
 /** The impact (roads cut / place access) is computed every IMPACT_STEP minutes on large maps; between steps the last one is reused. */
 const IMPACT_STEP = 3;
-const MILESTONE_MINUTES = [15, 30, 60, 120, 180];
 
 /** The camera frames the first loaded ignition once; later runs keep wherever the operator navigated to. (Module-level: several components share these actions.) */
 let framedFirstRun = false;

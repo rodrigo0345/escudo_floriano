@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 
+import { Icon } from '@/components/common/Icon';
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
 import { fireRiskLevel, findUpcomingWeatherShift, groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
@@ -59,12 +60,12 @@ export function WeatherHud() {
         </small>
         <small>
           {weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}
-          {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ☁️ ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
+          {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
         </small>
       </div>
       {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
         <div className={styles.hudPrecip}>
-          🌧️ Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
+          <Icon name="rain" /> Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
         </div>
       ) : null}
       {upcomingShift && (
@@ -72,22 +73,24 @@ export function WeatherHud() {
           className={styles.upcomingShift}
           title={`Prevista rotação de ${upcomingShift.dirChangeDeg}° e variação de ${upcomingShift.speedDeltaKmh > 0 ? '+' : ''}${upcomingShift.speedDeltaKmh} km/h ao minuto ${upcomingShift.atMinute}`}
         >
-          <span className={styles.shiftIcon}>⏱️</span>
+          <span className={styles.shiftIcon}>
+            <Icon name="clock" />
+          </span>
           <span>{upcomingShift.label}</span>
         </div>
       )}
       {visibilityM != null && visibilityM < 4000 ? (
         <div className={styles.hudVisibility} title="Visibilidade reduzida ao nível do solo devido à propagação de fumo">
-          🌫️ Visibilidade: <b>{(visibilityM / 1000).toFixed(1)} km</b> (fumo)
+          <Icon name="cloud" /> Visibilidade: <b>{(visibilityM / 1000).toFixed(1)} km</b> (fumo)
         </div>
       ) : null}
       {fireRiskLevel(weather) === 'extreme' ? (
         <div className={styles.extremeAlert} title="Condições meteorológicas extremas de propagação de incêndio rural (Regra dos 30-30-30: Temp ≥ 30°C, Humidade ≤ 30%, Vento/Rajadas ≥ 30 km/h)">
-          🚨 <b>RISCO EXTREMO · Regra 30-30-30</b> (T≥30°C · HR≤30% · V≥30 km/h)
+          <Icon name="alert" /> <b>RISCO EXTREMO · Regra 30-30-30</b> (T≥30°C · HR≤30% · V≥30 km/h)
         </div>
       ) : fireRiskLevel(weather) === 'high' ? (
         <div className={styles.highRiskChip} title="Calor excessivo e ar seco aumentam a combustibilidade dos combustíveis finos (T ≥ 30°C · HR ≤ 30%)">
-          ⚠️ <span>Risco Elevado · Calor e Seca</span>
+          <Icon name="alert" /> <span>Risco Elevado · Calor e Seca</span>
         </div>
       ) : null}
       <div className={styles.hudRows}>

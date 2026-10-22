@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { Facility, FacilityKind, Place } from '@/api';
 import type { Georef } from '@/domain/georef';
+import { getOrgLogo } from '@/domain/organizationLogos';
 
 import { badgeSprite, textSprite } from '../sprites';
 import type { Pickable } from '../picking';
@@ -66,7 +67,7 @@ export class AssetLayer {
     this.facilityEntries.forEach((f) => this.group.remove(f.sprite));
     this.facilityEntries = list.map((facility) => {
       const [code, color] = ICON[facility.kind] ?? ['·', '#666'];
-      const sprite = badgeSprite(code, color);
+      const sprite = badgeSprite(code, color, getOrgLogo(facility.kind));
       sprite.position.set(...this.geo.world(facility.position.lat, facility.position.lon, 5));
       const confidence = facility.confidence && facility.confidence !== 'high' ? `, confiança ${CONFIDENCE_LABEL[facility.confidence]}` : '';
       const capacity = facility.capacity ? `, ${facility.capacity} lugares` : '';

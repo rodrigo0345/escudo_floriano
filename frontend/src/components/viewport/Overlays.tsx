@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { Icon } from '@/components/common/Icon';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './viewport.module.css';
@@ -27,7 +28,7 @@ export function Banner() {
     <div className={`${styles.banner} ${styles[banner.kind]}`} role="alert">
       <span>{banner.text}</span>
       <button aria-label="Fechar" onClick={dismiss}>
-        ✕
+        <Icon name="close" />
       </button>
     </div>
   );

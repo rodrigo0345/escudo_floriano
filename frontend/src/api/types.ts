@@ -124,6 +124,10 @@ export type PlanSimulationRequest = Schemas['PlanSimulationRequest'];
 export type PlanRisk = Schemas['PlanRisk'];
 export type PlanBasis = Schemas['PlanBasis'];
 export type PlanHorizon = Schemas['PlanHorizon'];
+export type PlanRequest = Schemas['PlanRequest'];
+export type PlanRequestInput = Schemas['PlanRequestInput'];
+export type PlanRequestStatus = Schemas['PlanRequestStatus'];
+export type PlanRequestProgress = Schemas['PlanRequestProgress'];
 
 export type Action = Schemas['Action'];
 export type ActionPriority = Schemas['ActionPriority'];

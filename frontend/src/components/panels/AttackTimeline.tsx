@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 
 import type { LatLon, Plan } from '@/api';
 import { ATTACK_KINDS, attacksOf, personnelByMinute, type AttackKind, type AttackRow } from '@/domain/planAttacks';
+import { OrgLogo } from '@/domain/organizationLogos';
+import { VehicleModelPhoto } from '@/domain/vehicleModelImages';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
@@ -169,14 +171,23 @@ export function AttackTimeline({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
 
 function AttackDetail({ row, horizon, seeWorking }: { row: AttackRow; horizon: number; seeWorking: () => void }) {
   const ends = Number.isFinite(row.end) ? `T+${Math.round(row.end)}` : 'até ao fim';
+  const photoType = row.kind === 'air' ? 'helicopter' : 'forest_firefighting_vehicle';
   return (
     <div className={styles.attackDetail}>
-      <b>{row.title}</b>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '8px' }}>
+        <VehicleModelPhoto type={photoType} size={{ width: 84, height: 54 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <b>{row.title}</b>
+        </div>
+      </div>
       <dl>
         <dt>Quem</dt>
-        <dd>
-          {row.units} · {row.orgName}
-          {row.reinforcement ? ' · reforço' : ''}
+        <dd style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <OrgLogo org={row.orgName} size={18} inline />
+          <span>
+            {row.units} · {row.orgName}
+            {row.reinforcement ? ' · reforço' : ''}
+          </span>
         </dd>
         {row.fromStation ? (
           <>
