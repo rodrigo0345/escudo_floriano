@@ -8,6 +8,13 @@ import { buildVehicle, isAircraft, liveryOf, type ModelClass, type VehicleModel 
 export const BASE_VEHICLE_SCALE = 2.4;
 
 /**
+ * Draw order of a vehicle's model: above the ground annotations (roads, closures, fire lines and fuel breaks, 5–9) so a car is never
+ * buried under a translucent line, but below the smoke/rain/clouds (15+), which should still pass in front of it. The model stays on the
+ * terrain and is depth-tested against it, so raising the draw order only wins over the lines — it never makes a vehicle float.
+ */
+const VEHICLE_RENDER_ORDER = 10;
+
+/**
  * One vehicle on the map: its 3D model at constant dimension (comfortably visible, never enlarged when zooming out or in),
  * an overhead identifier marker showing organization crest + vehicle type icon, its status tag, emergency lights that flash while it
  * responds, a spinning rotor for helicopters, and a hover tooltip.
@@ -38,6 +45,7 @@ export class VehicleActor {
     this.inner.scale.setScalar(BASE_VEHICLE_SCALE / unit);
     this.inner.add(this.model.root);
     this.group.add(this.inner);
+    this.raiseAboveAnnotations();
 
     // Overhead dual-identifier marker: Organization Logo/Color + Vector Vehicle Type Icon
     this.marker = new VehicleMarker(cls, orgType, callsign, this.model.heightM, unit, BASE_VEHICLE_SCALE);
@@ -51,6 +59,29 @@ export class VehicleActor {
     this.group.userData.actor = this;
     this.tag.sprite.userData.actor = this;
     if (this.model.bucket) this.model.bucket.visible = false;
+  }
+
+  /**
+   * Moves the model into the transparent queue, after the ground annotations, without changing its position or size.
+   * `transparent` only changes the render queue here (every part is fully opaque); `depthWrite` keeps the parts occluding each
+   * other and the terrain occluding the whole vehicle, which is what stops it from looking like it floats over a hill or a line.
+   */
+  private raiseAboveAnnotations(): void {
+    this.model.root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      // the livery markings are already translucent and do not write depth: they must draw just after the body they sit on,
+      // or the body can cover them (both are in the transparent queue now, so depth sorting alone is not enough)
+      const overBody = materials.some((material) => material.depthWrite === false);
+      mesh.renderOrder = VEHICLE_RENDER_ORDER + (overBody ? 0.5 : 0);
+      for (const material of materials) {
+        if (material.transparent) continue; // the side markings are already translucent (and do not write depth)
+        material.transparent = true;
+        material.depthWrite = true;
+        material.needsUpdate = true; // shared paints: only the first vehicle flips them
+      }
+    });
   }
 
   /** Puts the vehicle at `pos` facing `heading` (radians, 0 = east), keeping constant dimensions. */

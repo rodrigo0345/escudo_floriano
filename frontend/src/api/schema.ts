@@ -1335,7 +1335,7 @@ export interface paths {
         put?: never;
         /**
          * Pré-visualizar a meteorologia efetiva
-         * @description Calcula, sem correr o motor, a série que seria usada (série real + pontos-chave + eventos + humidade do combustível). Alimenta o gráfico do editor de meteorologia.
+         * @description Calcula, sem correr o motor, a série que seria usada (série real + pontos-chave + eventos + humidade do combustível). Alimenta o gráfico do editor de meteorologia. A resposta ecoa `events` e `keyframes` aplicados: a mesma receita produz a mesma série em `GET /simulations/{id}/weather`.
          */
         post: operations["resolveWeather"];
         delete?: never;
@@ -1568,7 +1568,7 @@ export interface components {
         ValidationIssue: {
             /** @enum {string} */
             severity: "error" | "warning" | "info";
-            /** @description Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`...). */
+            /** @description Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`, `trigger_not_simulated` — o plano aceita `on_fire_arrival`/`on_action_complete` mas o motor ainda não os simula, pelo que a ação conta como começando ao ativar). */
             code: string;
             message: string;
             /** @description JSON Pointer (RFC 6901) para o campo do pedido a que se refere. */
@@ -2222,6 +2222,12 @@ export interface components {
              */
             source?: "observed" | "reanalysis" | "forecast" | "scenario" | "derived";
             gustKmh?: number;
+            /** @description Visibilidade horizontal à superfície (metros). A previsão Open-Meteo fornece-a; o arquivo ERA5 não, e nesse caso é omitida. */
+            visibilityM?: number;
+            /** @description Energia potencial convectiva disponível (J/kg): instabilidade para trovoadas e colunas convectivas. Omitida quando a fonte não a tem. */
+            capeJkg?: number;
+            /** @description O sol está acima do horizonte no local e instante (`is_day` da fonte, ou calculado a partir da radiação solar para séries manuais). */
+            isDay?: boolean;
             dewPointC?: number;
             pressureHpa?: number;
             precipitationMmH?: number;
@@ -2473,6 +2479,10 @@ export interface components {
                 windFromDegSigma?: number;
             };
             warnings?: components["schemas"]["ValidationIssue"][];
+            /** @description Eventos ativos efetivamente aplicados, pela ordem em que o motor os aplicou (eco do pedido, sem os desativados). */
+            events?: components["schemas"]["WeatherEvent"][];
+            /** @description Pontos-chave efetivamente aplicados (eco do pedido). */
+            keyframes?: components["schemas"]["WeatherKeyframe"][];
         };
         /**
          * @description Nível de alerta/ativação (verde = normal, vermelho = máximo).

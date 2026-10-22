@@ -52,6 +52,7 @@ services:
       FIRETRACE_DB: Host=db;Port=5432;Database=${POSTGRES_DB:-firetrace};Username=${POSTGRES_USER:-firetrace};Password=${POSTGRES_PASSWORD:-firetrace}
       ENGINE_URL: http://engine:9000   # only used when FireTrace:Engine:Provider is "elmfire"
       FIRETRACE_JOBS: /app/data/jobs
+      FireTrace__Limits__RateLimitTrustedProxies: "${FIRETRACE_PROXY_IP:-172.30.250.10}"
     ports:
       - "${PORT_API:-8080}:8080"
     volumes:
@@ -70,6 +71,7 @@ services:
       start_interval: 1s
     networks:
       - default
+      - proxy
 
   # Loads the third-party data of a location: docker compose --profile ingest run --rm ingest --location guimaraes
   ingest:
@@ -102,6 +104,9 @@ services:
       AGENTS_POLL_SECONDS: "${AGENTS_POLL_SECONDS:-10}"
       AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
+      # F6: N candidates generated per plan and judged by the engine (best kept). 2 = the demo shows
+      # "the agents compared candidate plans"; each extra candidate costs ~75 s of wall clock.
+      AGENTS_CANDIDATES: "${AGENTS_CANDIDATES:-2}"
       # LLM commander (agents/LLM_COMMANDER_PLAN.md): "llm" to let it choose the strategy of plans A and B, "rules" (default) to keep the rules.
       # The model and the key come from a local .env (git-ignored): never put the key in this file.
       AGENTS_COMMANDER: "${AGENTS_COMMANDER:-rules}"
@@ -135,11 +140,17 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - default
+      proxy:
+        ipv4_address: "${FIRETRACE_PROXY_IP:-172.30.250.10}"
 
 networks:
   default:
     name: firetrace-network
+  proxy:
+    name: firetrace-proxy
+    ipam:
+      config:
+        - subnet: "${FIRETRACE_PROXY_SUBNET:-172.30.250.0/24}"
 
 volumes:
   pgdata:

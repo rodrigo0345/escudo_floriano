@@ -31,6 +31,10 @@ server {
     set $backend ${BACKEND_URL};
     proxy_pass $backend;
     proxy_set_header Host $host;
+    # same XFF as /api/: otherwise the backend sees only nginx's private IP and treats docs
+    # traffic as an internal service, sharing the generous internal rate-limit partition
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
   }
 
   # photoreal 3D city: local tiles saved once by tools/fetch_tiles3d.py and mounted read-only (see docker-compose.yaml). No folder = 404 = no 3D city.

@@ -195,7 +195,8 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
                 var p = track.At(i * sampleInterval);
                 var row = moistureRows[i];
                 return new WeatherSample { Time = sc.Start.AddMinutes(i * sampleInterval), Source = "scenario", WindKmh = Math.Round(p.WindKmh, 1), WindFromDeg = Math.Round(p.WindFromDeg), HumidityPct = Math.Round(p.HumidityPct), TempC = Math.Round(p.TempC, 1),
-                    GustKmh = p.GustKmh > 0 ? Math.Round(p.GustKmh, 1) : null, PrecipitationMmH = p.PrecipitationMmH > 0 ? Math.Round(p.PrecipitationMmH, 1) : null, FineFuelMoisturePct = Math.Round(row.M1, 1),
+                    GustKmh = p.GustKmh > 0 ? Math.Round(p.GustKmh, 1) : null, PrecipitationMmH = p.PrecipitationMmH > 0 ? Math.Round(p.PrecipitationMmH, 1) : null,
+                    CloudCoverPct = Math.Round(p.CloudCoverPct), VisibilityM = p.VisibilityM, CapeJkg = p.CapeJkg, IsDay = p.IsDay, FineFuelMoisturePct = Math.Round(row.M1, 1),
                     FuelMoisture = new FuelMoisture(Math.Round(row.M1, 1), Math.Round(row.M10, 1), Math.Round(row.M100, 1), Math.Round(row.Lh, 1), Math.Round(row.Lw, 1), Math.Round(foliar, 1)) };
             }).ToList(),
             BuildingFactor = effect.BuildingFactor,

@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 # The spec's server base is `/api/v1` (`servers[0].url`): the real backend answers 404 on unprefixed paths.
 DEFAULT_BASE_URL = "http://localhost:8080/api/v1"
 
-
 class ApiProblem(Exception):
     """The server answered ``application/problem+json``."""
 

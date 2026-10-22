@@ -4,10 +4,9 @@ import type { CloudSpatialSpot } from './cloudLayer';
 
 const DROP_COUNT = 6000;
 // In FireTrace coordinates, 1 world unit = 10 meters.
-// TERRITORY_BOUNDS = 2400 units => 24 km spanning the entire Guimarães concelho.
-// CLOUD_BASE_Y = 140 units => 1400m altitude, exactly matching the underside of the high cloud deck.
-// Rain strictly originates at or below CLOUD_BASE_Y and falls towards ground level (Y ~ 0).
-const TERRITORY_BOUNDS = 2400;
+// The rain field spans the loaded map (the constructor takes the map's world size), so on the 8 km detail map it does not
+// keep raining over the void where the 22 km concelho used to be. Rain strictly originates at or below the cloud deck's
+// base (140 units = 1400 m) and falls towards ground level (Y ~ 0).
 const CLOUD_BASE_Y = 140;
 const GROUND_Y = -6;
 const RAIN_FALL_RANGE = CLOUD_BASE_Y - GROUND_Y;
@@ -28,17 +27,22 @@ export class RainLayer {
   private readonly positions: Float32Array;
   private readonly velocities: Float32Array;
   private readonly lengths: Float32Array;
+  /** Half-extent of the rain field per axis, in world units: the loaded map, not a fixed 24 km territory. */
+  private readonly halfX: number;
+  private readonly halfZ: number;
   private active = false;
 
-  constructor() {
+  constructor(worldWidthUnits = 2400, worldHeightUnits = 2400) {
+    this.halfX = Math.max(120, worldWidthUnits / 2);
+    this.halfZ = Math.max(120, worldHeightUnits / 2);
     this.positions = new Float32Array(DROP_COUNT * 2 * 3);
     this.velocities = new Float32Array(DROP_COUNT);
     this.lengths = new Float32Array(DROP_COUNT);
 
     for (let i = 0; i < DROP_COUNT; i++) {
-      const x = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      const x = (Math.random() - 0.5) * this.halfX * 2;
       const y = GROUND_Y + Math.random() * RAIN_FALL_RANGE;
-      const z = (Math.random() - 0.5) * TERRITORY_BOUNDS;
+      const z = (Math.random() - 0.5) * this.halfZ * 2;
       const streakLen = 3.6 + Math.random() * 4.4; // 36m to 80m world streak length
       this.lengths[i] = streakLen;
 
@@ -104,9 +108,9 @@ export class RainLayer {
 
     // World sky anchoring:
     // If localized spot is active, anchor rain strictly over that spot on the terrain.
-    // If global (concelho-wide), anchor rain strictly at world origin (0, 0, 0) across TERRITORY_BOUNDS.
+    // If global, anchor rain at the world origin across the loaded map (never the old fixed 24 km box: on the 8 km map that rained over the void).
     // NEVER follow camera or cameraTarget, so rain remains stationary in world space!
-    const effectiveRadius = spot ? Math.max(120, spot.radiusUnits) : TERRITORY_BOUNDS / 2;
+    const effectiveRadius = spot ? Math.max(120, spot.radiusUnits) : Math.max(this.halfX, this.halfZ);
     const spanXZ = effectiveRadius * 2;
 
     if (spot) {
@@ -140,8 +144,8 @@ export class RainLayer {
       pos[idx + 1] = Math.min(CLOUD_BASE_Y, pos[idx + 4] + len);
       pos[idx + 2] = pos[idx + 5] - slantZ;
 
-      // Wrap boundaries horizontally within effectiveRadius
-      if (pos[idx + 3] > halfX || pos[idx + 3] < -halfX || pos[idx + 5] > halfX || pos[idx + 5] < -halfX) {
+      // Wrap boundaries horizontally within the field (an ellipse-ish box: per axis, so a wide map rains across its width)
+      if (pos[idx + 3] > this.halfX || pos[idx + 3] < -this.halfX || pos[idx + 5] > this.halfZ || pos[idx + 5] < -this.halfZ) {
         const rx = (Math.random() - 0.5) * spanXZ;
         const rz = (Math.random() - 0.5) * spanXZ;
         pos[idx + 3] = rx;

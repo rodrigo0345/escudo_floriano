@@ -18,9 +18,18 @@ export function lineStringCoordinates(geometry: Geometry | null | undefined): Lo
 
 /** Polygon or MultiPolygon rings, as used by fire perimeters (`coordinates` of a `MultiPolygon`). */
 export function polygonRings(geometry: Geometry | null | undefined): LonLat[][] {
+  return polygonParts(geometry).flat();
+}
+
+/**
+ * The polygons of a `Polygon`/`MultiPolygon`, each as its rings `[outer, ...holes]`.
+ * Unlike {@link polygonRings}, this keeps the polygon grouping: a fire perimeter is a `MultiPolygon`
+ * with several disjoint fronts, and a fill must not treat the second front's outer ring as a hole of the first.
+ */
+export function polygonParts(geometry: Geometry | null | undefined): LonLat[][][] {
   if (!geometry) return [];
-  if (geometry.type === 'Polygon') return geometry.coordinates as LonLat[][];
-  if (geometry.type === 'MultiPolygon') return (geometry.coordinates as LonLat[][][]).flat();
+  if (geometry.type === 'Polygon') return [geometry.coordinates as LonLat[][]];
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates as LonLat[][][];
   return [];
 }
 

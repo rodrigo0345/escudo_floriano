@@ -49,13 +49,13 @@ void main() {
   float sizeM, a;
   vec3 col;
   if (style < 1.5) {
-    // forest: thin grey wisps rising from the charred stumps
+    // forest: thin dark wisps rising from the charred stumps
     float ph = fract(uClock / (7.0 + 4.0 * h(seed * 3.1)) + aInfo.w);
     float rise = ph * (35.0 + 30.0 * h(seed * 5.3));
     p.y += rise * uUnit;
     p.xz += (uWind * rise * 0.6 + sway * ph * 4.0) * uUnit;
     sizeM = 4.0 + 14.0 * ph;
-    col = vec3(0.62, 0.61, 0.6);
+    col = vec3(0.30, 0.295, 0.29);
     a = 0.5 * smoothstep(0.0, 0.15, ph) * (1.0 - ph);
   } else if (style < 2.5) {
     // shrub: embers flickering at the ground first, then a light smoke
@@ -75,17 +75,17 @@ void main() {
       p.y += rise * uUnit;
       p.xz += (uWind * rise * 0.7 + sway * ph * 3.0) * uUnit;
       sizeM = 3.0 + 9.0 * ph;
-      col = vec3(0.72, 0.71, 0.69);
+      col = vec3(0.34, 0.335, 0.33);
       a = 0.38 * smoothstep(0.0, 0.15, ph) * (1.0 - ph);
     }
   } else if (style < 3.5) {
-    // grass, crops: pale ash flecks lifted and carried downwind
+    // grass, crops: dark flecks lifted and carried downwind
     float ph = fract(uClock / (8.0 + 4.0 * h(seed * 6.1)) + aInfo.w);
     vec2 dir = length(uWind) > 0.05 ? uWind : vec2(0.25);
     p.xz += (dir * ph * 45.0 + sway * 2.0) * uUnit;
     p.y += (1.0 + 7.0 * sin(ph * 3.1416) * (0.5 + h(seed * 8.3)) + sin(uClock * 2.0 + seed * 30.0) * 0.6) * uUnit;
     sizeM = 1.3;
-    col = vec3(0.86, 0.85, 0.81);
+    col = vec3(0.38, 0.375, 0.36);
     a = 0.9 * smoothstep(0.0, 0.1, ph) * (1.0 - ph * 0.7);
   } else {
     // urban: darker, denser smoke columns from the burned-out buildings
@@ -120,8 +120,9 @@ void main() {
 `;
 
 /**
- * What the ground does after the flames have passed, by what burned there: forests smoke in thin wisps for about an hour, shrubland leaves embers and then a light smoke,
- * grass and crops shed pale ash flecks that drift downwind, buildings keep sending up dark columns for an hour and a half. Water and bare ground leave nothing.
+ * What the ground does after the flames have passed, by what burned there: forests smoke in thin dark wisps for about an hour, shrubland leaves embers and then a light
+ * smoke, grass and crops shed dark flecks that drift downwind, buildings keep sending up dark columns for an hour and a half. Water and bare ground leave nothing.
+ * Everything stays dark on purpose: pale grey ash sat over the black scar like a soot texture and hid it.
  *
  * One `THREE.Points` cloud, built once per simulation from a sample of the burned cells (stratified per land-cover type, so a small burned village still smokes next to a
  * large burned forest). Everything else happens in the shader from the fire clock and the wind: the CPU sets a few uniforms per frame.

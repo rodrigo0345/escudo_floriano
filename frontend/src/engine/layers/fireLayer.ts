@@ -129,7 +129,10 @@ export class FireLayer {
       this.perimeter.traverse((o) => (o as THREE.Line).geometry?.dispose());
       this.perimeter = null;
     }
-    const geometry = collection?.features?.[0]?.geometry;
+    const features = collection?.features ?? [];
+    // Com o ensemble, a coleção traz p10/p50/p90: o contorno principal é sempre o p50 (a mediana),
+    // não o primeiro feature da coleção.
+    const geometry = (features.find((f) => f.properties?.percentile === 'p50') ?? features[0])?.geometry;
     const rings = polygonRings(geometry);
     if (!rings.length) return;
     const group = new THREE.Group();
@@ -193,7 +196,7 @@ export class FireLayer {
     if (!list.length) return;
     const points = [{ lat: ignition[0], lon: ignition[1] }, ...list].map((m) => new THREE.Vector3(...this.geo.world(m.lat, m.lon, 4)));
     this.track = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: 0xffc247, depthTest: false, transparent: true }));
-    this.track.renderOrder = 10;
+    this.track.renderOrder = 9.5; // above the plan lines (6–9), below the vehicles (10), so a car is never hidden by it
     this.group.add(this.track);
     for (const m of list) {
       const sprite = textSprite(m.label, { size: 24, bg: 'rgba(30,20,10,.8)', color: '#ffd27a' });

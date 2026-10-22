@@ -50,6 +50,11 @@ export class SceneEngine {
   private lightningInterval = 5.0;
   private isLightningFlashing = false;
   private lightningFlashProgress = 0;
+
+  /** Whether the scene is in the 160 ms lightning pulse (the storm layer uses it to draw the bolt on the same strike). */
+  get isLightningFlashingNow(): boolean {
+    return this.isLightningFlashing;
+  }
   private lastLoopTs = 0;
 
   constructor(private readonly container: HTMLElement) {

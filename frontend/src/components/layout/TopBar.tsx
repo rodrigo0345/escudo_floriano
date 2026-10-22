@@ -45,7 +45,8 @@ export function TopBar() {
   return (
     <header className={styles.top}>
       <div className={styles.brand}>
-        FireTrace <small>Coordenação de resposta a incêndios rurais</small>
+        <img className={styles.brandLogo} src="/escudo-floriano.png" alt="Escudo Floriano" />
+        Escudo Floriano <small>Coordenação de resposta a incêndios rurais</small>
       </div>
       <div className={styles.selects}>
         <select

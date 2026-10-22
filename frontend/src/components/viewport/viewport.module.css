@@ -702,3 +702,92 @@
 .layerPanel[hidden] {
   display: none;
 }
+
+/* ---- ALERTA À POPULAÇÃO: the demo's emotional beat — big, high-contrast, impossible to miss ---- */
+.alertToastStack {
+  position: absolute;
+  left: 50%;
+  top: 96px;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(540px, calc(100% - 48px));
+  pointer-events: none;
+}
+
+.alertToast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 18px 13px;
+  text-align: left;
+  color: #fff;
+  font-family: inherit;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--bad) 82%, #000), color-mix(in srgb, var(--bad) 55%, #200a0a));
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-left: 6px solid var(--warn);
+  border-radius: 6px;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 0.55);
+  cursor: pointer;
+  animation: alertToastIn 0.28s ease-out both;
+}
+
+.alertToastRed {
+  border-left-color: var(--bad);
+}
+
+.alertToastIcon {
+  font-size: 30px;
+  line-height: 1.1;
+  filter: drop-shadow(0 2px 5px rgb(0 0 0 / 0.45));
+}
+
+.alertToastBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.alertToastTitle {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.alertToastText {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.alertToastMessage {
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.94;
+}
+
+.alertToastChannels {
+  margin-top: 3px;
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+@keyframes alertToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

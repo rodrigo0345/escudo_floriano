@@ -8,6 +8,9 @@ export type IconName =
   | 'cloud'
   | 'wind'
   | 'gust'
+  | 'front'
+  | 'thermometer'
+  | 'humidity'
   | 'sun'
   | 'globe'
   | 'pin'
@@ -26,6 +29,9 @@ const PATHS: Record<IconName, string> = {
   cloud: 'M7 18a4 4 0 0 1 .5-8A5 5 0 0 1 17 11a3.5 3.5 0 0 1 0 7H7z',
   wind: 'M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3',
   gust: 'M3 8h9a2.5 2.5 0 1 0-2.5-2.5M3 12h15a3 3 0 1 0-3-3M3 16h8a2.5 2.5 0 1 1-2.5 2.5',
+  front: 'M3 7h10a3 3 0 1 0-3-3M3 12h16M3 17h9a3 3 0 1 1-3 3',
+  thermometer: 'M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z',
+  humidity: 'M12 3s6 6.3 6 10.2A6 6 0 0 1 6 13.2C6 9.3 12 3 12 3z',
   sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z',
   pin: 'M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11zM12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
@@ -66,5 +72,10 @@ export const WEATHER_EVENT_ICON: Record<string, IconName> = {
   clouds: 'cloud',
   wind_shift: 'wind',
   wind_scale: 'gust',
+  wind_set: 'wind',
+  gust_burst: 'gust',
+  front_passage: 'front',
+  temperature_shift: 'thermometer',
+  humidity_shift: 'humidity',
   heat_dry: 'sun',
 };

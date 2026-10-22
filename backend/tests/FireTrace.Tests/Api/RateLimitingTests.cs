@@ -18,16 +18,19 @@ public class RateLimitingTests : IClassFixture<ApiFactory>
     [Fact]
     public async Task Exceeding_rate_limit_returns_429_with_problem_and_retry_after()
     {
-        const string clientIp = "192.168.1.100";
-        // a janela por IP vem do appsettings.json: um pedido a mais do que isso tem de levar 429
-        int limit = TestSettings.All.Limits.RateLimitPermitLimit;
+        // A direct caller cannot select its bucket through XFF. Use an isolated server so exhausting
+        // the direct-client bucket does not affect other tests sharing this class's fixture.
+        using var factory = new ApiFactory();
+        using var http = factory.CreateClient();
         HttpResponseMessage? lastResponse = null;
 
+        // Even rotating spoofed XFF values must still exhaust the same direct-client bucket.
+        int limit = TestSettings.All.Limits.RateLimitPermitLimit;
         for (int i = 0; i < limit + 10; i++)
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/health");
-            req.Headers.Add("X-Forwarded-For", clientIp);
-            lastResponse = await _http.SendAsync(req);
+            req.Headers.Add("X-Forwarded-For", $"192.168.{i / 256}.{i % 256}");
+            lastResponse = await http.SendAsync(req);
             if (lastResponse.StatusCode == HttpStatusCode.TooManyRequests)
                 break;
         }
@@ -45,15 +48,18 @@ public class RateLimitingTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task The_per_ip_window_is_wide_enough_for_the_agents_bursts()
+    public async Task The_internal_ip_window_is_wide_enough_for_the_agents_bursts()
     {
-        // 300 pedidos por minuto deixavam os agentes a levar 429 a meio de um plano
+        // Internal agents have their own larger bucket; spoofed XFF must not select it.
         for (int i = 0; i < 400; i++)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/health");
-            req.Headers.Add("X-Forwarded-For", "192.168.1.101");
-            var res = await _http.SendAsync(req);
-            Assert.NotEqual(HttpStatusCode.TooManyRequests, res.StatusCode);
+            var context = await _factory.Server.SendAsync(ctx =>
+            {
+                ctx.Connection.RemoteIpAddress = IPAddress.Parse("172.20.0.30");
+                ctx.Request.Method = "GET";
+                ctx.Request.Path = "/api/v1/health";
+            });
+            Assert.NotEqual((int)HttpStatusCode.TooManyRequests, context.Response.StatusCode);
         }
     }
 
