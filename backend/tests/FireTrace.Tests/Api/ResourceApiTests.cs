@@ -86,6 +86,24 @@ public class ResourceApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Dispatches_echo_notes_status_eta_and_position()
+    {
+        var org = await Org();
+        var station = Str(await Send(HttpMethod.Post, "/stations", new { organizationId = org, name = "Quartel Eco", kind = "fire_station", locationId = "guimaraes", position = new { lat = 41.4425, lon = -8.2918 } }, HttpStatusCode.Created), "id");
+        var vehicle = await Vehicle(org, "VFCI-ECO");
+        await Send(HttpMethod.Patch, $"/vehicles/{vehicle}", new { stationId = station }, HttpStatusCode.OK);
+        var target = new { label = "Eco", position = new { lat = 41.46, lon = -8.27 } };
+
+        var created = await Send(HttpMethod.Post, "/dispatches", new { reason = "eco", dispatches = new object[] {
+            new { resourceType = "vehicle", resourceId = vehicle, personnel = 4, responsibility = "firefighting", target, notes = "nota do operador" } } }, HttpStatusCode.Created);
+        var d = created["items"]!.AsArray()[0]!.AsObject();
+        Assert.Equal("nota do operador", Str(d, "notes")); // J1: as notas já não se perdem
+        Assert.Equal("ordered", Str(d, "status")); // J1: o estado inicial é persistido
+        Assert.NotNull(d["position"]); // J1: a posição do posto segue no eco
+        await Send(HttpMethod.Patch, $"/dispatches/{Str(d, "id")}", new { status = "completed" }, HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task Dispatches_reserve_vehicles_and_people_and_release_them()
     {
         var org = await Org();

@@ -30,13 +30,73 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         foreach (var action in plan.Actions)
         {
             var ref_ = new PlanActionRef(plan.Id, action.Id);
-            var effects = action.SimulationEffects is { Count: > 0 } explicitEffects ? explicitEffects : await DeriveAsync(plan, action, ct);
+            // An explicit empty array means this action currently has no physical effect (e.g. its last crew was removed).
+            var effects = action.SimulationEffects is { } explicitEffects ? explicitEffects : await DeriveAsync(plan, action, ct);
             result.AddRange(effects.Select(e => e with { PlanActionRef = ref_ }));
         }
         return result;
     }
 
     static TimeSpec StartOf(PlanAction a) => a.Trigger is AtTimeTrigger t ? t.At : new TimeSpec(OffsetMinutes: 0);
+
+    /// <summary>Resource edits must not keep the agents' old crew, water or construction schedule in the what-if.</summary>
+    public async Task<Plan> RefreshResourceEffectsAsync(Plan before, Plan after, CancellationToken ct)
+    {
+        var actions = new List<PlanAction>();
+        foreach (var action in after.Actions)
+        {
+            var previous = before.Actions.FirstOrDefault(a => a.Id == action.Id);
+            var resources = action.Resources ?? [];
+            bool hasCrew = resources.Any(r => r.ResourceType is ResourceType.Vehicle or ResourceType.PersonnelPool);
+            if (previous is null ||
+                (previous.Resources ?? []).Select(r => (r.ResourceType, r.ResourceId, r.Personnel, r.Quantity, r.Responsibility, r.FromStationId))
+                    .SequenceEqual(resources.Select(r => (r.ResourceType, r.ResourceId, r.Personnel, r.Quantity, r.Responsibility, r.FromStationId))))
+            {
+                actions.Add(action);
+                continue;
+            }
+            if (action.SimulationEffects is null)
+            {
+                bool suppression = action is FireAttackAction or DispatchUnitsAction or FuelBreakAction or StructureProtectionAction or AirSupportRequestAction;
+                actions.Add(!hasCrew && suppression ? action with { SimulationEffects = [] } : action);
+                continue;
+            }
+            var effects = new List<Intervention>();
+            var crewAreas = new HashSet<string>();
+            foreach (var effect in action.SimulationEffects)
+            {
+                // Closures and evacuations describe decisions independently of a crew's suppression capacity.
+                if (!hasCrew && effect is not (RoadClosureIntervention or EvacuationIntervention)) continue;
+                if (effect is CrewDeploymentIntervention crew)
+                {
+                    // A previous edit may have expanded one crew into several refill/rest windows.
+                    // Rebuild each work area once, using the new assignments and the server's water/fatigue rules.
+                    if (crewAreas.Add($"{crew.Responsibility}:{crew.Geometry.AsText()}"))
+                    {
+                        var area = action.SimulationEffects.OfType<CrewDeploymentIntervention>()
+                            .Where(c => c.Responsibility == crew.Responsibility && c.Geometry.EqualsExact(crew.Geometry)).ToList();
+                        double? first = area.Select(c => c.Start.Time is { } at && after.Horizon is { } horizon
+                            ? (double?)(at - horizon.Start).TotalMinutes : c.Start.OffsetMinutes).Min();
+                        var rebuilt = await CrewAsync(after, action, crew.Responsibility, crew.Geometry, ct, first);
+                        // Absolute effect times also survive plans without a relative horizon.
+                        if (after.Horizon is null && area.All(c => c.Start.Time is not null) && rebuilt.Count > 0)
+                        {
+                            var origin = area.Min(c => c.Start.Time!.Value);
+                            var offset = rebuilt[0].Start.OffsetMinutes ?? 0;
+                            rebuilt = rebuilt.Select(e => e with { Start = new TimeSpec(Time: origin.AddMinutes((e.Start.OffsetMinutes ?? 0) - offset)) }).ToList();
+                        }
+                        effects.AddRange(rebuilt);
+                    }
+                }
+                else if (effect is FireLineIntervention line && action is FireAttackAction attack && line.Geometry is LineString geometry)
+                    effects.Add(await LineAsync(after, action, attack with { Line = geometry }, line.Effectiveness, ct));
+                else effects.Add(effect);
+            }
+            // Restoring resources to an action with no explicit effects uses its normal action-derived model.
+            actions.Add(action with { SimulationEffects = hasCrew && action.SimulationEffects.Count == 0 ? null : effects });
+        }
+        return after with { Actions = actions };
+    }
 
     async Task<IReadOnlyList<Intervention>> DeriveAsync(Plan plan, PlanAction a, CancellationToken ct)
     {
@@ -96,7 +156,7 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
     /// A equipa que o plano põe num sítio: pessoas, viaturas e água das viaturas atribuídas à ação, a chegar `etaMinutes` depois do gatilho e a combater por janelas
     /// (com água, a reabastecer, cansada: ver <see cref="CrewWorkSchedule"/>). Cada janela é uma intervenção com a sua hora de início e duração.
     /// </summary>
-    async Task<IReadOnlyList<Intervention>> CrewAsync(Plan plan, PlanAction a, Responsibility fallback, Geometry? where, CancellationToken ct)
+    async Task<IReadOnlyList<Intervention>> CrewAsync(Plan plan, PlanAction a, Responsibility fallback, Geometry? where, CancellationToken ct, double? notBeforeMinute = null)
     {
         if (where is null || a.Resources is not { Count: > 0 } resources) return Array.Empty<Intervention>();
         int people = 0, vehicleCount = 0; double water = 0, pump = 0, eta = 0; var responsibility = fallback;
@@ -113,7 +173,7 @@ public sealed class PlanInterventions(IDocumentStore<Plan> plans, IDocumentStore
         }
         if (people == 0) return Array.Empty<Intervention>();
 
-        double arrival = StartMinutes(plan, a) + eta, until = arrival + (a.ExpectedDurationMinutes ?? limits.DefaultActionWindowMinutes);
+        double arrival = Math.Max(StartMinutes(plan, a) + eta, notBeforeMinute ?? 0), until = arrival + (a.ExpectedDurationMinutes ?? limits.DefaultActionWindowMinutes);
         return CrewWorkSchedule.Plan(arrival, until, water, pump, rules).Select(s => (Intervention)new CrewDeploymentIntervention
         {
             Start = new TimeSpec(OffsetMinutes: (int)Math.Round(s.FromMinute)), DurationMinutes = Math.Max(1, (int)Math.Round(s.Minutes)), Responsibility = responsibility, Personnel = people, Vehicles = vehicleCount, WaterL = water, Geometry = where,

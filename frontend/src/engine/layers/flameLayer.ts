@@ -125,7 +125,7 @@ export class FlameLayer {
     });
     this.mesh = new THREE.Points(this.geometry, this.material);
     this.mesh.frustumCulled = false; // the fires are spread over the whole map
-    this.mesh.renderOrder = 5;
+    this.mesh.renderOrder = 11; // after the vehicles (10): flames in front of a car show, flames behind it stay behind (depth-tested)
   }
 
   /** Burn style per grid cell (from the land cover), which decides how each cell's small fires look. */

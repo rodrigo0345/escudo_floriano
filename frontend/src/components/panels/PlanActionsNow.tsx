@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import type { Plan, PlanAction, Vehicle } from '@/api';
+import type { ActionStatus, Plan, PlanAction, Vehicle } from '@/api';
 import { Tag } from '@/components/common/StatCard';
 import { actionWindows, phaseAt, PHASE_LABEL, windowText, type ActionPhase } from '@/domain/actionTiming';
 import { OrgLogo } from '@/domain/organizationLogos';
@@ -34,6 +34,28 @@ const ACTION_KIND: Record<string, string> = {
 const PHASE_TAG: Record<ActionPhase, 'ok' | 'warn' | 'bad'> = { active: 'ok', en_route: 'warn', upcoming: 'warn', done: 'bad' };
 const PHASE_ORDER: Record<ActionPhase, number> = { active: 0, en_route: 1, upcoming: 2, done: 3 };
 
+const ACTION_STATUS_LABEL: Record<ActionStatus, string> = {
+  planned: 'Planeada',
+  acknowledged: 'Reconhecida',
+  in_progress: 'Em curso',
+  completed: 'Concluída',
+  blocked: 'Bloqueada',
+  cancelled: 'Cancelada',
+  failed: 'Falhou',
+};
+
+// Completed/cancelled actions cannot be reopened: completedAt would otherwise remain set.
+const ACTION_NEXT: Partial<Record<ActionStatus, { label: string; status: ActionStatus }[]>> = {
+  planned: [{ label: 'Iniciar', status: 'in_progress' }],
+  acknowledged: [{ label: 'Iniciar', status: 'in_progress' }],
+  in_progress: [
+    { label: 'Concluir', status: 'completed' },
+    { label: 'Bloqueada', status: 'blocked' },
+  ],
+  blocked: [{ label: 'Retomar', status: 'in_progress' }],
+  failed: [{ label: 'Retomar', status: 'in_progress' }],
+};
+
 type Json = Record<string, unknown>;
 
 function whereOf(action: PlanAction): { lat: number; lon: number } | null {
@@ -55,7 +77,13 @@ function whereOf(action: PlanAction): { lat: number; lon: number } | null {
  * and the vehicles doing it (GNR patrol cars included), with their photo, callsign and crew. By default only what is happening at that minute is listed
  * (the map shows the same), so the operator reads the operation as it unfolds; a row puts that action on the map.
  */
-export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: boolean; showOnMap: () => void }) {
+export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgress }: {
+  plan: Plan;
+  onMap: boolean;
+  showOnMap: () => void;
+  busyActionId: string | null;
+  onProgress: (action: PlanAction, status: ActionStatus) => void;
+}) {
   const world = useWorld();
   const run = useAppStore((s) => s.run);
   const t = useAppStore((s) => s.t);
@@ -65,6 +93,7 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
   const vehicles = useResourcesStore((s) => s.vehicles);
   const [all, setAll] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [orgFilter, setOrgFilter] = useState<string | null>(null);
 
   const windows = useMemo(() => actionWindows(plan), [plan]);
   const vehicleOf = useMemo(() => new Map(vehicles.map((v) => [v.id as string, v])), [vehicles]);
@@ -85,6 +114,9 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
     groups.set(id, [...(groups.get(id) ?? []), row]);
   }
   const orgOf = (id: string) => organizations.find((o) => o.id === id);
+  const orgIds = [...new Set(plan.actions.map((a) => a.organizationId ?? '—'))]
+    .sort((a, b) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b));
+  const visibleGroups = [...groups.entries()].filter(([id]) => orgFilter === null || id === orgFilter);
   const active = cursor === null ? 0 : rows.filter((r) => r.phase === 'active').length;
 
   const pick = (action: PlanAction) => {
@@ -112,8 +144,17 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
           <small className="note">Ponha o plano no mapa para ver o que decorre em cada minuto.</small>
         )}
       </div>
-      {!rows.length ? <p className="note">Nada a decorrer neste minuto: avance a linha do tempo.</p> : null}
-      {[...groups.entries()]
+      <div className={styles.orgFilter}>
+        <button className={orgFilter === null ? 'on' : ''} onClick={() => setOrgFilter(null)}>Todas</button>
+        {orgIds.map((id) => (
+          <button key={id} className={orgFilter === id ? 'on' : ''} onClick={() => setOrgFilter(id)}>
+            <OrgLogo org={orgOf(id) ?? id} size={14} inline />
+            {orgOf(id)?.name ?? id}
+          </button>
+        ))}
+      </div>
+      {!visibleGroups.length ? <p className="note">{nowOnly ? 'Nada a decorrer neste minuto com este filtro: avance a linha do tempo ou veja todas.' : 'Sem ações para esta organização.'}</p> : null}
+      {visibleGroups
         .sort(([a], [b]) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b))
         .map(([organizationId, list]) => {
           const org = orgOf(organizationId);
@@ -137,6 +178,9 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
                       <small className="note" style={{ marginLeft: 'auto' }}>{windowText(window)}</small>
                     </div>
                     <b className={styles.actionTitle}>{action.title}</b>
+                    {action.supportingOrganizationIds?.length ? (
+                      <small className="note">Apoia: {action.supportingOrganizationIds.map((id) => orgOf(id)?.name ?? id).join(', ')}</small>
+                    ) : null}
                     {units.length ? (
                       <div className={styles.unitChips}>
                         {units.map((r) => {
@@ -152,6 +196,31 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
                       </div>
                     ) : null}
                     {openRow === id && action.rationale ? <small className={styles.rationale}>{action.rationale}</small> : null}
+                    <div className={styles.actionTags}>
+                      <Tag kind={action.priority === 'critical' ? 'bad' : 'ok'}>{action.priority ?? 'normal'}</Tag>
+                      <span title="Estado reportado pela organização">
+                        <Tag kind={action.status === 'completed' ? 'ok' : action.status === 'blocked' || action.status === 'failed' ? 'bad' : 'warn'}>
+                          {ACTION_STATUS_LABEL[action.status ?? 'planned']}
+                        </Tag>
+                      </span>
+                      {plan.status === 'active' ? (
+                        <span className={styles.stepBtns}>
+                          {(ACTION_NEXT[action.status ?? 'planned'] ?? []).map((step) => (
+                            <button
+                              key={step.status}
+                              disabled={busyActionId !== null}
+                              title={`Marcar como ${ACTION_STATUS_LABEL[step.status]}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onProgress(action, step.status);
+                              }}
+                            >
+                              {busyActionId === id ? '…' : step.label}
+                            </button>
+                          ))}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })}

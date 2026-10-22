@@ -132,6 +132,31 @@ export function WeatherPanel() {
                   : 'Céu limpo'}
             </small>
           </div>
+
+          {/* Visibilidade horizontal da fonte (D1): a previsão Open-Meteo tem-na; o ERA5 não. */}
+          <div className={styles.metricTile} title="Visibilidade horizontal à superfície fornecida pelo modelo meteorológico. Não inclui o fumo do incêndio (essa está no cartão do mapa).">
+            <span>Visibilidade (meteo)</span>
+            <b>{weather.visibilityM != null ? `${(weather.visibilityM / 1000).toFixed(1)} km` : '—'}</b>
+            <small>
+              {weather.visibilityM == null
+                ? 'Fonte sem visibilidade (ERA5)'
+                : weather.visibilityM >= 10000
+                  ? 'Boa'
+                  : weather.visibilityM >= 4000
+                    ? 'Moderada'
+                    : 'Reduzida'}
+            </small>
+          </div>
+
+          {/* Dia/noite e CAPE (D1): instabilidade convectiva e luz solar no instante. */}
+          <div className={styles.metricTile} title="CAPE = energia potencial convectiva disponível; acima de ~800 J/kg há condições para trovoadas e colunas convectivas. is_day vem da fonte ou da radiação solar calculada.">
+            <span>Instabilidade / luz</span>
+            <b>{weather.capeJkg != null ? `${Math.round(weather.capeJkg)} J/kg` : '—'}</b>
+            <small>
+              {weather.isDay == null ? 'Dia/noite n/d' : weather.isDay ? <><Icon name="sun" size={12} /> Dia</> : <><Icon name="clock" size={12} /> Noite</>}
+              {weather.capeJkg != null && weather.capeJkg >= 800 ? ' · ar instável' : ''}
+            </small>
+          </div>
         </div>
       </div>
 

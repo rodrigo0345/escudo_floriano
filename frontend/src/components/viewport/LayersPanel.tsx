@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { WaterPointKind } from '@/api';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
-import { useEngine, useWorld } from '@/engine/EngineContext';
+import { useEngine, useEngineContext, useWorld } from '@/engine/EngineContext';
 import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import type { ViewModeName } from '@/engine/viewMode';
@@ -217,8 +217,11 @@ function OverlayBox() {
   const setWindEnabled = useAppStore((s) => s.setWindEnabled);
   const cloudsEnabled = useAppStore((s) => s.cloudsEnabled);
   const setCloudsEnabled = useAppStore((s) => s.setCloudsEnabled);
+  const thunderEnabled = useAppStore((s) => s.thunderEnabled);
+  const setThunderEnabled = useAppStore((s) => s.setThunderEnabled);
   const windDensity = useAppStore((s) => s.windDensity);
   const setWindDensity = useAppStore((s) => s.setWindDensity);
+  const { ensembleEnabled, setEnsembleEnabled } = useEngineContext();
   return (
     <section className={styles.layerSection}>
       <div className={styles.sectionHead}>
@@ -272,10 +275,30 @@ function OverlayBox() {
         ) : null}
       </div>
       <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow} title="Camada de nuvens 3D e cobertura nublada proporcional à meteorologia">
+        <label className={styles.overlayRow} title="A faixa p10–p90 do ensemble: os cenários otimista e pessimista da propagação">
+          <input type="checkbox" checked={ensembleEnabled} onChange={(e) => setEnsembleEnabled(e.target.checked)} />
+          <span>Incerteza (ensemble)</span>
+        </label>
+        {ensembleEnabled ? (
+          <div className={styles.overlayLegend}>
+            {/* `hasSpread` is a mutable field on the layer, so it cannot drive a re-render: keep the legend
+                descriptive instead of printing a value that would stay stale until something else renders. */}
+            <span className={styles.legendNote}>Incerteza p10–p90 · o p90 é a mancha pessimista, o p10 a otimista</span>
+          </div>
+        ) : null}
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow} title="Uma célula de cumulonimbus desloca-se com o vento da trovoada, com um bigode de nuvem, relâmpagos e o anel de rajada do outflow à superfície">
           <input type="checkbox" checked={cloudsEnabled} onChange={(e) => setCloudsEnabled(e.target.checked)} />
           <span>Nuvens 3D</span>
+          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
         </label>
+        {cloudsEnabled ? (
+          <label className={styles.overlayRow} title="Trovão sintetizado a partir do relâmpago, com o atraso do som pela distância. Só começa depois de interagir com a página (política de autoplay do browser).">
+            <input type="checkbox" checked={thunderEnabled} onChange={(e) => setThunderEnabled(e.target.checked)} />
+            <span>Som de trovão</span>
+          </label>
+        ) : null}
       </div>
     </section>
   );

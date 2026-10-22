@@ -10,4 +10,4 @@ public sealed record LimitsSettings(int MinDurationMinutes, int MaxDurationMinut
     // Endpoints pesados de planos (criar, validar, simular, corrigir): quantos correm ao mesmo tempo e quantos esperam a vez antes de levarem 429. O validador de planos usa o mesmo número.
     int PlanningPermitLimit, int PlanningQueueLimit,
     // Pedidos de planos aos agentes (criar, reclamar): leves, não devem esperar atrás de uma validação.
-    int PlanRequestPermitLimit, int PlanRequestQueueLimit);
+    int PlanRequestPermitLimit, int PlanRequestQueueLimit, int RateLimitInternalPermitLimit, string RateLimitTrustedProxies = "");

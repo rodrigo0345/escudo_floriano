@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { simulationsApi, type PerimeterCollection, type Smoke, type SpreadVectorCollection } from '@/api';
 import { lineStringCoordinates } from '@/domain/geojson';
-import { useWorld } from '@/engine/EngineContext';
+import { useEngineContext } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
@@ -16,7 +16,7 @@ type Detail = [PerimeterCollection, SpreadVectorCollection];
  * colored by the impact at that minute.
  */
 export function useWorldSync(): void {
-  const world = useWorld();
+  const { world, ensembleEnabled } = useEngineContext();
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const windEnabled = useAppStore((s) => s.windEnabled);
@@ -43,13 +43,22 @@ export function useWorldSync(): void {
   // base layer (satellite / topo / species)
   useEffect(() => {
     if (!world) return;
-    const { setHint } = useAppStore.getState();
+    const { showBanner, setBaseLayer, setHint } = useAppStore.getState();
     let cancelled = false;
+    const shown = world.terrain.currentLayer;
     if (baseLayer !== 'satellite') setHint('A gerar a camada…');
     world.terrain
       .setLayer(baseLayer)
       .then(() => !cancelled && setHint(''))
-      .catch((e: Error) => !cancelled && setHint(e.message));
+      .catch((e: Error) => {
+        if (cancelled) return;
+        // keep the switch honest: the terrain still shows `shown`, so the selector goes back to it and the next click retries
+        setBaseLayer(shown);
+        setHint('');
+        const label = baseLayer === 'species' ? 'o mapa de tipos de árvores' : baseLayer === 'topo' ? 'o mapa topográfico' : 'o mapa de satélite';
+        showBanner(`Não foi possível carregar ${label}. Tente novamente.`, 'warn');
+        console.warn('Camada base:', e.message);
+      });
     return () => {
       cancelled = true;
     };
@@ -118,11 +127,12 @@ export function useWorldSync(): void {
     if (!resourcesLoaded) void useResourcesStore.getState().load();
   }, [resourcesLoaded]);
 
-  // a new run invalidates cached per-minute detail
+  // a new run invalidates cached per-minute detail, and the ensemble band must not survive it
   useEffect(() => {
     detailCache.current.clear();
     smokeCache.current.clear();
-  }, [run?.id]);
+    world?.ensemble.reset();
+  }, [world, run?.id]);
 
   // perimeter + spread arrows for the current minute
   useEffect(() => {
@@ -134,70 +144,68 @@ export function useWorldSync(): void {
     if (cached) {
       world.fire.setPerimeter(cached[0]);
       world.fire.setArrows(cached[1]);
+      if (ensembleEnabled) world.ensemble.setCollections(cached[0]);
       return;
     }
 
-    if (playing) {
-      if (inFlightDetail.current) return;
+    const applyDetail = (targetT: number, detail: [PerimeterCollection, SpreadVectorCollection]) => {
+      if (useAppStore.getState().run?.id === run.id && Math.floor(latestDetailT.current) === targetT) {
+        world.fire.setPerimeter(detail[0]);
+        world.fire.setArrows(detail[1]);
+        if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
+      }
+    };
 
-      const fetchNext = async (wantedT: number) => {
-        const intT = Math.floor(wantedT);
-        inFlightDetail.current = true;
-        try {
-          const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, intT),
-            simulationsApi.vectors(run.id, intT),
-          ]);
-          detailCache.current.set(`${run.id}:${intT}`, detail);
-          if (useAppStore.getState().run?.id === run.id) {
-            world.fire.setPerimeter(detail[0]);
-            world.fire.setArrows(detail[1]);
-          }
-        } catch (e) {
-          console.warn('detalhe do fogo:', (e as Error).message);
-        } finally {
-          inFlightDetail.current = false;
-          const currentT = Math.floor(latestDetailT.current);
-          const currentRun = useAppStore.getState().run;
-          const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== intT) {
-            const nextKey = `${run.id}:${currentT}`;
-            if (detailCache.current.has(nextKey)) {
-              const nextCached = detailCache.current.get(nextKey)!;
-              world.fire.setPerimeter(nextCached[0]);
-              world.fire.setArrows(nextCached[1]);
-            } else {
-              void fetchNext(currentT);
-            }
+    const fetchDetail = async (wantedT: number) => {
+      const intT = Math.floor(wantedT);
+      inFlightDetail.current = true;
+      try {
+        // asking for the p10/p50/p90 quantiles in the same request keeps one fetch per minute
+        // (the backend splits the single comma-joined `percentile` query value)
+        const detail = await Promise.all([
+          simulationsApi.perimeter(run.id, intT, ['p10', 'p50', 'p90']),
+          simulationsApi.vectors(run.id, intT),
+        ]);
+        detailCache.current.set(`${run.id}:${intT}`, detail);
+        applyDetail(intT, detail);
+      } catch (e) {
+        console.warn('detalhe do fogo:', (e as Error).message);
+      } finally {
+        inFlightDetail.current = false;
+        const currentT = Math.floor(latestDetailT.current);
+        const currentRun = useAppStore.getState().run;
+        if (currentRun?.id === run.id && currentT !== intT) {
+          const nextKey = `${run.id}:${currentT}`;
+          if (detailCache.current.has(nextKey)) {
+            applyDetail(currentT, detailCache.current.get(nextKey)!);
+          } else {
+            void fetchDetail(currentT);
           }
         }
-      };
+      }
+    };
 
-      void fetchNext(minute);
+    if (playing) {
+      if (!inFlightDetail.current) {
+        void fetchDetail(minute);
+      }
     } else {
-      let cancelled = false;
-      const timer = setTimeout(async () => {
-        try {
-          const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, minute),
-            simulationsApi.vectors(run.id, minute),
-          ]);
-          detailCache.current.set(key, detail);
-          if (!cancelled && useAppStore.getState().run?.id === run.id) {
-            world.fire.setPerimeter(detail[0]);
-            world.fire.setArrows(detail[1]);
-          }
-        } catch (e) {
-          console.warn('detalhe do fogo:', (e as Error).message);
+      const timer = setTimeout(() => {
+        if (!inFlightDetail.current) {
+          void fetchDetail(minute);
         }
       }, DETAIL_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
       };
     }
-  }, [world, run, t, playing]);
+  }, [world, run, t, playing, ensembleEnabled]);
+
+  // the operator's switch: hidden while off or with no run. Stale geometry on a run change is dropped above.
+  useEffect(() => {
+    world?.ensemble.setEnabled(ensembleEnabled && !!run);
+  }, [world, run?.id, ensembleEnabled]);
 
   // smoke resource (plume height, roads without visibility) for the current minute
   useEffect(() => {
@@ -213,52 +221,47 @@ export function useWorldSync(): void {
       return;
     }
 
-    if (playing) {
-      if (inFlightSmoke.current) return;
+    const applySmoke = (targetT: number, info: Smoke) => {
+      if (useAppStore.getState().run?.id === run.id && latestSmokeT.current === targetT) {
+        useAppStore.getState().setSmokeInfo(info);
+      }
+    };
 
-      const fetchNextSmoke = async (wantedT: number) => {
-        inFlightSmoke.current = true;
-        try {
-          const info = await simulationsApi.smoke(run.id, wantedT);
-          smokeCache.current.set(`${run.id}:${wantedT}`, info);
-          if (useAppStore.getState().run?.id === run.id) {
-            useAppStore.getState().setSmokeInfo(info);
-          }
-        } catch (e) {
-          console.warn('fumo:', (e as Error).message);
-        } finally {
-          inFlightSmoke.current = false;
-          const currentT = latestSmokeT.current;
-          const currentRun = useAppStore.getState().run;
-          const isPlaying = useAppStore.getState().playing;
-          if (isPlaying && currentRun?.id === run.id && currentT !== wantedT) {
-            const nextKey = `${run.id}:${currentT}`;
-            if (smokeCache.current.has(nextKey)) {
-              useAppStore.getState().setSmokeInfo(smokeCache.current.get(nextKey)!);
-            } else {
-              void fetchNextSmoke(currentT);
-            }
+    const fetchSmoke = async (wantedT: number) => {
+      inFlightSmoke.current = true;
+      try {
+        const info = await simulationsApi.smoke(run.id, wantedT);
+        smokeCache.current.set(`${run.id}:${wantedT}`, info);
+        applySmoke(wantedT, info);
+      } catch (e) {
+        console.warn('fumo:', (e as Error).message);
+      } finally {
+        inFlightSmoke.current = false;
+        const currentT = latestSmokeT.current;
+        const currentRun = useAppStore.getState().run;
+        if (currentRun?.id === run.id && currentT !== wantedT) {
+          const nextKey = `${run.id}:${currentT}`;
+          if (smokeCache.current.has(nextKey)) {
+            applySmoke(currentT, smokeCache.current.get(nextKey)!);
+          } else {
+            void fetchSmoke(currentT);
           }
         }
-      };
+      }
+    };
 
-      void fetchNextSmoke(t);
+    if (playing) {
+      if (!inFlightSmoke.current) {
+        void fetchSmoke(t);
+      }
     } else {
-      let cancelled = false;
-      const timer = setTimeout(async () => {
-        try {
-          const info = await simulationsApi.smoke(run.id, t);
-          smokeCache.current.set(key, info);
-          if (!cancelled && useAppStore.getState().run?.id === run.id) {
-            useAppStore.getState().setSmokeInfo(info);
-          }
-        } catch (e) {
-          console.warn('fumo:', (e as Error).message);
+      const timer = setTimeout(() => {
+        if (!inFlightSmoke.current) {
+          void fetchSmoke(t);
         }
       }, DETAIL_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
       };
     }

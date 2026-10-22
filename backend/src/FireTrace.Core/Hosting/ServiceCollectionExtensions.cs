@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using FireTrace.Core.Common;
@@ -93,7 +95,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Population>().AddSingleton<MapQueries>().AddSingleton<RoadStatusResolver>().AddSingleton<RoadSpeeds>().AddSingleton<LandscapeBuilder>();
         services.AddSingleton<CrewSafety>().AddSingleton<PlanValidator>().AddSingleton<ResponsibilityRules>().AddSingleton<TargetResolver>().AddSingleton<DispatchService>().AddSingleton<PlanService>()
             .AddSingleton<PlanRequestService>();
-        services.AddSingleton<IResourceDispatcher, VehicleDispatcher>().AddSingleton<IResourceDispatcher, PersonnelDispatcher>().AddSingleton<IInterventionProvider, PlanInterventions>();
+        services.AddSingleton<IResourceDispatcher, VehicleDispatcher>().AddSingleton<IResourceDispatcher, PersonnelDispatcher>()
+            .AddSingleton<PlanInterventions>().AddSingleton<IInterventionProvider>(sp => sp.GetRequiredService<PlanInterventions>());
         services.AddSingleton<OwnerFilter>().AddSingleton<VehicleFilter>().AddSingleton<VehicleStateService>().AddSingleton<ResourceOverview>().AddSingleton<RoutingService>().AddSingleton<ArrivalEstimator>().AddSingleton<PlanRouter>()
             .AddSingleton<OperationSimulator>();
         return services.AddSingleton<ScenarioSeeder>().AddSingleton<ResourceSeeder>().AddSingleton<RoadCutsCache>().AddSingleton<SimulationQueue>().AddSingleton<SimulationService>().AddSingleton<FireResults>();
@@ -127,13 +130,41 @@ public static class ServiceCollectionExtensions
                 await JsonSerializer.SerializeAsync(context.HttpContext.Response.Body, problem, ApiJson.Options, token);
             };
 
+            var trustedProxies = limits.RateLimitTrustedProxies
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(v => IPAddress.TryParse(v, out var ip) ? (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip) : null)
+                .Where(ip => ip is not null)
+                .Select(ip => ip!)
+                .ToHashSet();
+
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             {
-                var forwarded = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-                var clientIp = ctx.Connection.RemoteIpAddress?.ToString() ?? forwarded?.Split(',')[0].Trim() ?? "client";
-                return RateLimitPartition.GetFixedWindowLimiter(clientIp, _ => new FixedWindowRateLimiterOptions
+                var remote = ctx.Connection.RemoteIpAddress;
+                if (remote?.IsIPv4MappedToIPv6 == true) remote = remote.MapToIPv4();
+                // `StringValues.ToString()` joins every header line with commas: reading only the first line
+                // (`FirstOrDefault()`) would let a client that sends two X-Forwarded-For lines control
+                // the entry our proxy's `$proxy_add_x_forwarded_for` did not write.
+                var forwarded = ctx.Request.Headers["X-Forwarded-For"].ToString();
+                var hasForwardedFor = forwarded.Length > 0;
+                // Only explicitly configured peers may identify a forwarded client. A LAN or loopback
+                // address alone proves nothing: clients can reach the published API port directly.
+                bool trustedProxy = remote is not null && trustedProxies.Contains(remote);
+                bool internalLimit = !trustedProxy && IsInternalServiceClient(remote, hasForwardedFor);
+                string clientIp = remote?.ToString() ?? "client";
+                if (trustedProxy && hasForwardedFor)
                 {
-                    PermitLimit = limits.RateLimitPermitLimit,
+                    // nginx appends its socket peer as the last entry; preceding entries are untrusted.
+                    var last = forwarded.Split(',').Select(p => p.Trim()).LastOrDefault(p => p.Length > 0);
+                    if (IPAddress.TryParse(last, out var client)) clientIp = (client.IsIPv4MappedToIPv6 ? client.MapToIPv4() : client).ToString();
+                }
+                // An unset `RateLimitInternalPermitLimit` binds to 0: fall back to the public window instead of
+                // rejecting every internal call (a config typo must not take the agents offline).
+                var internalPermits = limits.RateLimitInternalPermitLimit > 0 ? limits.RateLimitInternalPermitLimit : limits.RateLimitPermitLimit;
+                // Public and internal callers cannot accidentally share the first-created limiter's permit count.
+                var partition = $"{(internalLimit ? "internal" : "public")}:{clientIp}";
+                return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = internalLimit ? internalPermits : limits.RateLimitPermitLimit,
                     Window = TimeSpan.FromSeconds(limits.RateLimitWindowSeconds),
                     QueueLimit = 0,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
@@ -155,4 +186,35 @@ public static class ServiceCollectionExtensions
                 o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             });
         });
+
+    /// <summary>Endereço privado (RFC 1918 / ULA fc00::/7). Não estabelece confiança num proxy.</summary>
+    static bool IsPrivateAddress(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        // Docker/Kestrel can surface an IPv4 peer as an IPv4-mapped IPv6 address (`::ffff:172.18.0.5`);
+        // unwrap it, or the internal agents would be mistaken for Internet traffic.
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+        }
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] is 0xfc or 0xfd; // unique local addresses (fc00::/7)
+        }
+        return false;
+    }
+
+    /// <summary>Serviço interno (a rede do compose): IP privado NÃO-loopback, sem proxy à frente. O TestServer
+    /// (loopback) e os clientes externos ficam de fora — o limite apertado é para quem vem da Internet.</summary>
+    static bool IsInternalServiceClient(IPAddress? remote, bool hasForwardedFor)
+    {
+        if (remote is null || hasForwardedFor) return false;
+        // normalize like `IsPrivateAddress`: `::ffff:127.0.0.1` is not `IsLoopback` as IPv6,
+        // and a mapped loopback must stay on the tight limit, as the TestServer does.
+        var ip = remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote;
+        return !IPAddress.IsLoopback(ip) && IsPrivateAddress(ip);
+    }
 }

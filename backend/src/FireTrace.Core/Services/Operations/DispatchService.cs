@@ -43,7 +43,9 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
             {
                 OrganizationId = subject.OrganizationId, ResourceType = input.ResourceType, ResourceId = input.ResourceId, Personnel = input.Personnel, Responsibility = input.Responsibility,
                 Target = input.Target, FromStationId = input.FromStationId ?? subject.StationId, StartAt = input.StartAt ?? clock.GetUtcNow(), ExpectedDurationMinutes = input.ExpectedDurationMinutes,
-                Route = route ?? input.Route, // a rota calculada pelo servidor (por estrada) prevalece sobre a do cliente Notes = input.Notes, Status = DispatchStatus.Ordered, EtaMinutes = eta, Position = subject.Position,
+                // a rota calculada pelo servidor (por estrada) prevalece sobre a do cliente
+                Route = route ?? input.Route,
+                Notes = input.Notes, Status = DispatchStatus.Ordered, EtaMinutes = eta, Position = subject.Position,
                 CrewOnboard = input.ResourceType == ResourceType.Vehicle ? input.Personnel : null, Source = origin.Source, PlanId = origin.PlanId,
                 ActionId = origin.ActionIds is { } ids && i < ids.Count ? ids[i] : null, Reason = batch.Reason,
             }, ct);

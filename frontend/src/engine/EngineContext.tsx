@@ -8,6 +8,9 @@ interface EngineContextValue {
   world: World | null;
   setEngine: (engine: SceneEngine | null) => void;
   setWorld: (world: World | null) => void;
+  /** Whether the ensemble's p10–p90 "cone of futures" band is drawn (the LayersPanel's switch). */
+  ensembleEnabled: boolean;
+  setEnsembleEnabled: (ensembleEnabled: boolean) => void;
 }
 
 const EngineContext = createContext<EngineContextValue | null>(null);
@@ -20,7 +23,11 @@ const EngineContext = createContext<EngineContextValue | null>(null);
 export function EngineProvider({ children }: { children: ReactNode }) {
   const [engine, setEngine] = useState<SceneEngine | null>(null);
   const [world, setWorld] = useState<World | null>(null);
-  const value = useMemo(() => ({ engine, world, setEngine, setWorld }), [engine, world]);
+  const [ensembleEnabled, setEnsembleEnabled] = useState(true);
+  const value = useMemo(
+    () => ({ engine, world, setEngine, setWorld, ensembleEnabled, setEnsembleEnabled }),
+    [engine, world, ensembleEnabled],
+  );
   return <EngineContext.Provider value={value}>{children}</EngineContext.Provider>;
 }
 

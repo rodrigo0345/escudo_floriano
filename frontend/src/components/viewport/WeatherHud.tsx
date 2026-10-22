@@ -61,6 +61,7 @@ export function WeatherHud() {
         <small>
           {weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}
           {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
+          {weather.isDay != null ? ` · ${weather.isDay ? 'dia' : 'noite'}` : ''}
         </small>
       </div>
       {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (

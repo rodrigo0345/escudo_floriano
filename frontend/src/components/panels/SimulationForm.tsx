@@ -1,6 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 
-import { weatherApi, type WeatherSample } from '@/api';
+import { weatherApi, type ValidationIssue, type WeatherSample } from '@/api';
 import { Icon, WEATHER_EVENT_ICON } from '@/components/common/Icon';
 import { SegmentedControl } from '@/components/common/SegmentedControl';
 import { WindRosePicker } from '@/components/common/WindRosePicker';
@@ -10,11 +10,15 @@ import {
   bearingDelta,
   buildPreviewRequest,
   buildSimulationRequest,
+  createTimelineKeyframe,
   createTimelineRangeEvent,
   defaultFormValues,
+  eventCapabilityNote,
   resizeCustomEvents,
+  updateTimelineRangeEvent,
   type CustomWeatherEventType,
   type SimulationFormValues,
+  type TimelineKeyframe,
   type TimelineRangeEvent,
 } from '@/domain/simulationForm';
 import { useProviderBase } from '@/hooks/useProviderBase';
@@ -38,7 +42,12 @@ const EVENT_TYPE_LABEL: Record<CustomWeatherEventType, string> = {
   storm: 'Trovoada',
   clouds: 'Neblina',
   wind_shift: 'Vento',
-  wind_scale: 'Rajada',
+  wind_scale: 'Vento ×',
+  wind_set: 'Vento fixo',
+  gust_burst: 'Rajada',
+  front_passage: 'Frente',
+  temperature_shift: 'Temperatura',
+  humidity_shift: 'Humidade',
   heat_dry: 'Calor',
 };
 
@@ -55,8 +64,13 @@ export function SimulationForm() {
   const job = useAppStore((s) => s.job);
   const progress = useAppStore((s) => s.progress);
   const limits = useAppStore((s) => s.capabilities?.limits);
+  const capabilities = useAppStore((s) => s.capabilities);
+  /** G6: por que razão um evento não é adicionável com as capacidades do motor (null = suportado). */
+  const capNote = (type: CustomWeatherEventType) => eventCapabilityNote(type, capabilities);
   const storeCustomEvents = useAppStore((s) => s.customEvents);
+  const storeKeyframes = useAppStore((s) => s.weatherKeyframes);
   const setCustomEvents = useAppStore((s) => s.setCustomEvents);
+  const setWeatherKeyframes = useAppStore((s) => s.setWeatherKeyframes);
   const addIgnition = useAppStore((s) => s.addIgnition);
   const updateIgnition = useAppStore((s) => s.updateIgnition);
   const removeIgnition = useAppStore((s) => s.removeIgnition);
@@ -70,6 +84,9 @@ export function SimulationForm() {
   const [values, setValues] = useState<SimulationFormValues>(() => defaultFormValues(run));
   const [weatherTouched, setWeatherTouched] = useState(false);
   const [preview, setPreview] = useState<WeatherSample[] | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<ValidationIssue[]>([]);
+  const [previewEvents, setPreviewEvents] = useState(0);
+  const [previewKeyframes, setPreviewKeyframes] = useState(0);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const baseState = useProviderBase(run, locationId, values.start, values.duration);
   const base = baseState.base;
@@ -92,10 +109,13 @@ export function SimulationForm() {
   const baseForWindow = (start: string, duration: number) =>
     base && locationId && baseState.key === `${locationId}|${start}|${duration}` ? base : null;
 
-  // Sync store custom events into form state
+  // Sync store custom events and curve points into form state
   useEffect(() => {
     setValues((v) => ({ ...v, customEvents: storeCustomEvents }));
   }, [storeCustomEvents]);
+  useEffect(() => {
+    setValues((v) => ({ ...v, keyframes: storeKeyframes }));
+  }, [storeKeyframes]);
 
   // when a scenario's run loads, reset the form to that scenario's values
   useEffect(() => {
@@ -103,6 +123,7 @@ export function SimulationForm() {
     const defaults = defaultFormValues(run);
     const initial = defaultFormValues(run, baseForWindow(defaults.start, defaults.duration));
     initial.customEvents = storeCustomEvents;
+    initial.keyframes = storeKeyframes;
     setValues(initial);
     setWeatherTouched(false);
     setPreview(null);
@@ -121,11 +142,12 @@ export function SimulationForm() {
     }));
   }, [base, baseKey, baseState.key, values.mode, weatherTouched]);
 
-  // keep custom event windows and ignition delays inside the run duration
+  // keep custom event windows, curve points and ignition delays inside the run duration
   useEffect(() => {
     setValues((v) => ({
       ...v,
       customEvents: resizeCustomEvents(v.customEvents, v.duration),
+      keyframes: v.keyframes.map((k) => ({ ...k, minute: Math.min(v.duration, Math.max(0, k.minute)) })).sort((a, b) => a.minute - b.minute),
     }));
     const clamped = ignitions.map((ig, i) =>
       i > 0 ? { ...ig, timeOffsetMinutes: Math.min(ig.timeOffsetMinutes ?? 0, values.duration) } : ig,
@@ -154,10 +176,35 @@ export function SimulationForm() {
     return false;
   };
 
+  const applyResolved = (resolved: { samples?: WeatherSample[]; warnings?: ValidationIssue[]; events?: unknown[]; keyframes?: unknown[] }) => {
+    setPreview(resolved.samples ?? []);
+    setPreviewWarnings(resolved.warnings ?? []);
+    setPreviewEvents(resolved.events?.length ?? 0);
+    setPreviewKeyframes(resolved.keyframes?.length ?? 0);
+  };
+
+  // Every edit calls `POST /weather/resolve` (debounced) and redraws the chart: the preview is always what the engine will see.
+  useEffect(() => {
+    if (!locationId || !baseReady) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const resolved = await weatherApi.resolve(buildPreviewRequest(values, locationId, base));
+        if (!cancelled) applyResolved(resolved);
+      } catch (e) {
+        if (!cancelled) setPreviewWarnings([{ severity: 'error', code: 'weather_preview_failed', message: (e as Error).message }]);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [values, locationId, baseReady, base, baseState.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onPreview = async () => {
     if (!locationId || !requireBase()) return;
     try {
-      setPreview((await weatherApi.resolve(buildPreviewRequest(values, locationId, base))).samples ?? []);
+      applyResolved(await weatherApi.resolve(buildPreviewRequest(values, locationId, base)));
     } catch (e) {
       setHint(`Meteorologia: ${(e as Error).message}`);
     }
@@ -201,7 +248,7 @@ export function SimulationForm() {
 
   const updateCustomRangeEvent = (id: string, patch: Partial<TimelineRangeEvent>) => {
     setPreview(null);
-    const next = values.customEvents.map((e) => (e.id === id ? { ...e, ...patch } : e));
+    const next = values.customEvents.map((e) => (e.id === id ? updateTimelineRangeEvent(e, patch) : e));
     setValues((v) => ({ ...v, customEvents: next }));
     setCustomEvents(next);
   };
@@ -211,6 +258,34 @@ export function SimulationForm() {
     const next = values.customEvents.filter((e) => e.id !== id);
     setValues((v) => ({ ...v, customEvents: next }));
     setCustomEvents(next);
+  };
+
+  // Keyframe curve handlers: the timeline can also drag/edit them; this list keeps the numeric curve editable in the form.
+  const addKeyframe = () => {
+    const minute = Math.min(values.duration, Math.max(0, Math.round(values.duration / 2)));
+    const kf = createTimelineKeyframe(minute, {
+      windKmh: values.windKmh,
+      windFromDeg: values.windFromDeg,
+      tempC: values.tempC,
+      humidityPct: values.humPct,
+    });
+    const next = [...values.keyframes, kf].sort((a, b) => a.minute - b.minute);
+    setValues((v) => ({ ...v, keyframes: next }));
+    setWeatherKeyframes(next);
+  };
+
+  const updateKeyframe = (id: string, patch: Partial<TimelineKeyframe>) => {
+    const next = values.keyframes
+      .map((k) => (k.id === id ? { ...k, ...patch } : k))
+      .sort((a, b) => a.minute - b.minute);
+    setValues((v) => ({ ...v, keyframes: next }));
+    setWeatherKeyframes(next);
+  };
+
+  const removeKeyframe = (id: string) => {
+    const next = values.keyframes.filter((k) => k.id !== id);
+    setValues((v) => ({ ...v, keyframes: next }));
+    setWeatherKeyframes(next);
   };
 
   return (
@@ -360,7 +435,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('rain')}
-              title="Adicionar intervalo com chuva"
+              disabled={!!capNote('rain')}
+              title={capNote('rain') ?? 'Adicionar intervalo com chuva'}
             >
               <Icon name="rain" /> Chuva
             </button>
@@ -368,7 +444,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('storm')}
-              title="Adicionar trovoada com vento e chuva"
+              disabled={!!capNote('storm')}
+              title={capNote('storm') ?? 'Adicionar trovoada com vento e chuva'}
             >
               <Icon name="storm" /> Trovoada
             </button>
@@ -376,7 +453,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('clouds')}
-              title="Adicionar neblina / nuvens densas"
+              disabled={!!capNote('clouds')}
+              title={capNote('clouds') ?? 'Adicionar neblina / nuvens densas'}
             >
               <Icon name="cloud" /> Neblina
             </button>
@@ -384,7 +462,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('wind_shift')}
-              title="Adicionar rotação do vento"
+              disabled={!!capNote('wind_shift')}
+              title={capNote('wind_shift') ?? 'Adicionar rotação do vento'}
             >
               <Icon name="wind" /> Vento
             </button>
@@ -392,9 +471,63 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('heat_dry')}
-              title="Adicionar calor e seca"
+              disabled={!!capNote('heat_dry')}
+              title={capNote('heat_dry') ?? 'Adicionar calor e seca'}
             >
               <Icon name="sun" /> Calor
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={() => addCustomRangeEvent('wind_set')}
+              disabled={!!capNote('wind_set')}
+              title={capNote('wind_set') ?? 'Fixar vento e rumo numa janela'}
+            >
+              <Icon name="wind" /> Vento fixo
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={() => addCustomRangeEvent('gust_burst')}
+              disabled={!!capNote('gust_burst')}
+              title={capNote('gust_burst') ?? 'Adicionar rajadas de pico'}
+            >
+              <Icon name="gust" /> Rajada
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={() => addCustomRangeEvent('front_passage')}
+              disabled={!!capNote('front_passage')}
+              title={capNote('front_passage') ?? 'Adicionar passagem de frente (vento, temperatura, humidade e chuva)'}
+            >
+              <Icon name="front" /> Frente
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={() => addCustomRangeEvent('temperature_shift')}
+              disabled={!!capNote('temperature_shift')}
+              title={capNote('temperature_shift') ?? 'Adicionar variação ou valor fixo de temperatura'}
+            >
+              <Icon name="thermometer" /> Temp.
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={() => addCustomRangeEvent('humidity_shift')}
+              disabled={!!capNote('humidity_shift')}
+              title={capNote('humidity_shift') ?? 'Adicionar variação ou valor fixo de humidade'}
+            >
+              <Icon name="humidity" /> Humidade
+            </button>
+            <button
+              type="button"
+              className={styles.quickAddBtn}
+              onClick={addKeyframe}
+              title="Adicionar um ponto-chave à curva meteorológica (arrastável na timeline)"
+            >
+              <Icon name="clock" /> Curva
             </button>
             <button
               type="button"
@@ -455,8 +588,16 @@ export function SimulationForm() {
                 if (ev.type === 'rain') summaryText = `${ev.intensityMmH ?? 6} mm/h`;
                 else if (ev.type === 'storm') summaryText = `${ev.intensityMmH ?? 15} mm/h · ${ev.windKmh ?? 42} km/h`;
                 else if (ev.type === 'clouds') summaryText = `${ev.cloudCoverPct ?? 85}%`;
-                else if (ev.type === 'wind_shift') summaryText = `${ev.windFromDeg ?? 270}° ${compass(ev.windFromDeg ?? 270)}`;
+                else if (ev.type === 'wind_shift')
+                  summaryText = ev.windFromDeg != null ? `${ev.windFromDeg}° ${compass(ev.windFromDeg)}` : `${(ev.deltaDeg ?? 90) > 0 ? '+' : ''}${ev.deltaDeg ?? 90}°`;
                 else if (ev.type === 'wind_scale') summaryText = `${Math.round((ev.windFactor ?? 1.5) * 100)}%`;
+                else if (ev.type === 'wind_set') summaryText = `${ev.windKmh ?? 30} km/h · ${compass(ev.windFromDeg ?? 270)}`;
+                else if (ev.type === 'gust_burst') summaryText = `${ev.peakGustKmh ?? 70} km/h`;
+                else if (ev.type === 'front_passage') summaryText = `${ev.windKmh ?? 42} km/h · ${ev.precipitationMmH ?? 4} mm/h`;
+                else if (ev.type === 'temperature_shift')
+                  summaryText = ev.setMode ? `= ${ev.setC ?? 35}°C` : `${(ev.tempDeltaC ?? 5) > 0 ? '+' : ''}${ev.tempDeltaC ?? 5}°C`;
+                else if (ev.type === 'humidity_shift')
+                  summaryText = ev.setMode ? `= ${ev.setPct ?? 20}%` : `${(ev.humidityDeltaPct ?? -15) > 0 ? '+' : ''}${ev.humidityDeltaPct ?? -15}%`;
                 else if (ev.type === 'heat_dry') summaryText = `+${ev.tempDeltaC ?? 4}°C · ${ev.humidityDeltaPct ?? -15}%`;
 
                 return (
@@ -795,6 +936,236 @@ export function SimulationForm() {
                               </label>
                             </>
                           )}
+
+                          {ev.type === 'wind_set' && (
+                            <>
+                              <label>
+                                <span>
+                                  Vento fixo: <b>{ev.windKmh ?? 30} km/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={120}
+                                  step={1}
+                                  value={ev.windKmh ?? 30}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  De: <b>{ev.windFromDeg ?? 270}° ({compass(ev.windFromDeg ?? 270)})</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={360}
+                                  step={15}
+                                  value={ev.windFromDeg ?? 270}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windFromDeg: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Transição: <b>{ev.rampMinutes ?? 15} min</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={60}
+                                  step={5}
+                                  value={ev.rampMinutes ?? 15}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { rampMinutes: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {ev.type === 'gust_burst' && (
+                            <>
+                              <label>
+                                <span>
+                                  Rajada de pico: <b>{ev.peakGustKmh ?? 70} km/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={30}
+                                  max={150}
+                                  step={5}
+                                  value={ev.peakGustKmh ?? 70}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { peakGustKmh: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Intervalo: <b>{ev.periodMinutes ?? 5} min</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0.5}
+                                  max={30}
+                                  step={0.5}
+                                  value={ev.periodMinutes ?? 5}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { periodMinutes: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {ev.type === 'front_passage' && (
+                            <>
+                              <label>
+                                <span>
+                                  Vento: <b>{ev.windKmh ?? 42} km/h de {compass(ev.windFromDeg ?? 240)}</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={120}
+                                  step={1}
+                                  value={ev.windKmh ?? 42}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windKmh: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  De: <b>{ev.windFromDeg ?? 240}°</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={360}
+                                  step={15}
+                                  value={ev.windFromDeg ?? 240}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { windFromDeg: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  ΔTemperatura: <b>{ev.tempDeltaC ?? -6} °C</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={-12}
+                                  max={12}
+                                  step={1}
+                                  value={ev.tempDeltaC ?? -6}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { tempDeltaC: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  ΔHumidade: <b>{ev.humidityDeltaPct ?? 30} %</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={-40}
+                                  max={40}
+                                  step={5}
+                                  value={ev.humidityDeltaPct ?? 30}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { humidityDeltaPct: +e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>
+                                  Chuva: <b>{ev.precipitationMmH ?? 4} mm/h</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={50}
+                                  step={0.5}
+                                  value={ev.precipitationMmH ?? 4}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { precipitationMmH: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {(ev.type === 'temperature_shift' || ev.type === 'humidity_shift') && (
+                            <>
+                              <label style={{ flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={ev.setMode ?? false}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { setMode: e.target.checked })}
+                                />
+                                <span>Fixar valor absoluto</span>
+                              </label>
+                              {ev.type === 'temperature_shift' ? (
+                                ev.setMode ? (
+                                  <label>
+                                    <span>
+                                      Temperatura: <b>{ev.setC ?? 35} °C</b>
+                                    </span>
+                                    <input
+                                      type="range"
+                                      min={-10}
+                                      max={50}
+                                      step={1}
+                                      value={ev.setC ?? 35}
+                                      onChange={(e) => updateCustomRangeEvent(ev.id, { setC: +e.target.value })}
+                                    />
+                                  </label>
+                                ) : (
+                                  <label>
+                                    <span>
+                                      ΔTemperatura: <b>{ev.tempDeltaC ?? 5} °C</b>
+                                    </span>
+                                    <input
+                                      type="range"
+                                      min={-12}
+                                      max={12}
+                                      step={1}
+                                      value={ev.tempDeltaC ?? 5}
+                                      onChange={(e) => updateCustomRangeEvent(ev.id, { tempDeltaC: +e.target.value })}
+                                    />
+                                  </label>
+                                )
+                              ) : ev.setMode ? (
+                                <label>
+                                  <span>
+                                    Humidade: <b>{ev.setPct ?? 20} %</b>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    value={ev.setPct ?? 20}
+                                    onChange={(e) => updateCustomRangeEvent(ev.id, { setPct: +e.target.value })}
+                                  />
+                                </label>
+                              ) : (
+                                <label>
+                                  <span>
+                                    ΔHumidade: <b>{ev.humidityDeltaPct ?? -15} %</b>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min={-40}
+                                    max={40}
+                                    step={5}
+                                    value={ev.humidityDeltaPct ?? -15}
+                                    onChange={(e) => updateCustomRangeEvent(ev.id, { humidityDeltaPct: +e.target.value })}
+                                  />
+                                </label>
+                              )}
+                              <label>
+                                <span>
+                                  Transição: <b>{ev.rampMinutes ?? 15} min</b>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={60}
+                                  step={5}
+                                  value={ev.rampMinutes ?? 15}
+                                  onChange={(e) => updateCustomRangeEvent(ev.id, { rampMinutes: +e.target.value })}
+                                />
+                              </label>
+                            </>
+                          )}
                         </div>
                       </div>
                     )}
@@ -802,6 +1173,79 @@ export function SimulationForm() {
                 );
               })
             )}
+          </div>
+        </div>
+
+        {/* Sparse curve points: the arbitrary keyframe curves of `WeatherSpec.keyframes` */}
+        <div className={styles.rangeEventsSection}>
+          <div className={styles.rangeEventsHead}>
+            <div className={styles.rangeHeadRow}>
+              <h4>Curva meteorológica (pontos-chave)</h4>
+              {values.keyframes.length > 0 && <span className={styles.eventCountBadge}>{values.keyframes.length}</span>}
+            </div>
+          </div>
+          <small className="mut">
+            Pontos esparsos: cada campo vazio continua a seguir a meteorologia base. Arraste os losangos na timeline para mover; clique num deles para editar todos os campos.
+          </small>
+          <div className={styles.customEventsList}>
+            {values.keyframes.length === 0 ? (
+              <span className={styles.noEventsNote}>Sem pontos-chave: a série base é usada em todo o período.</span>
+            ) : (
+              values.keyframes.map((kf) => {
+                const summary =
+                  [
+                    kf.windKmh != null ? `${kf.windKmh} km/h` : null,
+                    kf.windFromDeg != null ? compass(kf.windFromDeg) : null,
+                    kf.tempC != null ? `${kf.tempC}°C` : null,
+                    kf.humidityPct != null ? `${kf.humidityPct}% HR` : null,
+                    kf.gustKmh != null ? `rajada ${kf.gustKmh}` : null,
+                    kf.precipitationMmH != null ? `${kf.precipitationMmH} mm/h` : null,
+                    kf.cloudCoverPct != null ? `${kf.cloudCoverPct}% nuvens` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'só tempo';
+                return (
+                  <div key={kf.id} className={styles.eventCardCompact}>
+                    <div className={styles.eventRowHead}>
+                      <Icon name="clock" />
+                      <span className={styles.eventTypeName}>Ponto-chave</span>
+                      <label className={styles.eventTimePill} title="Minuto desde o início">
+                        T+
+                        <input
+                          type="number"
+                          min={0}
+                          max={values.duration}
+                          step={5}
+                          value={kf.minute}
+                          style={{ width: 52, marginLeft: 3 }}
+                          onChange={(e) => updateKeyframe(kf.id, { minute: Math.max(0, Math.min(values.duration, +e.target.value || 0)) })}
+                        />
+                        m
+                      </label>
+                      <span className={styles.eventSummaryPill} title={summary}>
+                        {summary}
+                      </span>
+                      <div className={styles.eventRowActions}>
+                        <button
+                          type="button"
+                          className={styles.eventDeleteBtn}
+                          onClick={() => removeKeyframe(kf.id)}
+                          title="Remover ponto-chave"
+                          aria-label="Remover ponto-chave"
+                        >
+                          <Icon name="close" size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className={styles.quickAddRow}>
+            <button type="button" className={styles.quickAddBtn} onClick={addKeyframe} title="Adicionar um ponto-chave à curva">
+              <Icon name="clock" /> Adicionar ponto
+            </button>
           </div>
         </div>
 
@@ -893,7 +1337,10 @@ export function SimulationForm() {
           type="button"
           onClick={() => {
             const defaults = defaultFormValues(run);
-            setValues(defaultFormValues(run, baseForWindow(defaults.start, defaults.duration)));
+            const reset = defaultFormValues(run, baseForWindow(defaults.start, defaults.duration));
+            reset.customEvents = storeCustomEvents;
+            reset.keyframes = storeKeyframes;
+            setValues(reset);
             setWeatherTouched(false);
             setPreview(null);
           }}
@@ -904,7 +1351,19 @@ export function SimulationForm() {
         {preview ? (
           <div>
             <h3>Meteorologia prevista</h3>
+            <small className="mut">
+              Pré-visualização automática: {previewEvents} evento(s) e {previewKeyframes} ponto(s)-chave aplicados pelo servidor (inclui ajustes de base).
+            </small>
             <WeatherChart samples={preview} />
+            {previewWarnings.length > 0 ? (
+              <div className={styles.weatherWarnings}>
+                {previewWarnings.map((warning, i) => (
+                  <small key={`${warning.code}-${i}`} className={styles.warn}>
+                    <Icon name="alert" size={12} /> {warning.code}: {warning.message}
+                  </small>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

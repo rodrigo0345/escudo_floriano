@@ -16,6 +16,9 @@ public static class WeatherTimeline
     {
         public int Minute = minute;
         public double Wind, Dir, Humidity, Temp, Gust, Precip, Cloud;
+        // Extras da fonte (só leitura para o motor): visibilidade e CAPE são do instante mais próximo da hora; is_day decide-se no fim, com a radiação solar.
+        public double? Visibility, Cape;
+        public bool? IsDay;
     }
 
     public static WeatherTrack Build(WeatherSpec spec, IReadOnlyList<WeatherSample> hourly, DateTimeOffset start, int durationMinutes, WeatherTimelineSettings t, int spinUpHours, LatLon point)
@@ -27,10 +30,14 @@ public static class WeatherTimeline
         {
             if (hourly.Count == 0) throw new InvalidOperationException("Sem dados meteorológicos para o intervalo pedido.");
             var real = new WeatherTrack(hourly.Select(s => new WeatherPoint((s.Time - start).TotalMinutes, s.WindKmh ?? 0, s.WindFromDeg ?? 0, s.HumidityPct ?? t.ProviderFallback.HumidityPct, s.TempC ?? t.ProviderFallback.TempC, s.GustKmh ?? 0, s.PrecipitationMmH ?? 0, s.CloudCoverPct ?? 0)));
+            int h = 0;
             foreach (var c in cells)
             {
                 var p = real.At(c.Minute);
                 (c.Wind, c.Dir, c.Humidity, c.Temp, c.Gust, c.Precip, c.Cloud) = (p.WindKmh, p.WindFromDeg, p.HumidityPct, p.TempC, p.GustKmh, p.PrecipitationMmH, p.CloudCoverPct);
+                // The provider gives visibility/CAPE/daylight by the hour, not as a continuous curve: use the nearest hour (the series is ordered).
+                while (h + 1 < hourly.Count && Math.Abs((hourly[h + 1].Time - start).TotalMinutes - c.Minute) <= Math.Abs((hourly[h].Time - start).TotalMinutes - c.Minute)) h++;
+                c.Visibility = hourly[h].VisibilityM; c.Cape = hourly[h].CapeJkg; c.IsDay = hourly[h].IsDay;
             }
         }
         else foreach (var c in cells) (c.Wind, c.Dir, c.Humidity, c.Temp) = (t.NoneBase.WindKmh, t.NoneBase.WindFromDeg, t.NoneBase.HumidityPct, t.NoneBase.TempC);
@@ -44,8 +51,9 @@ public static class WeatherTimeline
         return new WeatherTrack(cells.Select(c =>
         {
             double cloud = Math.Clamp(c.Cloud, 0, 100);
+            double solar = SolarRadiation.Wm2(point.Lat, point.Lon, start.AddMinutes(c.Minute), cloud);
             return new WeatherPoint(c.Minute, Math.Max(0, c.Wind), Angles.Normalize(c.Dir), Math.Clamp(c.Humidity, t.MinHumidityPct, t.MaxHumidityPct), c.Temp,
-                Math.Max(c.Gust, 0), Math.Max(c.Precip, 0), cloud, SolarRadiation.Wm2(point.Lat, point.Lon, start.AddMinutes(c.Minute), cloud));
+                Math.Max(c.Gust, 0), Math.Max(c.Precip, 0), cloud, solar, c.Visibility, c.Cape, c.IsDay ?? solar > 0);
         }));
     }
 

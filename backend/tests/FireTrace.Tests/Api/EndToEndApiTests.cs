@@ -4,7 +4,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using FireTrace.Core.Domain.Plans;
 using FireTrace.Core.Domain.Resources;
+using FireTrace.Core.Domain.Weather;
+using FireTrace.Core.Models.Weather;
 using FireTrace.Core.Serialization;
+using FireTrace.Core.Services.Weather;
+using FireTrace.Engine.Weather;
+using FireTrace.ExternalData.Map;
 using FireTrace.Tests.Support;
 
 namespace FireTrace.Tests.Api;
@@ -311,6 +316,69 @@ public class EndToEndApiTests : IClassFixture<ApiFactory>
         });
         Assert.Equal(HttpStatusCode.OK, accessStatus);
         Assert.NotNull(access?["entries"]);
+    }
+
+    [Fact]
+    public async Task Weather_resolve_echoes_the_applied_recipe_and_matches_the_engine_track()
+    {
+        // A receita cobre os pontos-chave e todos os tipos de evento: a pré-visualização tem de ser exatamente a série que o motor constrói.
+        var request = new
+        {
+            locationId = "guimaraes",
+            start = "2026-08-17T12:00:00Z",
+            durationMinutes = 180,
+            stepMinutes = 15,
+            weather = new
+            {
+                @base = "none",
+                keyframes = new object[]
+                {
+                    new { at = new { offsetMinutes = 0 }, windKmh = 10.0, windFromDeg = 180.0, tempC = 30.0, humidityPct = 40.0 },
+                    new { at = new { offsetMinutes = 60 }, windKmh = 12.0, tempC = 32.0 },
+                },
+                events = new object[]
+                {
+                    new { type = "wind_set", window = new { start = new { offsetMinutes = 0 }, end = new { offsetMinutes = 30 } }, windKmh = 25.0, windFromDeg = 200.0, rampMinutes = 5 },
+                    new { type = "wind_shift", start = new { offsetMinutes = 40 }, toDeg = 300.0, rampMinutes = 10, holdMinutes = 20, returnRampMinutes = 10 },
+                    new { type = "wind_scale", window = new { start = new { offsetMinutes = 60 }, end = new { offsetMinutes = 90 } }, factor = 1.5, rampMinutes = 5, applyToGusts = true },
+                    new { type = "gust_burst", window = new { start = new { offsetMinutes = 100 }, end = new { offsetMinutes = 110 } }, peakGustKmh = 80.0, periodMinutes = 5.0 },
+                    new { type = "front_passage", at = new { offsetMinutes = 120 }, durationMinutes = 20, windKmh = 40.0, windFromDeg = 270.0, tempDeltaC = -6.0, humidityDeltaPct = 30.0, precipitationMmH = 4.0 },
+                    new { type = "temperature_shift", window = new { start = new { offsetMinutes = 140 }, end = new { offsetMinutes = 160 } }, deltaC = 5.0, rampMinutes = 5 },
+                    new { type = "humidity_shift", window = new { start = new { offsetMinutes = 140 }, end = new { offsetMinutes = 160 } }, deltaPct = -15.0, rampMinutes = 5 },
+                    new { type = "precipitation", window = new { start = new { offsetMinutes = 165 }, end = new { offsetMinutes = 180 } }, intensityMmH = 8.0, rampMinutes = 5 },
+                    new { type = "precipitation", enabled = false, window = new { start = new { offsetMinutes = 0 }, end = new { offsetMinutes = 180 } }, intensityMmH = 99.0 },
+                },
+            },
+        };
+        var (status, resolved) = await Send(HttpMethod.Post, "/weather/resolve", request);
+        Assert.Equal(HttpStatusCode.OK, status);
+
+        // Eco: só os eventos ativos, na ordem aplicada, e os pontos-chave.
+        var echoed = resolved?["events"]?.AsArray();
+        Assert.NotNull(echoed);
+        Assert.Equal(8, echoed.Count);
+        Assert.Equal("wind_set", Str(echoed[0], "type"));
+        Assert.Equal("precipitation", Str(echoed[echoed.Count - 1], "type"));
+        Assert.Equal(2, resolved?["keyframes"]?.AsArray().Count ?? 0);
+
+        // A mesma receita, pelo mesmo caminho do motor (`WeatherTimeline.Build`), dá os mesmos valores.
+        var dto = JsonSerializer.Deserialize<WeatherResolveRequest>(JsonSerializer.Serialize(request, ApiJson.Options), ApiJson.Options)!;
+        var track = WeatherTimeline.Build(dto.Weather, Array.Empty<WeatherSample>(), dto.Start, dto.DurationMinutes, TestSettings.All.Weather.Timeline, 0, new LatLon(41.44, -8.29));
+        var samples = resolved!["samples"]!.AsArray();
+        var step = dto.StepMinutes ?? 15;
+        Assert.Equal(dto.DurationMinutes / step + 1, samples.Count);
+        for (var i = 0; i < samples.Count; i++)
+        {
+            var p = track.At(i * step);
+            Assert.Equal(Math.Round(p.WindKmh, 1), samples[i]!["windKmh"]!.GetValue<double>(), 1);
+            Assert.Equal(Math.Round(p.WindFromDeg), samples[i]!["windFromDeg"]!.GetValue<double>(), 0);
+            Assert.Equal(Math.Round(p.TempC, 1), samples[i]!["tempC"]!.GetValue<double>(), 1);
+            Assert.Equal(Math.Round(p.HumidityPct), samples[i]!["humidityPct"]!.GetValue<double>(), 0);
+            var gust = samples[i]?["gustKmh"]?.GetValue<double>() ?? 0;
+            Assert.Equal(p.GustKmh > 0 ? Math.Round(p.GustKmh, 1) : 0, gust, 1);
+            var rain = samples[i]?["precipitationMmH"]?.GetValue<double>() ?? 0;
+            Assert.Equal(p.PrecipitationMmH > 0 ? Math.Round(p.PrecipitationMmH, 1) : 0, rain, 1);
+        }
     }
 
     [Fact]

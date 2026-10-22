@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { Capabilities, Location, Plan, Smoke } from '@/api';
-import { extractTimelineEventsFromSnapshot } from '@/domain/simulationForm';
+import { extractTimelineEventsFromSnapshot, extractTimelineKeyframesFromSnapshot, updateTimelineRangeEvent } from '@/domain/simulationForm';
 
 import type { CitySource } from '@/engine/layers/photorealLayer';
 import type {
@@ -15,6 +15,7 @@ import type {
   Progress,
   RescueOrigin,
   RunData,
+  TimelineKeyframe,
   TimelineRangeEvent,
 } from './types';
 
@@ -39,6 +40,8 @@ export interface AppState {
   run: RunData | null;
   /** Custom range-based weather events active on the timeline and simulation form (Requirement 1 & 1.1). */
   customEvents: TimelineRangeEvent[];
+  /** Sparse points of the weather curve (`WeatherSpec.keyframes`), edited on the timeline. */
+  weatherKeyframes: TimelineKeyframe[];
   /** The agents' plan drawn on the map (the one whose what-if run is on screen); `null` = nothing drawn. */
   activePlan: Plan | null;
   /** The plan action picked in the combat timeline: outlined on the map with its unit's road. */
@@ -71,6 +74,8 @@ export interface AppState {
   citySource: CitySource;
   cityKey: string;
   cloudsEnabled: boolean;
+  /** Thunder synthesised from the lightning of a storm cell (Epic E6); browsers only allow it after a gesture. */
+  thunderEnabled: boolean;
   windDensity: number;
   pickIgnitionSlot: 0 | 1 | null;
   helpOpen: boolean;
@@ -93,6 +98,10 @@ export interface AppState {
   addCustomEvent: (event: TimelineRangeEvent) => void;
   updateCustomEvent: (id: string, patch: Partial<TimelineRangeEvent>) => void;
   removeCustomEvent: (id: string) => void;
+  setWeatherKeyframes: (keyframes: TimelineKeyframe[]) => void;
+  addWeatherKeyframe: (keyframe: TimelineKeyframe) => void;
+  updateWeatherKeyframe: (id: string, patch: Partial<TimelineKeyframe>) => void;
+  removeWeatherKeyframe: (id: string) => void;
   setBaseSimulationId: (simulationId: string | null) => void;
   setActivePlan: (plan: Plan | null) => void;
   setFocusedAction: (actionId: string | null) => void;
@@ -114,6 +123,7 @@ export interface AppState {
   setCityKey: (key: string) => void;
   setWindEnabled: (on: boolean) => void;
   setCloudsEnabled: (on: boolean) => void;
+  setThunderEnabled: (on: boolean) => void;
   setWindDensity: (density: number) => void;
   setPickIgnitionSlot: (slot: 0 | 1 | null) => void;
   setHelpOpen: (open: boolean) => void;
@@ -134,6 +144,7 @@ export const useAppStore = create<AppState>((set) => ({
   ignitions: [],
   run: null,
   customEvents: [],
+  weatherKeyframes: [],
   baseSimulationId: null,
   activePlan: null,
   focusedActionId: null,
@@ -156,6 +167,7 @@ export const useAppStore = create<AppState>((set) => ({
   citySource: 'live',
   cityKey: '',
   cloudsEnabled: true,
+  thunderEnabled: true,
   windDensity: 50,
   pickIgnitionSlot: null,
   helpOpen: false,
@@ -176,12 +188,17 @@ export const useAppStore = create<AppState>((set) => ({
   setRun: (run) =>
     set((s) => {
       const parsed = run
-        ? extractTimelineEventsFromSnapshot(run.simulation.scenarioSnapshot, run.durationMinutes)
+        ? extractTimelineEventsFromSnapshot(run.simulation.scenarioSnapshot, run.durationMinutes, run.startMs)
+        : [];
+      const parsedKeyframes = run
+        ? extractTimelineKeyframesFromSnapshot(run.simulation.scenarioSnapshot, run.startMs, run.durationMinutes)
         : [];
       return {
         run,
         // If the incoming run snapshot has explicit events, keep or seed them
         customEvents: parsed.length > 0 ? parsed : s.customEvents,
+        // Keyframes belong to the scenario that was just loaded: an empty snapshot must clear the previous curve.
+        weatherKeyframes: parsedKeyframes,
       };
     }),
   setCustomEvents: (customEvents) => set({ customEvents }),
@@ -191,11 +208,25 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   updateCustomEvent: (id, patch) =>
     set((s) => ({
-      customEvents: s.customEvents.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+      customEvents: s.customEvents.map((e) => (e.id === id ? updateTimelineRangeEvent(e, patch) : e)),
     })),
   removeCustomEvent: (id) =>
     set((s) => ({
       customEvents: s.customEvents.filter((e) => e.id !== id),
+    })),
+  setWeatherKeyframes: (weatherKeyframes) => set({ weatherKeyframes }),
+  addWeatherKeyframe: (keyframe) =>
+    set((s) => ({
+      weatherKeyframes: [...s.weatherKeyframes.filter((k) => k.id !== keyframe.id), keyframe].sort((a, b) => a.minute - b.minute),
+    })),
+  updateWeatherKeyframe: (id, patch) =>
+    set((s) => ({
+      // Keep the array order stable while a marker is being dragged (the spec builder sorts by minute).
+      weatherKeyframes: s.weatherKeyframes.map((k) => (k.id === id ? { ...k, ...patch } : k)),
+    })),
+  removeWeatherKeyframe: (id) =>
+    set((s) => ({
+      weatherKeyframes: s.weatherKeyframes.filter((k) => k.id !== id),
     })),
   setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setActivePlan: (activePlan) => set({ activePlan }),
@@ -218,6 +249,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCityKey: (cityKey) => set({ cityKey }),
   setWindEnabled: (windEnabled) => set({ windEnabled }),
   setCloudsEnabled: (cloudsEnabled) => set({ cloudsEnabled }),
+  setThunderEnabled: (thunderEnabled) => set({ thunderEnabled }),
   setWindDensity: (windDensity: number) => set({ windDensity }),
   setPickIgnitionSlot: (pickIgnitionSlot) => set({ pickIgnitionSlot }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
