@@ -1,4 +1,4 @@
-import type { Ignition, SimulationRequest, WeatherEvent, WeatherResolveRequest, WeatherSample, WeatherSpec } from '@/api';
+import type { Ignition, SimulationRequest, WeatherEvent, WeatherKeyframe, WeatherResolveRequest, WeatherSample, WeatherSpec } from '@/api';
 
 import { weatherMeans, type WeatherBaseStats } from './weather';
 
@@ -21,7 +21,18 @@ export interface PresetWeatherEvent {
   events: WeatherEvent[];
 }
 
-export type CustomWeatherEventType = 'rain' | 'storm' | 'clouds' | 'wind_shift' | 'wind_scale' | 'heat_dry';
+export type CustomWeatherEventType =
+  | 'rain'
+  | 'storm'
+  | 'clouds'
+  | 'wind_shift'
+  | 'wind_scale'
+  | 'wind_set'
+  | 'gust_burst'
+  | 'front_passage'
+  | 'temperature_shift'
+  | 'humidity_shift'
+  | 'heat_dry';
 
 /**
  * Interactive range-based weather event (Requirement 1 & 1.1):
@@ -51,6 +62,33 @@ export interface TimelineRangeEvent {
   applyToGusts?: boolean;    // for wind scale (default true: scale gusts together with mean wind)
   tempDeltaC?: number;       // for temperature shift (-10 to +10 °C)
   humidityDeltaPct?: number; // for humidity shift (-30 to +30 %)
+  rampMinutes?: number;      // transition for wind_set / temperature_shift / humidity_shift
+  peakGustKmh?: number;      // for gust_burst
+  periodMinutes?: number;    // for gust_burst (minutes between gusts)
+  setMode?: boolean;         // temperature/humidity shift: fix the value instead of adding a delta
+  setC?: number;             // absolute temperature when setMode
+  setPct?: number;           // absolute humidity when setMode
+  precipitationMmH?: number; // for front_passage
+  pressureDeltaHpa?: number; // for front_passage
+  deltaDeg?: number;         // for wind_shift without an absolute target
+}
+
+/**
+ * A sparse point on the weather curve (`WeatherSpec.keyframes`): only the variables set here are
+ * fixed at `minute`; the rest keep following the provider series or the previous point.
+ */
+export interface TimelineKeyframe {
+  id: string;
+  minute: number;
+  label?: string;
+  transition?: 'linear' | 'smooth' | 'step';
+  windKmh?: number;
+  windFromDeg?: number;
+  gustKmh?: number;
+  humidityPct?: number;
+  tempC?: number;
+  precipitationMmH?: number;
+  cloudCoverPct?: number;
 }
 
 export interface SimulationFormValues {
@@ -67,6 +105,8 @@ export interface SimulationFormValues {
   /** @deprecated DEADCODE: Presets legados; substituídos por customEvents (TimelineRangeEvent) */
   presetEvents: PresetWeatherEvent[];
   customEvents: TimelineRangeEvent[];
+  /** Sparse curve points drawn on the timeline (arbitrary keyframe curves). */
+  keyframes: TimelineKeyframe[];
 }
 
 const DEFAULT_BASE: WeatherBaseStats = { windKmh: 20, dirDeg: 335, humPct: 25, tempC: 25 };
@@ -157,6 +197,68 @@ export function createTimelineRangeEvent(
         startMinute: safeStart,
         endMinute: safeEnd,
         windFactor: 1.7,
+      };
+    case 'wind_set':
+      return {
+        id,
+        type: 'wind_set',
+        label: `Vento fixo (T+${safeStart}–${safeEnd})`,
+        enabled: true,
+        startMinute: safeStart,
+        endMinute: safeEnd,
+        windKmh: 30,
+        windFromDeg: 270,
+        rampMinutes: 15,
+      };
+    case 'gust_burst':
+      return {
+        id,
+        type: 'gust_burst',
+        label: `Rajada forte (T+${safeStart}–${safeEnd})`,
+        enabled: true,
+        startMinute: safeStart,
+        endMinute: safeEnd,
+        peakGustKmh: 70,
+        periodMinutes: 5,
+      };
+    case 'front_passage':
+      return {
+        id,
+        type: 'front_passage',
+        label: `Passagem de frente (T+${safeStart}–${safeEnd})`,
+        enabled: true,
+        startMinute: safeStart,
+        endMinute: safeEnd,
+        windKmh: 42,
+        windFromDeg: 240,
+        tempDeltaC: -6,
+        humidityDeltaPct: 30,
+        precipitationMmH: 4,
+        pressureDeltaHpa: -3,
+      };
+    case 'temperature_shift':
+      return {
+        id,
+        type: 'temperature_shift',
+        label: `Temperatura (T+${safeStart}–${safeEnd})`,
+        enabled: true,
+        startMinute: safeStart,
+        endMinute: safeEnd,
+        setMode: false,
+        tempDeltaC: 5,
+        rampMinutes: 15,
+      };
+    case 'humidity_shift':
+      return {
+        id,
+        type: 'humidity_shift',
+        label: `Humidade (T+${safeStart}–${safeEnd})`,
+        enabled: true,
+        startMinute: safeStart,
+        endMinute: safeEnd,
+        setMode: false,
+        humidityDeltaPct: -15,
+        rampMinutes: 15,
       };
     case 'heat_dry':
       return {
@@ -341,6 +443,20 @@ export function defaultFormValues(
     members: 12,
     presetEvents: createPresetEvents(duration),
     customEvents: [],
+    keyframes: [],
+  };
+}
+
+/** A new sparse keyframe: only `minute` and the seeded variables are fixed, the rest stay on the base/previous curve. */
+export function createTimelineKeyframe(
+  minute: number,
+  seed: Omit<TimelineKeyframe, 'id' | 'minute'> = {},
+): TimelineKeyframe {
+  return {
+    id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    minute: Math.max(0, Math.round(minute)),
+    transition: 'linear',
+    ...seed,
   };
 }
 
@@ -423,11 +539,11 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
           rampMinutes: rainRamp,
         },
         {
-          type: 'wind_scale',
+          type: 'wind_set',
           enabled: true,
-          applyToGusts: true,
           window: win,
-          factor: 1.8,
+          windKmh: ce.windKmh ?? 42,
+          rampMinutes: rainRamp,
         },
         {
           type: 'temperature_shift',
@@ -453,18 +569,22 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
       );
     } else if (ce.type === 'wind_shift') {
       const dur = Math.max(5, ce.endMinute - ce.startMinute);
-      const ramp = Math.min(15, Math.max(3, Math.round(dur * 0.2)));
+      const ramp = ce.rampMinutes ?? Math.min(15, Math.max(3, Math.round(dur * 0.2)));
       const hold = Math.max(1, dur - ramp);
       events.push({
         type: 'wind_shift',
         enabled: true,
         start: { offsetMinutes: ce.startMinute },
         toDeg: ce.windFromDeg != null ? normalizeDeg(ce.windFromDeg) : undefined,
-        deltaDeg: ce.windFromDeg == null ? 90 : undefined,
+        deltaDeg: ce.windFromDeg == null ? (ce.deltaDeg ?? 90) : undefined,
         rampMinutes: ramp,
         holdMinutes: hold,
         returnRampMinutes: ramp,
       });
+      // `wind_shift` changes direction only; the speed field of the same event needs its own `wind_set`.
+      if (ce.windKmh != null) {
+        events.push({ type: 'wind_set', enabled: true, window: win, windKmh: ce.windKmh, rampMinutes: ramp });
+      }
     } else if (ce.type === 'wind_scale') {
       events.push({
         type: 'wind_scale',
@@ -472,6 +592,52 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
         applyToGusts: ce.applyToGusts ?? false,
         window: win,
         factor: ce.windFactor ?? 1.7,
+      });
+    } else if (ce.type === 'wind_set') {
+      events.push({
+        type: 'wind_set',
+        enabled: true,
+        window: win,
+        windKmh: ce.windKmh ?? 30,
+        windFromDeg: ce.windFromDeg != null ? normalizeDeg(ce.windFromDeg) : undefined,
+        rampMinutes: ce.rampMinutes ?? 15,
+      });
+    } else if (ce.type === 'gust_burst') {
+      events.push({
+        type: 'gust_burst',
+        enabled: true,
+        window: win,
+        peakGustKmh: ce.peakGustKmh ?? 70,
+        periodMinutes: ce.periodMinutes ?? 5,
+      });
+    } else if (ce.type === 'front_passage') {
+      events.push({
+        type: 'front_passage',
+        enabled: true,
+        at: { offsetMinutes: ce.startMinute },
+        durationMinutes: Math.max(1, dur),
+        windKmh: ce.windKmh,
+        windFromDeg: ce.windFromDeg != null ? normalizeDeg(ce.windFromDeg) : undefined,
+        tempDeltaC: ce.tempDeltaC,
+        humidityDeltaPct: ce.humidityDeltaPct,
+        pressureDeltaHpa: ce.pressureDeltaHpa,
+        precipitationMmH: ce.precipitationMmH,
+      });
+    } else if (ce.type === 'temperature_shift') {
+      events.push({
+        type: 'temperature_shift',
+        enabled: true,
+        window: win,
+        ...(ce.setMode ? { setC: ce.setC ?? 35 } : { deltaC: ce.tempDeltaC ?? 5 }),
+        rampMinutes: ce.rampMinutes ?? 15,
+      });
+    } else if (ce.type === 'humidity_shift') {
+      events.push({
+        type: 'humidity_shift',
+        enabled: true,
+        window: win,
+        ...(ce.setMode ? { setPct: ce.setPct ?? 20 } : { deltaPct: ce.humidityDeltaPct ?? -15 }),
+        rampMinutes: ce.rampMinutes ?? 15,
       });
     } else if (ce.type === 'heat_dry') {
       events.push(
@@ -491,6 +657,23 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
     }
   }
 
+  // Arbitrary curve points: sparse keyframes fixed by the operator on the timeline.
+  const curve: WeatherKeyframe[] = (v.keyframes ?? [])
+    .filter((k) => k.minute >= 0)
+    .sort((a, b) => a.minute - b.minute)
+    .map((k) => ({
+      at: { offsetMinutes: k.minute },
+      ...(k.label ? { label: k.label } : {}),
+      ...(k.transition ? { transition: k.transition } : {}),
+      ...(k.windKmh != null ? { windKmh: k.windKmh } : {}),
+      ...(k.windFromDeg != null ? { windFromDeg: normalizeDeg(k.windFromDeg) } : {}),
+      ...(k.gustKmh != null ? { gustKmh: k.gustKmh } : {}),
+      ...(k.humidityPct != null ? { humidityPct: k.humidityPct } : {}),
+      ...(k.tempC != null ? { tempC: k.tempC } : {}),
+      ...(k.precipitationMmH != null ? { precipitationMmH: k.precipitationMmH } : {}),
+      ...(k.cloudCoverPct != null ? { cloudCoverPct: k.cloudCoverPct } : {}),
+    }));
+
   const spec: WeatherSpec =
     v.mode === 'manual'
       ? {
@@ -502,12 +685,13 @@ export function buildWeatherSpec(v: SimulationFormValues, base?: WeatherBaseStat
               windFromDeg: normalizeDeg(v.windFromDeg),
               humidityPct: v.humPct,
               tempC: v.tempC,
-              precipitationMmH: v.precipitationMmH > 0 ? v.precipitationMmH : undefined,
-              cloudCoverPct: v.cloudCoverPct > 0 ? v.cloudCoverPct : undefined,
+              ...(v.precipitationMmH > 0 ? { precipitationMmH: v.precipitationMmH } : {}),
+              ...(v.cloudCoverPct > 0 ? { cloudCoverPct: v.cloudCoverPct } : {}),
             },
+            ...curve,
           ],
         }
-      : { base: 'provider' };
+      : { base: 'provider', ...(curve.length ? { keyframes: curve } : {}) };
   return events.length ? { ...spec, events } : spec;
 }
 
@@ -537,86 +721,226 @@ export const buildPreviewRequest = buildWeatherResolveRequest;
 export function extractTimelineEventsFromSnapshot(
   snapshot?: { weather?: { events?: WeatherEvent[] } } | null,
   duration = 180,
+  startMs?: number,
 ): TimelineRangeEvent[] {
   if (!snapshot?.weather?.events) return [];
   const result: TimelineRangeEvent[] = [];
   let idx = 1;
 
-  for (const e of snapshot.weather.events) {
-    if (e.enabled === false) continue;
-    if (e.type === 'precipitation') {
-      const win = 'window' in e ? e.window : null;
-      const start = win?.start && 'offsetMinutes' in win.start ? win.start.offsetMinutes ?? 0 : 0;
-      const end = win?.end && 'offsetMinutes' in win.end ? win.end.offsetMinutes ?? duration : duration;
-      // Skip whole-run background weather padding (e.g. -720 to 810 min)
-      if (start < -10 || (start <= 0 && end >= duration + 30)) continue;
-      const safeStart = Math.max(0, start);
-      const safeEnd = Math.min(duration, end);
-      if (safeEnd <= safeStart) continue;
+  const minutes = (spec: unknown): number | null => {
+    if (!spec || typeof spec !== 'object') return null;
+    const s = spec as { offsetMinutes?: number; time?: string };
+    if (typeof s.offsetMinutes === 'number') return s.offsetMinutes;
+    if (s.time && startMs != null) {
+      const at = Date.parse(s.time);
+      return Number.isFinite(at) ? (at - startMs) / 60_000 : null;
+    }
+    return null;
+  };
+  const windowOf = (e: Record<string, unknown>) => {
+    const w = e.window as { start?: unknown; end?: unknown } | undefined;
+    return { start: minutes(w?.start) ?? 0, end: minutes(w?.end) ?? duration };
+  };
+  /** Whole-run padding (e.g. the absolute base adjustment built by the form) is not an editable event. */
+  const wholeRun = (start: number, end: number) => start < -10 || (start <= 0 && end >= duration + 30);
 
-      result.push({
-        id: `ev_rain_${idx++}`,
-        type: 'rain',
-        label: `Chuva (T+${safeStart}–${safeEnd})`,
-        enabled: true,
-        startMinute: safeStart,
-        endMinute: safeEnd,
-        intensityMmH: e.intensityMmH ?? 6.0,
-      });
-    } else if (e.type === 'wind_shift') {
-      const start = 'start' in e && typeof e.start === 'object' && 'offsetMinutes' in e.start ? e.start.offsetMinutes ?? 0 : 0;
-      if (start < -10) continue;
-      const safeStart = Math.max(0, start);
-      const hold = 'holdMinutes' in e && typeof (e as { holdMinutes?: number }).holdMinutes === 'number' ? (e as { holdMinutes: number }).holdMinutes : 30;
-      const ramp = 'rampMinutes' in e && typeof (e as { rampMinutes?: number }).rampMinutes === 'number' ? (e as { rampMinutes: number }).rampMinutes : 15;
-      const targetDeg = 'toDeg' in e && typeof (e as { toDeg?: number }).toDeg === 'number' ? (e as { toDeg: number }).toDeg : 270;
-      result.push({
-        id: `ev_wind_${idx++}`,
-        type: 'wind_shift',
-        label: `Rotação Vento (T+${safeStart})`,
-        enabled: true,
-        startMinute: safeStart,
-        endMinute: Math.min(duration, safeStart + hold + ramp),
-        windFromDeg: targetDeg,
-      });
-    } else if (e.type === 'wind_scale') {
-      const win = 'window' in e ? e.window : null;
-      const start = win?.start && 'offsetMinutes' in win.start ? win.start.offsetMinutes ?? 0 : 0;
-      const end = win?.end && 'offsetMinutes' in win.end ? win.end.offsetMinutes ?? duration : duration;
-      if (start < -10 || (start <= 0 && end >= duration + 30)) continue;
-      const safeStart = Math.max(0, start);
-      const safeEnd = Math.min(duration, end);
-      if (safeEnd <= safeStart) continue;
-
-      result.push({
-        id: `ev_windscale_${idx++}`,
-        type: 'wind_scale',
-        label: `Vento Forte (T+${safeStart}–${safeEnd})`,
-        enabled: true,
-        startMinute: safeStart,
-        endMinute: safeEnd,
-        windFactor: e.factor ?? 1.7,
-        applyToGusts: (e as { applyToGusts?: boolean }).applyToGusts ?? true,
-      });
-    } else if (e.type === 'front_passage') {
-      const at = 'at' in e && typeof e.at === 'object' && 'offsetMinutes' in e.at ? e.at.offsetMinutes ?? 0 : 0;
-      const dur = e.durationMinutes ?? 45;
-      const safeStart = Math.max(0, at);
-      const safeEnd = Math.min(duration, safeStart + dur);
-      result.push({
-        id: `ev_storm_${idx++}`,
-        type: 'storm',
-        label: `Trovoada (T+${safeStart}–${safeEnd})`,
-        enabled: true,
-        startMinute: safeStart,
-        endMinute: safeEnd,
-        intensityMmH: e.precipitationMmH ?? 15.0,
-        windKmh: e.windKmh ?? 42,
-        tempDeltaC: e.tempDeltaC ?? -5,
-      });
+  for (const raw of snapshot.weather.events) {
+    if (raw.enabled === false) continue;
+    const e = raw as unknown as Record<string, any>;
+    switch (raw.type) {
+      case 'precipitation': {
+        const { start, end } = windowOf(e);
+        if (wholeRun(start, end)) continue;
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_rain_${idx++}`,
+          type: 'rain',
+          label: `Chuva (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          intensityMmH: e.intensityMmH ?? 6.0,
+        });
+        break;
+      }
+      case 'wind_shift': {
+        const start = minutes(e.start) ?? 0;
+        if (start < -10) continue;
+        const safeStart = Math.max(0, start);
+        const ramp = typeof e.rampMinutes === 'number' ? e.rampMinutes : 15;
+        // `holdMinutes` omitted means "until the end of the run".
+        const hold = typeof e.holdMinutes === 'number' ? e.holdMinutes : duration;
+        const back = typeof e.returnRampMinutes === 'number' ? e.returnRampMinutes : 0;
+        result.push({
+          id: `ev_wind_${idx++}`,
+          type: 'wind_shift',
+          label: `Rotação Vento (T+${safeStart})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: Math.min(duration, safeStart + ramp + hold + back),
+          windFromDeg: typeof e.toDeg === 'number' ? e.toDeg : undefined,
+          deltaDeg: typeof e.toDeg !== 'number' && typeof e.deltaDeg === 'number' ? e.deltaDeg : undefined,
+          rampMinutes: ramp,
+        });
+        break;
+      }
+      case 'wind_scale': {
+        const { start, end } = windowOf(e);
+        if (wholeRun(start, end)) continue;
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_windscale_${idx++}`,
+          type: 'wind_scale',
+          label: `Vento Forte (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          windFactor: e.factor ?? 1.7,
+          applyToGusts: e.applyToGusts ?? true,
+        });
+        break;
+      }
+      case 'wind_set': {
+        const { start, end } = windowOf(e);
+        if (wholeRun(start, end)) continue;
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_windset_${idx++}`,
+          type: 'wind_set',
+          label: `Vento fixo (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          windKmh: e.windKmh,
+          windFromDeg: e.windFromDeg,
+          rampMinutes: e.rampMinutes ?? 0,
+        });
+        break;
+      }
+      case 'gust_burst': {
+        const { start, end } = windowOf(e);
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_gust_${idx++}`,
+          type: 'gust_burst',
+          label: `Rajada ${e.peakGustKmh ?? 70} km/h (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          peakGustKmh: e.peakGustKmh ?? 70,
+          periodMinutes: e.periodMinutes ?? 5,
+        });
+        break;
+      }
+      case 'front_passage': {
+        const start = Math.max(0, minutes(e.at) ?? 0);
+        const dur = e.durationMinutes ?? 45;
+        const safeEnd = Math.min(duration, start + dur);
+        if (safeEnd <= start) continue;
+        result.push({
+          id: `ev_front_${idx++}`,
+          type: 'front_passage',
+          label: `Passagem de frente (T+${start}–${safeEnd})`,
+          enabled: true,
+          startMinute: start,
+          endMinute: safeEnd,
+          windKmh: e.windKmh,
+          windFromDeg: e.windFromDeg,
+          tempDeltaC: e.tempDeltaC,
+          humidityDeltaPct: e.humidityDeltaPct,
+          pressureDeltaHpa: e.pressureDeltaHpa,
+          precipitationMmH: e.precipitationMmH,
+        });
+        break;
+      }
+      case 'temperature_shift': {
+        const { start, end } = windowOf(e);
+        if (wholeRun(start, end)) continue;
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_temp_${idx++}`,
+          type: 'temperature_shift',
+          label: `Temperatura (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          setMode: typeof e.setC === 'number',
+          setC: e.setC,
+          tempDeltaC: e.deltaC,
+          rampMinutes: e.rampMinutes ?? 0,
+        });
+        break;
+      }
+      case 'humidity_shift': {
+        const { start, end } = windowOf(e);
+        if (wholeRun(start, end)) continue;
+        const safeStart = Math.max(0, start);
+        const safeEnd = Math.min(duration, end);
+        if (safeEnd <= safeStart) continue;
+        result.push({
+          id: `ev_hum_${idx++}`,
+          type: 'humidity_shift',
+          label: `Humidade (T+${safeStart}–${safeEnd})`,
+          enabled: true,
+          startMinute: safeStart,
+          endMinute: safeEnd,
+          setMode: typeof e.setPct === 'number',
+          setPct: e.setPct,
+          humidityDeltaPct: e.deltaPct,
+          rampMinutes: e.rampMinutes ?? 0,
+        });
+        break;
+      }
+      // `custom_series` changes the underlying series rather than adding an editable event; the weather chart still shows its effect.
+      default:
+        break;
     }
   }
   return result;
+}
+
+/** The sparse curve points of a scenario snapshot, converted to minutes from the run start. */
+export function extractTimelineKeyframesFromSnapshot(
+  snapshot?: { weather?: { keyframes?: WeatherKeyframe[] } } | null,
+  startMs = 0,
+  duration = 180,
+): TimelineKeyframe[] {
+  if (!snapshot?.weather?.keyframes) return [];
+  const result: TimelineKeyframe[] = [];
+  let idx = 1;
+  for (const k of snapshot.weather.keyframes) {
+    const spec = k.at as unknown as { offsetMinutes?: number; time?: string };
+    let minute = spec?.offsetMinutes;
+    if (minute == null && spec?.time) {
+      const at = Date.parse(spec.time);
+      minute = Number.isFinite(at) ? (at - startMs) / 60_000 : undefined;
+    }
+    if (minute == null || minute < 0 || minute > duration + 0.5) continue;
+    result.push({
+      id: `kf_${idx++}`,
+      minute: Math.round(minute),
+      label: k.label,
+      transition: (k.transition as TimelineKeyframe['transition']) ?? 'linear',
+      windKmh: k.windKmh ?? undefined,
+      windFromDeg: k.windFromDeg ?? undefined,
+      gustKmh: k.gustKmh ?? undefined,
+      humidityPct: k.humidityPct ?? undefined,
+      tempC: k.tempC ?? undefined,
+      precipitationMmH: k.precipitationMmH ?? undefined,
+      cloudCoverPct: k.cloudCoverPct ?? undefined,
+    });
+  }
+  return result.sort((a, b) => a.minute - b.minute);
 }
 
 /**

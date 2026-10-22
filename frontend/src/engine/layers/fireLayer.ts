@@ -193,7 +193,7 @@ export class FireLayer {
     if (!list.length) return;
     const points = [{ lat: ignition[0], lon: ignition[1] }, ...list].map((m) => new THREE.Vector3(...this.geo.world(m.lat, m.lon, 4)));
     this.track = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: 0xffc247, depthTest: false, transparent: true }));
-    this.track.renderOrder = 10;
+    this.track.renderOrder = 9.5; // above the plan lines (6–9), below the vehicles (10), so a car is never hidden by it
     this.group.add(this.track);
     for (const m of list) {
       const sprite = textSprite(m.label, { size: 24, bg: 'rgba(30,20,10,.8)', color: '#ffd27a' });

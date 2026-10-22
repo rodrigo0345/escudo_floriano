@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
 import { AttackTimeline } from './AttackTimeline';
+import { PlanEditor } from './PlanEditor';
 import { PlanRequestBox } from './PlanRequestBox';
 import styles from './panels.module.css';
 
@@ -70,13 +71,13 @@ const COMPARE_ROWS: CompareRow[] = [
 ];
 
 /** One screen for the decision: base/A/B final metrics side by side, each plan against the baseline. */
-function CompareTable({ base, plans, runs }: { base?: Simulation; plans: PlanSummary[]; runs: Map<string, Simulation> }) {
+function CompareTable({ base, plans, runs, edited }: { base?: Simulation; plans: PlanSummary[]; runs: Map<string, Simulation>; edited: Set<string> }) {
   const columns = plans.filter((p) => runs.has(p.id as string));
   if (columns.length === 0) return null;
   return (
     <div className={styles.compareCard}>
       <h3>Comparação</h3>
-      <p className="note">Mesma base e o mesmo minuto final. Verde = melhor do que a base.</p>
+      <p className="note">Mesma base e o mesmo minuto final. Verde = melhor do que a base. ′ = ajustado pelo operador.</p>
       <div className={styles.compareScroll}>
         <table className={styles.compareTable}>
           <thead>
@@ -85,7 +86,7 @@ function CompareTable({ base, plans, runs }: { base?: Simulation; plans: PlanSum
               <th>Base</th>
               {columns.map((p) => (
                 <th key={p.id as string} title={p.title}>
-                  {p.variant ?? 'Plano'}
+                  {p.variant ?? 'Plano'}{edited.has(p.id as string) ? '′' : ''}
                 </th>
               ))}
             </tr>
@@ -211,6 +212,7 @@ export function PlansPanel() {
   const [runs, setRuns] = useState<Map<string, Simulation>>(new Map());
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<Plan | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [full, setFull] = useState<Map<string, Plan>>(new Map()); // the whole plans: the list has no metadata (the agents' metrics)
 
   useEffect(() => {
@@ -302,6 +304,7 @@ export function PlansPanel() {
 
   const toggleActions = async (plan: PlanSummary) => {
     setFocusedAction(null);
+    setEditingId(null);
     if (open?.id === plan.id) return setOpen(null);
     try {
       setOpen(await plansApi.get(plan.id as string));
@@ -310,10 +313,35 @@ export function PlansPanel() {
     }
   };
 
+  /** A6: open the operator's editor for this plan (the full plan carries the actions; the list only counts them). */
+  const editPlan = async (plan: PlanSummary) => {
+    setFocusedAction(null);
+    setEditingId(plan.id as string);
+    if (open?.id !== plan.id) {
+      try {
+        setOpen(await plansApi.get(plan.id as string));
+      } catch (e) {
+        setEditingId(null);
+        showBanner(`Plano: ${(e as Error).message}`);
+      }
+    }
+  };
+
+  const savedEdit = async (updated: Plan, simulation: Simulation) => {
+    setOpen(updated);
+    setEditingId(null);
+    setRuns((previous) => new Map(previous).set(updated.id as string, simulation));
+    await refresh(true);
+    void showSimulationById(simulation.id as string);
+  };
+
   if (!baseId) return <p className="note">Escolha um cenário para ver os planos que os agentes propuseram.</p>;
 
   const showing = run?.simulation;
   const showingPlan = showing?.kind === 'what_if' ? plans.find((p) => p.id === showing.planId) : null;
+  const edited = new Set(
+    [...full.values()].filter((p) => (p.metadata as Record<string, unknown> | undefined)?.['operator.editedAt']).map((p) => p.id as string),
+  );
 
   return (
     <>
@@ -334,7 +362,7 @@ export function PlansPanel() {
 
       <PlanRequestBox baseId={baseId} onPlans={refreshSilently} />
 
-      <CompareTable base={base ?? undefined} plans={plans} runs={runs} />
+      <CompareTable base={base ?? undefined} plans={plans} runs={runs} edited={edited} />
 
       {loading ? <p className="note">A carregar planos…</p> : null}
       {error ? <p className="note">Erro: {error}</p> : null}
@@ -361,7 +389,8 @@ export function PlansPanel() {
         return (
           <div key={id} className={`${styles.group} ${styles.spaced}`}>
             <div>
-              <b>{plan.title}</b> {plan.variant ? <Tag kind="warn">{plan.variant}</Tag> : null}{' '}
+              <b>{plan.title}</b> {plan.variant ? <Tag kind="warn">{plan.variant}{edited.has(id) ? '′' : ''}</Tag> : null}{' '}
+              {edited.has(id) ? <span title="Ajustado pelo operador (A6); o what-if ao lado é deste ajuste"><Tag kind="warn">ajustado</Tag></span> : null}
               <Tag kind={statusKind}>{PLAN_STATUS_LABEL[status] ?? status}</Tag>
               <br />
               <small className="note">
@@ -382,6 +411,11 @@ export function PlansPanel() {
                 </button>
               )}
               <button onClick={() => void toggleActions(plan)}>{open?.id === id ? 'Esconder ações' : 'Ver ações'}</button>
+              {status === 'proposed' || status === 'selected' || status === 'active' ? (
+                <button className={editingId === id ? 'on' : ''} onClick={() => void editPlan(plan)}>
+                  {editingId === id ? 'A ajustar…' : 'Editar plano'}
+                </button>
+              ) : null}
               {status === 'proposed' ? (
                 <button disabled={busy === `select:${id}`} onClick={() => void transition(plan, 'select')}>
                   {busy === `select:${id}` ? 'A selecionar…' : 'Selecionar'}
@@ -398,7 +432,10 @@ export function PlansPanel() {
                 </button>
               ) : null}
             </div>
-            {open?.id === id ? (
+            {open?.id === id && editingId === id ? (
+              <PlanEditor plan={open} baseId={baseId} orgName={orgName} onCancel={() => setEditingId(null)} onSaved={savedEdit} onError={showBanner} />
+            ) : null}
+            {open?.id === id && editingId !== id ? (
               <div className={styles.actionGroups}>
                 <h3>Combate ao fogo</h3>
                 <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />

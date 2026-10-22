@@ -4,15 +4,17 @@ import { Icon, WEATHER_EVENT_ICON } from '@/components/common/Icon';
 import { compass } from '@/domain/georef';
 import {
   buildSimulationRequest,
+  createTimelineKeyframe,
   defaultFormValues,
   type CustomWeatherEventType,
   type TimelineRangeEvent,
 } from '@/domain/simulationForm';
-import { formatDateTime } from '@/domain/weather';
+import { formatDateTime, sampleWeatherAt } from '@/domain/weather';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './layout.module.css';
+import { TimelineKeyframeEditor } from './TimelineKeyframeEditor';
 
 const JUMPS = [15, 30, 60, 120, 180, 360, 540, 720];
 const SPEEDS = [1, 5, 10, 30, 60, 120, 240];
@@ -23,10 +25,12 @@ const EVENT_LABEL: Record<string, string> = {
   wind_shift: 'Vento roda',
   wind_scale: 'Vento muda',
   wind_set: 'Vento fixo',
+  gust_burst: 'Rajada forte',
   humidity_shift: 'Humidade muda',
   temperature_shift: 'Temperatura muda',
   front_passage: 'Frente passa',
   precipitation: 'Chuva',
+  custom_series: 'Série própria',
 };
 
 type TimeSpec = { offsetMinutes?: number; time?: string };
@@ -58,10 +62,14 @@ export function PlaybackBar() {
   const locationId = useAppStore((s) => s.locationId);
   const ignitions = useAppStore((s) => s.ignitions);
   const customEvents = useAppStore((s) => s.customEvents);
+  const keyframes = useAppStore((s) => s.weatherKeyframes);
   const setPlaying = useAppStore((s) => s.setPlaying);
   const setSpeed = useAppStore((s) => s.setSpeed);
   const setTime = useAppStore((s) => s.setTime);
   const setCustomEvents = useAppStore((s) => s.setCustomEvents);
+  const setWeatherKeyframes = useAppStore((s) => s.setWeatherKeyframes);
+  const updateWeatherKeyframe = useAppStore((s) => s.updateWeatherKeyframe);
+  const removeWeatherKeyframe = useAppStore((s) => s.removeWeatherKeyframe);
   const setScenario = useAppStore((s) => s.setScenario);
   const busy = useAppStore((s) => !!s.job && !s.job.auto);
   const { runSimulation } = useSimulationActions();
@@ -72,6 +80,9 @@ export function PlaybackBar() {
   // Timeline range selection & popover state (Requirement 1.1)
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [dragState, setDragState] = useState<{ startMin: number; currentMin: number; isDragging: boolean } | null>(null);
+  // Keyframe editing: a point on the curve is dragged along the axis and opens its editor on click.
+  const keyframeDragRef = useRef<{ id: string; moved: boolean } | null>(null);
+  const [keyframeEditId, setKeyframeEditId] = useState<string | null>(null);
 
   // Popover form values
   const [popoverType, setPopoverType] = useState<CustomWeatherEventType>('rain');
@@ -85,6 +96,13 @@ export function PlaybackBar() {
   const [popoverApplyToGusts, setPopoverApplyToGusts] = useState(false);
   const [popoverBuildupMin, setPopoverBuildupMin] = useState(20);
   const [popoverDissipationMin, setPopoverDissipationMin] = useState(20);
+  const [popoverRampMin, setPopoverRampMin] = useState(15);
+  const [popoverPeakGustKmh, setPopoverPeakGustKmh] = useState(70);
+  const [popoverGustPeriodMin, setPopoverGustPeriodMin] = useState(5);
+  const [popoverSetMode, setPopoverSetMode] = useState(false);
+  const [popoverSetC, setPopoverSetC] = useState(35);
+  const [popoverSetPct, setPopoverSetPct] = useState(20);
+  const [popoverPressureDelta, setPopoverPressureDelta] = useState(-3);
 
   const flags = useMemo(() => {
     if (!run) return [];
@@ -118,6 +136,68 @@ export function PlaybackBar() {
     const rect = trackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return Math.round(ratio * duration);
+  };
+
+  const editorKeyframe = keyframes.find((k) => k.id === keyframeEditId) ?? null;
+
+  const openKeyframeEditor = (id: string) => {
+    setSelection(null);
+    setKeyframeEditId(id);
+  };
+
+  const handleKeyframePointerDown = (e: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    keyframeDragRef.current = { id, moved: false };
+    setSelection(null);
+    setKeyframeEditId(null);
+  };
+
+  const handleKeyframePointerMove = (e: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    const drag = keyframeDragRef.current;
+    if (drag?.id !== id) return;
+    const minute = Math.max(0, Math.min(duration, getMinuteFromClientX(e.clientX)));
+    if (minute !== keyframes.find((k) => k.id === id)?.minute) {
+      drag.moved = true;
+      updateWeatherKeyframe(id, { minute });
+    }
+  };
+
+  const handleKeyframePointerUp = (e: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    const drag = keyframeDragRef.current;
+    keyframeDragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    if (drag?.id === id && !drag.moved) openKeyframeEditor(id);
+  };
+
+  /** New curve point seeded with the weather on screen at the current minute (blank = follow the base). */
+  const addKeyframeAtCurrentTime = () => {
+    setPlaying(false);
+    setSelection(null);
+    const existing = keyframes.find((k) => Math.abs(k.minute - t) < 1);
+    if (existing) {
+      openKeyframeEditor(existing.id);
+      return;
+    }
+    const w = run ? sampleWeatherAt(run.weather, run.startMs, t) : null;
+    const kf = createTimelineKeyframe(t, {
+      transition: 'linear',
+      ...(w
+        ? {
+            windKmh: Math.round(w.windKmh),
+            windFromDeg: Math.round(w.windFromDeg),
+            tempC: Math.round(w.tempC * 10) / 10,
+            humidityPct: Math.round(w.humidityPct),
+            ...(w.gustKmh != null ? { gustKmh: Math.round(w.gustKmh) } : {}),
+          }
+        : {}),
+    });
+    setWeatherKeyframes([...keyframes, kf].sort((a, b) => a.minute - b.minute));
+    setKeyframeEditId(kf.id);
   };
 
   // Track pointerdown: start dragging range when paused (Requirement 1.1)
@@ -154,6 +234,7 @@ export function PlaybackBar() {
   // Open popover to edit an existing custom event
   const handleOpenEditEvent = (ev: TimelineRangeEvent, e: React.MouseEvent) => {
     e.stopPropagation();
+    setKeyframeEditId(null);
     setSelection({
       startMin: ev.startMinute,
       endMin: ev.endMinute,
@@ -170,11 +251,19 @@ export function PlaybackBar() {
     if (ev.humidityDeltaPct != null) setPopoverHumDelta(ev.humidityDeltaPct);
     setPopoverBuildupMin(ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
     setPopoverDissipationMin(ev.dissipationMinutes ?? 20);
+    setPopoverRampMin(ev.rampMinutes ?? 15);
+    setPopoverPeakGustKmh(ev.peakGustKmh ?? 70);
+    setPopoverGustPeriodMin(ev.periodMinutes ?? 5);
+    setPopoverSetMode(ev.setMode ?? false);
+    setPopoverSetC(ev.setC ?? 35);
+    setPopoverSetPct(ev.setPct ?? 20);
+    setPopoverPressureDelta(ev.pressureDeltaHpa ?? -3);
   };
 
   // Quick "+ Evento" button: opens popover for current minute
   const handleQuickAddAtCurrentTime = () => {
     setPlaying(false);
+    setKeyframeEditId(null);
     const start = Math.min(duration - 15, t);
     const end = Math.min(duration, start + 45);
     setSelection({ startMin: start, endMin: end });
@@ -204,11 +293,34 @@ export function PlaybackBar() {
       case 'wind_scale':
         label = `Vento ${popoverWindFactor}x (T+${startMin}–${endMin})`;
         break;
+      case 'wind_set':
+        label = `Vento fixo ${compass(popoverWindDeg)} ${popoverWindKmh} km/h (T+${startMin}–${endMin})`;
+        break;
+      case 'gust_burst':
+        label = `Rajada ${popoverPeakGustKmh} km/h (T+${startMin}–${endMin})`;
+        break;
+      case 'front_passage':
+        label = `Frente ${compass(popoverWindDeg)} ${popoverWindKmh} km/h · ${popoverRainMmH} mm/h (T+${startMin}–${endMin})`;
+        break;
+      case 'temperature_shift':
+        label = popoverSetMode
+          ? `Temperatura = ${popoverSetC}°C (T+${startMin}–${endMin})`
+          : `Temperatura ${popoverTempDelta > 0 ? '+' : ''}${popoverTempDelta}°C (T+${startMin}–${endMin})`;
+        break;
+      case 'humidity_shift':
+        label = popoverSetMode
+          ? `Humidade = ${popoverSetPct}% (T+${startMin}–${endMin})`
+          : `Humidade ${popoverHumDelta > 0 ? '+' : ''}${popoverHumDelta}% (T+${startMin}–${endMin})`;
+        break;
       case 'heat_dry':
         label = `Calor +${popoverTempDelta}°C (T+${startMin}–${endMin})`;
         break;
     }
 
+    const hasRain = popoverType === 'rain' || popoverType === 'storm' || popoverType === 'front_passage';
+    const hasWind = popoverType === 'wind_shift' || popoverType === 'wind_set' || popoverType === 'storm' || popoverType === 'front_passage';
+    const hasDir = popoverType === 'wind_shift' || popoverType === 'wind_set' || popoverType === 'front_passage';
+    const isInstantShift = popoverType === 'temperature_shift' || popoverType === 'humidity_shift';
     return {
       id,
       type: popoverType,
@@ -216,14 +328,27 @@ export function PlaybackBar() {
       enabled: true,
       startMinute: startMin,
       endMinute: endMin,
-      intensityMmH: popoverType === 'rain' || popoverType === 'storm' ? popoverRainMmH : undefined,
+      intensityMmH: hasRain ? popoverRainMmH : undefined,
       cloudCoverPct: popoverType === 'clouds' ? popoverCloudPct : undefined,
-      windKmh: popoverType === 'wind_shift' || popoverType === 'storm' ? popoverWindKmh : undefined,
-      windFromDeg: popoverType === 'wind_shift' ? popoverWindDeg : undefined,
+      windKmh: hasWind ? popoverWindKmh : undefined,
+      windFromDeg: hasDir ? popoverWindDeg : undefined,
       windFactor: popoverType === 'wind_scale' ? popoverWindFactor : undefined,
       applyToGusts: popoverType === 'wind_scale' ? popoverApplyToGusts : undefined,
-      tempDeltaC: popoverType === 'heat_dry' || popoverType === 'storm' ? popoverTempDelta : undefined,
-      humidityDeltaPct: popoverType === 'heat_dry' || popoverType === 'clouds' ? popoverHumDelta : undefined,
+      rampMinutes: popoverType === 'wind_set' || isInstantShift ? popoverRampMin : undefined,
+      peakGustKmh: popoverType === 'gust_burst' ? popoverPeakGustKmh : undefined,
+      periodMinutes: popoverType === 'gust_burst' ? popoverGustPeriodMin : undefined,
+      setMode: isInstantShift ? popoverSetMode : undefined,
+      setC: popoverType === 'temperature_shift' && popoverSetMode ? popoverSetC : undefined,
+      setPct: popoverType === 'humidity_shift' && popoverSetMode ? popoverSetPct : undefined,
+      pressureDeltaHpa: popoverType === 'front_passage' ? popoverPressureDelta : undefined,
+      tempDeltaC:
+        popoverType === 'heat_dry' || popoverType === 'storm' || popoverType === 'front_passage' || (popoverType === 'temperature_shift' && !popoverSetMode)
+          ? popoverTempDelta
+          : undefined,
+      humidityDeltaPct:
+        popoverType === 'heat_dry' || popoverType === 'clouds' || popoverType === 'front_passage' || (popoverType === 'humidity_shift' && !popoverSetMode)
+          ? popoverHumDelta
+          : undefined,
       buildupMinutes: (popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') ? popoverBuildupMin : undefined,
       dissipationMinutes: (popoverType === 'rain' || popoverType === 'storm' || popoverType === 'clouds') ? popoverDissipationMin : undefined,
     };
@@ -245,6 +370,7 @@ export function PlaybackBar() {
     if (!run || !locationId || !ignitions.length || busy) return;
     const values = defaultFormValues(run);
     values.customEvents = events;
+    values.keyframes = keyframes;
     setScenario('custom');
     void runSimulation(buildSimulationRequest(values, locationId, ignitions));
   };
@@ -292,6 +418,13 @@ export function PlaybackBar() {
         >
           + Evento T+{t}
         </button>
+        <button
+          className={styles.addKeyframeBtn}
+          title="Adicionar ponto-chave da curva meteorológica no minuto atual (arraste para mover, clique para editar)"
+          onClick={addKeyframeAtCurrentTime}
+        >
+          + Ponto T+{t}
+        </button>
       </div>
 
       <div className={styles.timelineColumn}>
@@ -333,6 +466,23 @@ export function PlaybackBar() {
                   <Icon name="close" size={11} />
                 </button>
               </div>
+            );
+          })}
+
+          {/* Sparse curve points (`WeatherSpec.keyframes`): diamonds dragged along the axis */}
+          {keyframes.map((kf) => {
+            const left = Math.min(100, Math.max(0, (kf.minute / duration) * 100));
+            return (
+              <div
+                key={kf.id}
+                className={`${styles.keyframeMarker} ${keyframeEditId === kf.id ? styles.keyframeMarkerActive : ''}`}
+                style={{ left: `${left}%` }}
+                title={`Ponto-chave T+${kf.minute} min — arraste para mover, clique para editar`}
+                onPointerDown={(e) => handleKeyframePointerDown(e, kf.id)}
+                onPointerMove={(e) => handleKeyframePointerMove(e, kf.id)}
+                onPointerUp={(e) => handleKeyframePointerUp(e, kf.id)}
+                onClick={(e) => e.stopPropagation()}
+              />
             );
           })}
 
@@ -382,6 +532,24 @@ export function PlaybackBar() {
         </div>
 
         {/* Floating Timeline Event Popover (Requirement 1.1) */}
+        {editorKeyframe && (
+          <div
+            className={`${styles.eventPopover} ${styles.keyframePopover}`}
+            style={{ left: `${Math.max(14, Math.min(86, (editorKeyframe.minute / duration) * 100))}%` }}
+          >
+            <TimelineKeyframeEditor
+              keyframe={editorKeyframe}
+              maxMinute={duration}
+              onChange={(patch) => updateWeatherKeyframe(editorKeyframe.id, patch)}
+              onDelete={() => {
+                removeWeatherKeyframe(editorKeyframe.id);
+                setKeyframeEditId(null);
+              }}
+              onClose={() => setKeyframeEditId(null)}
+            />
+          </div>
+        )}
+
         {selection && (
           <div
             className={styles.eventPopover}
@@ -433,7 +601,42 @@ export function PlaybackBar() {
                 className={`${styles.typePill} ${popoverType === 'wind_scale' ? styles.typePillActive : ''}`}
                 onClick={() => setPopoverType('wind_scale')}
               >
+                <Icon name="gust" /> Vento ×
+              </button>
+              <button
+                type="button"
+                className={`${styles.typePill} ${popoverType === 'wind_set' ? styles.typePillActive : ''}`}
+                onClick={() => setPopoverType('wind_set')}
+              >
+                <Icon name="wind" /> Vento fixo
+              </button>
+              <button
+                type="button"
+                className={`${styles.typePill} ${popoverType === 'gust_burst' ? styles.typePillActive : ''}`}
+                onClick={() => setPopoverType('gust_burst')}
+              >
                 <Icon name="gust" /> Rajada
+              </button>
+              <button
+                type="button"
+                className={`${styles.typePill} ${popoverType === 'front_passage' ? styles.typePillActive : ''}`}
+                onClick={() => setPopoverType('front_passage')}
+              >
+                <Icon name="front" /> Frente
+              </button>
+              <button
+                type="button"
+                className={`${styles.typePill} ${popoverType === 'temperature_shift' ? styles.typePillActive : ''}`}
+                onClick={() => setPopoverType('temperature_shift')}
+              >
+                <Icon name="thermometer" /> Temp.
+              </button>
+              <button
+                type="button"
+                className={`${styles.typePill} ${popoverType === 'humidity_shift' ? styles.typePillActive : ''}`}
+                onClick={() => setPopoverType('humidity_shift')}
+              >
+                <Icon name="humidity" /> Humidade
               </button>
               <button
                 type="button"
@@ -626,6 +829,147 @@ export function PlaybackBar() {
                     value={popoverHumDelta}
                     onChange={(e) => setPopoverHumDelta(+e.target.value)}
                   />
+                </label>
+              </>
+            )}
+
+            {popoverType === 'wind_set' && (
+              <>
+                <label className={styles.popoverField}>
+                  <span>
+                    Vento fixo: <b>{compass(popoverWindDeg)} {popoverWindKmh} km/h</b>
+                  </span>
+                  <input type="range" min={0} max={120} step={1} value={popoverWindKmh} onChange={(e) => setPopoverWindKmh(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    De (°): <b>{popoverWindDeg}° ({compass(popoverWindDeg)})</b>
+                  </span>
+                  <input type="range" min={0} max={360} step={15} value={popoverWindDeg} onChange={(e) => setPopoverWindDeg(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Transição: <b>{popoverRampMin} min</b>
+                  </span>
+                  <input type="range" min={0} max={60} step={5} value={popoverRampMin} onChange={(e) => setPopoverRampMin(+e.target.value)} />
+                </label>
+              </>
+            )}
+
+            {popoverType === 'gust_burst' && (
+              <>
+                <label className={styles.popoverField}>
+                  <span>
+                    Rajada de pico: <b>{popoverPeakGustKmh} km/h</b>
+                  </span>
+                  <input type="range" min={30} max={150} step={5} value={popoverPeakGustKmh} onChange={(e) => setPopoverPeakGustKmh(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Intervalo entre rajadas: <b>{popoverGustPeriodMin} min</b>
+                  </span>
+                  <input type="range" min={0.5} max={30} step={0.5} value={popoverGustPeriodMin} onChange={(e) => setPopoverGustPeriodMin(+e.target.value)} />
+                </label>
+              </>
+            )}
+
+            {popoverType === 'front_passage' && (
+              <>
+                <label className={styles.popoverField}>
+                  <span>
+                    Vento da frente: <b>{compass(popoverWindDeg)} {popoverWindKmh} km/h</b>
+                  </span>
+                  <input type="range" min={0} max={120} step={1} value={popoverWindKmh} onChange={(e) => setPopoverWindKmh(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    De (°): <b>{popoverWindDeg}° ({compass(popoverWindDeg)})</b>
+                  </span>
+                  <input type="range" min={0} max={360} step={15} value={popoverWindDeg} onChange={(e) => setPopoverWindDeg(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Variação de temperatura: <b>{popoverTempDelta > 0 ? '+' : ''}{popoverTempDelta} °C</b>
+                  </span>
+                  <input type="range" min={-12} max={12} step={1} value={popoverTempDelta} onChange={(e) => setPopoverTempDelta(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Variação de humidade: <b>{popoverHumDelta > 0 ? '+' : ''}{popoverHumDelta} %</b>
+                  </span>
+                  <input type="range" min={-40} max={40} step={5} value={popoverHumDelta} onChange={(e) => setPopoverHumDelta(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Chuva: <b>{popoverRainMmH} mm/h</b>
+                  </span>
+                  <input type="range" min={0} max={50} step={0.5} value={popoverRainMmH} onChange={(e) => setPopoverRainMmH(+e.target.value)} />
+                </label>
+                <label className={styles.popoverField}>
+                  <span>
+                    Pressão: <b>{popoverPressureDelta > 0 ? '+' : ''}{popoverPressureDelta} hPa</b>
+                  </span>
+                  <input type="range" min={-20} max={20} step={1} value={popoverPressureDelta} onChange={(e) => setPopoverPressureDelta(+e.target.value)} />
+                </label>
+              </>
+            )}
+
+            {popoverType === 'temperature_shift' && (
+              <>
+                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={popoverSetMode} onChange={(e) => setPopoverSetMode(e.target.checked)} />
+                  <span>Fixar valor absoluto (em vez de somar)</span>
+                </label>
+                {popoverSetMode ? (
+                  <label className={styles.popoverField}>
+                    <span>
+                      Temperatura: <b>{popoverSetC} °C</b>
+                    </span>
+                    <input type="range" min={-10} max={50} step={1} value={popoverSetC} onChange={(e) => setPopoverSetC(+e.target.value)} />
+                  </label>
+                ) : (
+                  <label className={styles.popoverField}>
+                    <span>
+                      Variação: <b>{popoverTempDelta > 0 ? '+' : ''}{popoverTempDelta} °C</b>
+                    </span>
+                    <input type="range" min={-12} max={12} step={1} value={popoverTempDelta} onChange={(e) => setPopoverTempDelta(+e.target.value)} />
+                  </label>
+                )}
+                <label className={styles.popoverField}>
+                  <span>
+                    Transição: <b>{popoverRampMin} min</b>
+                  </span>
+                  <input type="range" min={0} max={60} step={5} value={popoverRampMin} onChange={(e) => setPopoverRampMin(+e.target.value)} />
+                </label>
+              </>
+            )}
+
+            {popoverType === 'humidity_shift' && (
+              <>
+                <label className={styles.popoverField} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={popoverSetMode} onChange={(e) => setPopoverSetMode(e.target.checked)} />
+                  <span>Fixar valor absoluto (em vez de somar)</span>
+                </label>
+                {popoverSetMode ? (
+                  <label className={styles.popoverField}>
+                    <span>
+                      Humidade: <b>{popoverSetPct} %</b>
+                    </span>
+                    <input type="range" min={1} max={100} step={1} value={popoverSetPct} onChange={(e) => setPopoverSetPct(+e.target.value)} />
+                  </label>
+                ) : (
+                  <label className={styles.popoverField}>
+                    <span>
+                      Variação: <b>{popoverHumDelta > 0 ? '+' : ''}{popoverHumDelta} %</b>
+                    </span>
+                    <input type="range" min={-40} max={40} step={5} value={popoverHumDelta} onChange={(e) => setPopoverHumDelta(+e.target.value)} />
+                  </label>
+                )}
+                <label className={styles.popoverField}>
+                  <span>
+                    Transição: <b>{popoverRampMin} min</b>
+                  </span>
+                  <input type="range" min={0} max={60} step={5} value={popoverRampMin} onChange={(e) => setPopoverRampMin(+e.target.value)} />
                 </label>
               </>
             )}

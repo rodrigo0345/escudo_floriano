@@ -16,6 +16,7 @@ import { WaterLayer } from './layers/waterLayer';
 import { WindLayer } from './layers/windLayer';
 import { RainLayer } from './layers/rainLayer';
 import { CloudLayer } from './layers/cloudLayer';
+import { StormLayer } from './layers/stormLayer';
 import type { Pickable } from './picking';
 import type { SceneEngine } from './sceneEngine';
 import { SmokeSystem } from './smokeSystem';
@@ -60,6 +61,7 @@ export class World {
   readonly fleet: FleetLayer;
   readonly rain: RainLayer;
   readonly clouds: CloudLayer;
+  readonly storm: StormLayer;
 
   constructor(
     private readonly engine: SceneEngine,
@@ -92,6 +94,7 @@ export class World {
     };
     this.rain = new RainLayer();
     this.clouds = new CloudLayer();
+    this.storm = new StormLayer();
 
     const scene = engine.scene;
     scene.add(
@@ -111,6 +114,7 @@ export class World {
       this.smoke.points,
       this.rain.group,
       this.clouds.group,
+      this.storm.group,
     );
   }
 
@@ -165,10 +169,12 @@ export class World {
       this.smoke.points,
       this.rain.group,
       this.clouds.group,
+      this.storm.group,
     );
     this.plan.dispose();
     this.wind.dispose();
     this.clouds.dispose();
+    this.storm.dispose();
     this.units.clear();
     this.engine.setOverlayPass(null);
     this.city.dispose();

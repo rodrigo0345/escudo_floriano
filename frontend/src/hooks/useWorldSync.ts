@@ -43,13 +43,22 @@ export function useWorldSync(): void {
   // base layer (satellite / topo / species)
   useEffect(() => {
     if (!world) return;
-    const { setHint } = useAppStore.getState();
+    const { showBanner, setBaseLayer, setHint } = useAppStore.getState();
     let cancelled = false;
+    const shown = world.terrain.currentLayer;
     if (baseLayer !== 'satellite') setHint('A gerar a camada…');
     world.terrain
       .setLayer(baseLayer)
       .then(() => !cancelled && setHint(''))
-      .catch((e: Error) => !cancelled && setHint(e.message));
+      .catch((e: Error) => {
+        if (cancelled) return;
+        // keep the switch honest: the terrain still shows `shown`, so the selector goes back to it and the next click retries
+        setBaseLayer(shown);
+        setHint('');
+        const label = baseLayer === 'species' ? 'o mapa de tipos de árvores' : baseLayer === 'topo' ? 'o mapa topográfico' : 'o mapa de satélite';
+        showBanner(`Não foi possível carregar ${label}. Tente novamente.`, 'warn');
+        console.warn('Camada base:', e.message);
+      });
     return () => {
       cancelled = true;
     };

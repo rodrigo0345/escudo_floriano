@@ -15,9 +15,11 @@ Submission is **23 Oct 2026, 16:30 UTC — tomorrow**. Tasks are tagged **P0** (
 
 ## Status update — 2026-10-22
 
-`main` is `eb977c6`, the tree is clean, there is no `.github/` CI, no `scripts/` directory, and the frontend has no test script (`package.json` has `dev`, `build`, `preview`, `typecheck`, `generate:api-types`). The spec has 71 paths and 261 schemas.
+`main` is `eb977c6`; the A6/D1/E6 changes below are in the working tree (uncommitted). There is no `.github/` CI, no `scripts/` directory, and the frontend has no test script (`package.json` has `dev`, `build`, `preview`, `typecheck`, `generate:api-types`). The spec has 71 paths and 261 schemas.
 
 **Landed since the previous status update (`8dff00a`):**
+
+- **Phase 2 on 2026-10-22 (A6, D1, E6).** The operator now edits an agent plan in the Planos panel (`PlanEditor`: remove an action or a vehicle, add a vehicle, move the target, fix the start minute), validates it with `POST /plans/validate`, saves with `PATCH /plans/{id}` and re-runs its what-if; the row is marked `ajustado`/`B′` next to A and B. Open-Meteo now also stores and serves `visibility`, `cape` and `is_day` (`008_weather_visibility.sql`, `detail_version=2`; `WeatherSample` gained `visibilityM`/`capeJkg`/`isDay`). The 3D scene has a moving cumulonimbus cell, a ground outflow gust ring, a bolt on the scene's own lightning pulse and synthesised thunder (`stormLayer.ts`); it follows the storm event's wind today, ready for D3's explicit path.
 
 - **A7 — plan requests, end to end.** `POST /simulations/{id}/plan-requests`, `GET /plan-requests/{id}`, `PATCH /plan-requests/{id}`, `POST /plan-requests/{id}/claim`; backend service + tests; the watcher claims and reports progress; `PlanRequestBox` in the Planos panel.
 - **F2–F5 — the other organizations.** GNR road closures/checkpoints (`agents/firetrace_agents/gnr.py`), Proteção Civil evacuation/shelters/command post/alerts (`support.py`, `life.py`), INEM medical standby, and water/refill/fatigue duty cycles (`duty.py`), all composed by the orchestrator.
@@ -31,7 +33,7 @@ Submission is **23 Oct 2026, 16:30 UTC — tomorrow**. Tasks are tagged **P0** (
 1. **B4 is not landed.** `PlanValidator.CheckAccess` (`PlanValidator.cs:216-222`) and `ArrivalEstimator.EstimateAsync` (`ArrivalEstimator.cs:49-50`) never pass `simulationId`/`avoid.predictedFire`; only the agents' `/routing/route` calls do. The plan is validated against *active closures*, not against the predicted fire. The previous "closures + predicted fire" claim was wrong.
 2. **D2's "gusts are informational" is wrong.** `FireBehaviorModel.cs:46` blends the gust into the midflame wind (`GustFactor: 0.5` in `appsettings.json:227`). The stale statement lives in code: `CapabilityCatalog.cs:17` still says "só informativa: o motor usa o vento médio" — a truthfulness bug (J2).
 3. **R10's "7 top tabs" is wrong.** There are 6 (`TopBar.tsx:9-16`).
-4. **A6 is not implemented in the UI.** `PATCH /plans/{id}/actions/{actionId}` exists in the spec and backend, and `plansApi.patchAction` exists (`frontend/src/api/services/plans.ts:85`), but nothing calls it. It is **UNWIRED** in the frontend.
+4. **A6 was not implemented in the UI at the start of this audit; it is now.** `PlanEditor.tsx` calls `POST /plans/validate`, `PATCH /plans/{id}` and `POST /plans/{id}/simulate`; `plansApi.patchAction` remains reserved for execution progress (G5).
 5. **F9 is landed, not open.** `revision.py` polls `selected`/`active` plans, re-plans from their own basis and PATCHes actions + summary. It does not use `/locations/{id}/deployment`, and `campaign.py` remains an offline evaluator — but the rolling re-plan outcome is there.
 6. **F8 is partial, not open.** The spec and the agents use `on_fire_arrival` and `on_action_complete`; the backend accepts them but ignores them when timing a plan (J3).
 7. **G7 is landed, not open.** `PlansPanel.tsx:339-346` has loading / error / "no plans yet" states; `useSimulationActions.ts:228-231` surfaces a failed simulation's `error.detail` instead of drawing nothing.
@@ -60,8 +62,8 @@ Submission is **23 Oct 2026, 16:30 UTC — tomorrow**. Tasks are tagged **P0** (
 | R5 | ◐ mostly resolved | **Roads are mandatory in the backend, not in the contract.** Routing enforces `MaxSnapM=500` (`appsettings.json:354`) and the walk leg; plans prefer the server route. Residual: personnel-pool ETAs still trust `etaMinutes` (`PlanInterventions.cs:84,112,133`), the access-time helpers still snap without a bound (`RoutingService.cs:120,155`, `FireResults.cs:180-184`), and B7 is missing. | `RoutingService.cs:44-51`, `PlanRouter.cs:21-41`, `PlanValidator.cs:198,216-222`. |
 | R6 | ✅ resolved | **Agents were only firefighters.** GNR, INEM, Proteção Civil, water/refill/fatigue are composed into both plans. | `gnr.py`, `support.py`, `life.py`, `duty.py`; `orchestrator.py:321-331,522-531`. |
 | R7 | ◐ mostly resolved | **Weather is more capable in the backend than the UI exposed.** The timeline now edits ranged events with a popover (rain, storm, clouds, wind shift, gust factor, heat/dry) and previews them; base weather has sliders. Missing: `front_passage`, `wind_set`, explicit `humidity_shift`/`temperature_shift`, and arbitrary keyframe curves. | `PlaybackBar.tsx:89-263`, `SimulationForm.tsx:80-120`; spec event enum at `openapi.json:9814-9821`. |
-| R8 | ◐ partial | **Real weather has gusts/rain/clouds but no spatial weather.** Open-Meteo fetches and stores gusts, precipitation, clouds; the fire model uses all three. `visibility`, `cape`, `is_day` are still not fetched, and weather is one point for the whole map. | `OpenMeteoSource.cs:47,56`; `FireBehaviorModel.cs:46,56`. |
-| R9 | ◐ partial | **The 3D scene has a dynamic atmosphere, not storms.** Sun/sky/fog/clouds/rain/lightning exist; no storm cell with a path or outflow. | `sceneEngine.ts`, `cloudLayer.ts`, `rainLayer.ts`; no `storm_cell` in the spec. |
+| R8 | ✅ resolved | **Real weather has gusts/rain/clouds/visibility/CAPE/daylight.** Open-Meteo fetches and stores gusts, precipitation, clouds, visibility, CAPE and `is_day`; the fire model uses gusts/rain/clouds, the UI exposes visibility/day-night. Weather is still one point for the whole map (D3). | `OpenMeteoSource.cs`, `008_weather_visibility.sql`; `FireBehaviorModel.cs:46,56`. |
+| R9 | ✅ resolved (visual) | **The 3D scene has a dynamic atmosphere and a storm cell.** Sun/sky/fog/clouds/rain exist, and `stormLayer.ts` adds a moving cumulonimbus, outflow rings, bolts and thunder. The backend still has no spatial weather/`storm_cell` (D3). | `sceneEngine.ts`, `cloudLayer.ts`, `rainLayer.ts`, `stormLayer.ts`; no `storm_cell` in the spec. |
 | R10 | ◐ partial | **Frontend UX is still tab soup.** 6 top tabs, no workflow stepper; Incidente still mixes live stats with the scenario editor; the Recursos admin view was added; there are no frontend tests. | `TopBar.tsx:9-16`, `package.json`, `ResourcesView.tsx`. |
 
 ---
@@ -109,7 +111,7 @@ Legend: **[BE]** backend · **[FE]** frontend · **[AG]** agents · **[EN]** eng
 | A3 ✅ | P0 | [FE] | **Merge "Planos" and "Operação" into one "Resposta" flow** for the baseline in focus: plans A/B with status; side-by-side metrics vs baseline; "Ver no mapa" A/B/base at the same minute; "Selecionar" → "Ativar" → "Encerrar"; per-action list grouped by organization with rationale visible. | **Landed** (`PlansPanel.tsx:348-419`). Also: combat timeline per plan (`AttackTimeline.tsx`). |
 | A4 ✅ | P0 | [FE] | **Single focus model.** One store field `focus: { baselineId, shown: 'base' \| planId }`. Nothing re-runs a baseline behind the operator's back. Persistent header chip: *Cenário · base/plano A/B · simulation id · T+min*. | **Landed** with the existing `baseSimulationId`/`activePlan` state; no separate `focus` field. `TopBar.tsx:85-99`. |
 | A5 ✅ | P0 | [FE] | Delete `api/scenarios/operationalIncidentScenario.ts` (UNWIRED, buggy). | **Landed.** |
-| A6 ◐ | P1 | [FE] | **Operator edits a plan** instead of building one: remove/add a vehicle, move a target, change a trigger time → `PATCH /plans/{id}` (merge-patch) → `POST /plans/validate` → re-simulate. | **Backend + client exist, no UI caller.** `plansApi.patchAction` (`api/services/plans.ts:85`) is **UNWIRED**. Done when an edited plan B′ appears next to A/B with its own what-if. |
+| A6 ✅ | P1 | [FE] | **Operator edits a plan** instead of building one: remove/add a vehicle, move a target, change a trigger time → `PATCH /plans/{id}` (merge-patch) → `POST /plans/validate` → re-simulate. | **Landed (2026-10-22):** `PlanEditor.tsx` edits the plan's actions (remove an action/vehicle, add a vehicle with personnel, translate the target and its what-if geometry, fix the start minute and move the effect windows), runs validation, saves with `PATCH /plans/{id}` (`metadata["operator.editedAt"]`), re-simulates and shows the row as `B′`/`ajustado` with its own what-if. `patchAction` remains for G5's execution progress, not for plan content (the spec reserves it for the executor). |
 | A7 ✅ | P1 | [SPEC]+[BE]+[AG] | **"Pedir planos" button.** The UI asks the agents for a new pair, with status. | **Landed:** spec paths `/simulations/{id}/plan-requests`, `/plan-requests`, `/plan-requests/{id}`, `/plan-requests/{id}/claim`; backend service + tests; watcher claims and reports `claimed → composing → judging → adapting → publishing → simulating → done`; `PlanRequestBox`. |
 | A8 ✅ | P1 | [AG] | Tag/label hygiene: agents stop titling with `[lab]` in service mode; plans carry `variant`, `strategy`, `alertLevel` and `objectives` the UI can show as "A: vidas primeiro / B: área ardida". | **Landed:** `alternatives.relabel` sets `variant`/`title`/`strategy`/`objectives`; `orchestrator.py:1403` sets `alertLevel`; `PlansPanel.tsx:367-369` shows strategy/alert level; `[lab]` is reserved for evaluator runs (`AGENTS_SKIP_LABEL_PREFIX`). |
 
@@ -140,22 +142,22 @@ Legend: **[BE]** backend · **[FE]** frontend · **[AG]** agents · **[EN]** eng
 
 | ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| D1 ◐ | P0 | [BE] | **Fetch more from Open-Meteo:** `wind_gusts_10m`, `precipitation`, `cloud_cover` are in; `visibility`, `cape`, `is_day` are not. | **Partial** (`OpenMeteoSource.cs:47,56` and `weather_obs` `detail_version`). `/simulations/{id}/weather` shows rain/clouds for a rainy date. |
+| D1 ✅ | P0 | [BE] | **Fetch more from Open-Meteo:** `wind_gusts_10m`, `precipitation`, `cloud_cover` are in; `visibility`, `cape`, `is_day` are not. | **Landed (2026-10-22):** `OpenMeteoSource` requests and stores `visibility`, `cape` and `is_day` (migration `008_weather_visibility.sql`, `detail_version=2`); `WeatherSample`/`WeatherPoint` expose `visibilityM`, `capeJkg`, `isDay`; `WeatherTimeline` carries them (nearest hour; manual series derive day/night from solar radiation); `/weather/resolve` and `/simulations/{id}/weather` return them, and the Meteo panel shows visibility/instability/day-night. ERA5 archive has no visibility/CAPE (they stay omitted); forecast dates return them. The agents' `daylight.py` sunset computation is untouched. |
 | D2 ✅ | P1 | [BE]+[EN] | Use what we fetch: precipitation → dead-fuel wetting, cloud cover → solar term, intensity-dependent rain extinction. | **Landed, corrected:** gusts **do** affect the fire (`FireBehaviorModel.cs:46` with `GustFactor=0.5`), rain wets fuel and damps spread (`RainFactor`), clouds reduce solar heating. The capability note in code is stale (J2). |
 | D3 ❌ | P1 | [SPEC]+[BE] | **Storm cells (spatial weather).** Event `storm_cell { path: LineString, speedKmh, radiusM, start/end, outflowWindKmh, gustKmh, precipitationMmH, lightningPerMin }`, per-member wind grids, `GET /simulations/{id}/weather/field?tMin=`. | **Not started.** No `storm_cell`, no `weather/field` in the spec. |
 | D4 ❌ | P2 | [SPEC]+[BE] | **Dry lightning ignitions:** `lightningIgnitions: true` on a storm cell → deterministic new ignitions by fuel moisture. | **Not started.** |
-| D5 ◐ | P1 | [BE] | `POST /weather/resolve` returns the effective series so the UI preview equals what the engine will see. | **Partial:** `WeatherResolveResponse` returns `samples`, optional `ensemble` and `warnings`, but no echo of the event list; preview-vs-run equality has not been verified with keyframes + all events. |
+| D5 ✅ | P1 | [BE] | `POST /weather/resolve` returns the effective series so the UI preview equals what the engine will see. | **Landed (Phase 3):** `WeatherResolveResponse` now also echoes the applied `events` (active only, in order) and `keyframes`; the endpoint description says the same recipe feeds `GET /simulations/{id}/weather`. `EndToEndApiTests.Weather_resolve_echoes_the_applied_recipe_and_matches_the_engine_track` posts keyframes + all nine event types and asserts every sample equals `WeatherTimeline.Build` (the engine path). |
 
 ### Epic E — Dynamic weather & visual weather in the frontend (fixes R7, R9)
 
 | ID | Pri | Vertical | Task | Status / done when |
 |---|---|---|---|---|
-| E1 ◐ | P0 | [FE] | **Weather timeline editor** (replaces the 4 sliders): a time axis with draggable **keyframes** (wind, direction, gust, humidity, temp, rain) and **event chips** for every backend event. Every edit calls `POST /weather/resolve` and redraws the chart. | **Substantially landed:** interactive event track — drag a range, click an event to edit it in a popover, delete and re-simulate (`PlaybackBar.tsx:89-263`) — for rain, storm, clouds, wind shift, wind factor and heat/dry; base weather has numeric + wind-rose controls and a preview. **Missing:** `front_passage`, `wind_set`, explicit `humidity_shift`/`temperature_shift`, and arbitrary keyframe curves. |
+| E1 ✅ | P0 | [FE] | **Weather timeline editor** (replaces the 4 sliders): a time axis with draggable **keyframes** (wind, direction, gust, humidity, temp, rain) and **event chips** for every backend event. Every edit calls `POST /weather/resolve` and redraws the chart. | **Landed (Phase 3):** the event track covers every weather event — rain/storm/clouds/heat-dry composites plus explicit `wind_shift`, `wind_scale`, `wind_set`, `gust_burst`, `front_passage`, `temperature_shift` and `humidity_shift`; scenario snapshots are re-parsed into chips for all of them. Sparse keyframes (`WeatherSpec.keyframes`) are created from the run's current weather, drawn as draggable diamonds on the axis, and edited in a popover (wind/direction/gust/temp/humidity/rain/cloud/transition). `SimulationForm` has the same curve list, quick-add buttons for the new events, and a debounced auto-preview: every edit calls `POST /weather/resolve` and redraws `WeatherChart`, surfacing `warnings` and the echoed event/keyframe counts. |
 | E2 ✅ | P0 | [FE] | **Wind on the map:** animated wind particles/streamlines following `windFromDeg` (FROM) and speed; gusts as pulses. | **Landed** (`windLayer.ts`). |
 | E3 ✅ | P0 | [FE] | **Sky & atmosphere driven by weather + time:** sun position from date/time/location, sky colour and fog from cloud/visibility/smoke, lights dimmed under overcast. | **Landed** (`sceneEngine.ts`, `WeatherHud.tsx`). |
 | E4 ✅ | P0 | [FE] | **Clouds:** instanced layer whose coverage = `cloudCoverPct`, moving with the wind. | **Landed** (`cloudLayer.ts`). |
 | E5 ✅ | P1 | [FE] | **Rain:** GPU particle rain (density from `precipitationMmH`), wet-terrain darkening, reduced visibility. | **Landed** (`rainLayer.ts`, wet sheen). |
-| E6 ◐ | P1 | [FE] | **Storms:** cumulonimbus cell following the storm path (D3), lightning flashes, outflow gust ring, optional thunder. | **Partial:** procedural lightning exists; no D3 storm path or outflow. |
+| E6 ✅ | P1 | [FE] | **Storms:** cumulonimbus cell following the storm path (D3), lightning flashes, outflow gust ring, optional thunder. | **Landed (2026-10-22, frontend):** `stormLayer.ts` draws a billboard cumulonimbus tower + anvil above the fair-weather deck, moves it with the storm event's wind across the territory (or the local spot), draws two cold-pool outflow rings at ground level, emits a jagged bolt on the scene's own lightning pulse, and synthesises thunder with a distance delay (`Som de trovão` toggle). D3's explicit `storm_cell.path` can replace the derived centre point-for-point; the rain follows the moving cell. |
 | E7 ✅ | P1 | [FE] | Meteo tab becomes useful: current conditions + full chart with gusts/rain/cloud bands + **fire-weather indicators** (30-30-30), fine-fuel moisture. | **Landed** (`WeatherPanel.tsx:23-105`). |
 | E8 ✅ | P1 | [FE] | Weather HUD: rain, clouds, visibility, day/night, "upcoming change in N min". | **Landed** (`WeatherHud.tsx`, `Viewport.tsx:45`). |
 
@@ -241,7 +243,7 @@ The old day-by-day schedule is gone. With one day left, optimize for **demo cohe
 
 ### Track 1 — stretch, only if Track 0 is green
 
-- **G5 progress reporting** — wire `plansApi.patchAction` to an action row; small UI, existing endpoint, closes A6/G5 together.
+- **G5 progress reporting** — wire `plansApi.patchAction` to an action row (A6's plan editing now uses `PATCH /plans/{id}` and is landed); small UI, existing endpoint, closes G5.
 - **G6 capability gating** — disable unsupported events/interventions with the note as a tooltip; prevents a `422` in front of the jury.
 - **F6 candidates=2** — set `AGENTS_CANDIDATES=2` in the demo environment and re-time the agents. Only if the demo has slack.
 - **C3 fire coupling** — the right next product step, but a half-day with real regression risk. **Do not start it on submission day.**
@@ -290,3 +292,67 @@ Still open from `agents/README.md` (verify before acting): `InterventionFuelRemo
 - **Frontend:** `TopBar`, `PlaybackBar`, `PlansPanel`, `PlanRequestBox`, `AttackTimeline`, `SimulationForm`, `WeatherPanel`, `WeatherHud`, `useSimulationActions`, `useBootstrap`, `api/services/plans.ts`, `api/services/scenarios.ts`, `package.json`.
 - **Agents:** `watcher.py`, `orchestrator.py`, `gnr.py`, `support.py`, `life.py`, `duty.py`, `judge.py`, `alternatives.py`, `campaign.py`, `revision.py`, `commander/`, `agents/tests/`.
 - **Not verified live:** no backend, agents, engine or frontend were started in this session; `dotnet test` was not run. Statuses are code/spec reads, not runtime checks. The Track 0 smoke is precisely there to close that gap.
+
+---
+
+## 7. Phase 3 completion (2026-10-22)
+
+Two items were finished after the audit above; the rest of the document is unchanged except the D5/E1 rows.
+
+- **D5 — landed.** `WeatherResolveResponse` now echoes `events` (active only, in application order) and `keyframes` in `api-spec/openapi.json`; the response DTO and `WeatherService.ResolveAsync` emit them. A new API test covers keyframes plus all nine event types and verifies every preview sample against `WeatherTimeline.Build`, the exact path the engine uses. Files: `api-spec/openapi.json` (`WeatherResolveResponse`), `backend/src/FireTrace.Core/Models/Weather/WeatherResolveResponse.cs`, `backend/src/FireTrace.Core/Services/Weather/WeatherService.cs`, `backend/tests/FireTrace.Tests/Api/EndToEndApiTests.cs`.
+- **E1 — landed.** The timeline now covers every backend weather event (`wind_shift`, `wind_scale`, `wind_set`, `gust_burst`, `front_passage`, `temperature_shift`, `humidity_shift`, `precipitation`, plus the rain/storm/clouds/heat-dry composites), and supports arbitrary sparse keyframe curves created from the current run, dragged on the timeline and edited in a popover. `SimulationForm` auto-resolves on every edit (debounced) and shows the resolved events/keyframes and warnings. Files: `frontend/src/domain/simulationForm.ts`, `frontend/src/store/appStore.ts`, `frontend/src/store/types.ts`, `frontend/src/components/layout/PlaybackBar.tsx`, `frontend/src/components/layout/TimelineKeyframeEditor.tsx`, `frontend/src/components/panels/SimulationForm.tsx`, `frontend/src/components/common/Icon.tsx`, `frontend/src/hooks/useFrameLoop.ts`, `frontend/src/components/{layout,panels}/*.module.css`.
+
+**Verification:** `npm run typecheck` and `npm run build` pass; the full backend suite was run in `mcr.microsoft.com/dotnet/sdk:10.0` with host networking and the compose PostGIS database: **226 passed, 0 failed**. The 3 failures seen without the DB were pre-existing DB-dependent tests, not these changes. The weather UI was built but not driven in a browser in this session.
+
+## 8. Difficulty of Epics G–J (planning estimate)
+
+Scale: **S** ≤ 1 engineer-day · **M** 1–3 d · **L** 3–5 d · **XL** > 5 d. Estimates are for one engineer who already knows the repo, including the contract change, tests and review fixes; they exclude queue/review latency. No G–J code was written in this phase.
+
+### Epic G — Frontend workflow (total ≈ 11–17 d)
+
+| Item | Difficulty | Estimate | Why / blockers |
+|---|---|---|---|
+| G1 workflow stepper | L | 3–4 d | Replaces 6 tabs and re-homes roads/meios/meteo into layers + drawers. Touches `TopBar`, `SidePanel`, app shell and panel CSS; no backend, but high visual-regression risk and no frontend tests. A read-only stepper over today's tabs is a 1-day spike. |
+| G2 scenario editor | M/L | 2–3 d | `POST /scenarios` and ignition picking already exist; needs `scenariosApi.create`, save-vs-simulate semantics, and composition of the existing `SimulationForm` (incl. E1) into one editor. Main risk is state ownership, not API. |
+| G3 base/A/B comparison | M/L | 2–4 d | Metric delta table already exists (`CompareTable`). Swipe between cached runs is 2 d; a true split-screen 3D needs a second renderer/context and is 4–6 d. Recommend swipe. |
+| G4 timeline markers | S/M | 0.5–1 d | Data is already served (`/units`, `/units/{id}/track`, `/road-status`, plan actions). Add markers + click-to-jump on `PlaybackBar`; low risk. |
+| G5 per-org view + progress | S/M | 1–1.5 d | Actions are already grouped by organization; `plansApi.patchAction` exists but is UNWIRED. Needs org filter and progress buttons (A6 closed at the same time). |
+| G6 capability gating | S/M | 0.5–1 d | `/capabilities` already fetched and typed (`CapabilityItem`). Map `weatherEvents`/`weatherVariables`/`interventions` to controls and tooltips; low risk. |
+| G7 error/empty states | — | 0 | Landed. |
+| G8 Playwright smoke suite | M | 1.5–2.5 d | No test script/dependency. Prism mock is workable, but 5 workflow steps need stable selectors and a seeded compose profile; flakiness is the real cost. Do after G1/G2 are stable. |
+
+### Epic H — Training & decision support (total ≈ 17–27 d)
+
+| Item | Difficulty | Estimate | Why / blockers |
+|---|---|---|---|
+| H1 exercise clock | L | 3–5 d | New contract endpoints + backend-owned clock/pause/speed, persistence across restarts, and frontend playback sync. High risk: every time consumer (simulations, plans, units) must agree on one clock. |
+| H2 injects | L | 3–5 d | Needs H1 first; trainer event → invalidate current forecast → re-run from "now" → notify agents/operator. Complex invalidation and idempotency rules. |
+| H3 after-action review | M | 2–3 d | Event log of decisions vs outcome plus export. Backend audit storage is straightforward; value depends on H1/H2 producing trustworthy timestamps. |
+| H4 roles & organizations | XL | 5–8 d | There is no auth model in the contract at all. Org-scoped authorization across 71 paths, audit trail, token/session lifecycle, and client plumbing. Highest-risk item in G–J. |
+| H5 real incident mode | L | 4–6 d | Live weather already exists; GPS ingestion (`source=gps` on vehicle state) exists as a contract hook but there is no ingest pipeline, offline buffering or freshness policy. Operationally sensitive. |
+
+### Epic I — Quality gates (total ≈ 3–5.5 d)
+
+| Item | Difficulty | Estimate | Why / blockers |
+|---|---|---|---|
+| I1 end-to-end smoke script | S/M | 0.5–1 d | `scripts/e2e.ps1` around the existing compose stack: wait for health, create scenario/baseline, poll plans/what-ifs, assert `/units` tracks are on roads. Environment flakiness is the main cost. |
+| I2 CI schema-diff gate | S | 0.5 d | Add `.github/workflows`, run `npm run generate:api-types`, fail on diff. Almost mechanical. |
+| I3 agents tests against Prism + one live run | M | 1–2 d | Nine test modules already exist; need a Prism-backed fixture, contract startup, and one live assertion in I1. Medium only because agent runs are slow and network-dependent. |
+| I4 route/track property tests | M | 1–2 d | `RoutingTests` is example-based. Either add a property library or a seeded randomized xUnit loop over the real network; assert every route point is on an edge and every ground track is on-network (or within the walk leg). Medium because fixtures and tolerances need care. |
+
+### Epic J — Correctness debt (total ≈ 2–3.5 d; 1.2–2 d if J3 is warning-only)
+
+| Item | Difficulty | Estimate | Why / blockers |
+|---|---|---|---|
+| J1 dispatch fields dropped | S | 1–2 h | One-line initializer fix + one API test; trivial and high demo value. |
+| J2 stale gust capability note | S | 15 min | One string; no code path change. |
+| J3 conditional triggers ignored | M (proper) / S (interim) | 1–2 d / 0.25–0.5 d | Proper resolution needs the fire run + action dependency graph (`on_fire_arrival`, `on_action_complete`, cycles) in validation, what-if and unit tracks. Interim: emit `trigger_not_simulated` and document it; that pairs with the open contract proposal. |
+| J4 static simulator can go off-road | S/M | 0.5–1 d | Require a route in `OperationSimulator.Simulate` or return a validation error; add the route-on-network assertion. Low risk. |
+
+### Recommended order (after the submission)
+
+1. **J1 + J2** (hours, no risk) → then **G5 + G6** (closes A6/G5 and prevents `422`s in front of users).
+2. **G4** (cheap, visible) → **G3 swipe** (high demo/training value) → **G2** → **G1** → **G8**.
+3. **I2 + I4** in parallel with G work (CI is cheap and protects the schema).
+4. **H1 → H2 → H3** only once the core loop is stable; **H4** is a separate project, and **H5** should not start before H4.
+5. **J3 proper** before F8 backend work; **I1/I3** once the workflow steps stop moving.

@@ -6,7 +6,7 @@ import type { Georef } from '@/domain/georef';
 
 import { BURN_GLSL, createBurnUniforms, type BurnUniforms } from './burnShader';
 
-const loadImage = (url: string): Promise<HTMLImageElement> =>
+const loadImageOnce = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -14,6 +14,19 @@ const loadImage = (url: string): Promise<HTMLImageElement> =>
     img.onerror = () => reject(new Error(`imagem: ${url}`));
     img.src = url;
   });
+
+/**
+ * One retry on top of the browser's own: a dev-server reload, a backend restart or a dropped connection must not leave a
+ * base layer permanently unloaded (the failed request is not cached, so a fresh Image can succeed).
+ */
+const loadImage = async (url: string): Promise<HTMLImageElement> => {
+  try {
+    return await loadImageOnce(url);
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return loadImageOnce(url);
+  }
+};
 
 /** Decodes a Terrarium-encoded heightmap (R*256+G+B/256-32768) into meters. */
 export async function loadHeightmap(url: string): Promise<Float32Array> {
@@ -69,6 +82,7 @@ export class TerrainMesh {
   readonly ready: Promise<void>;
   private layer: BaseLayerName = 'satellite';
   private readonly layerTex: Partial<Record<BaseLayerName, THREE.Texture>> = {};
+  private readonly layerPending: Partial<Record<BaseLayerName, Promise<THREE.Texture>>> = {};
   private readonly tileTex: THREE.Texture[] = [];
   private readonly materials: THREE.MeshStandardMaterial[] = [];
   private readonly tilesPerSide: number;
@@ -216,7 +230,21 @@ export class TerrainMesh {
   // ------------------------------------------------------------ base layers
   async setLayer(name: BaseLayerName): Promise<void> {
     if (name !== 'satellite' && !this.layerTex[name]) {
-      this.layerTex[name] = name === 'topo' ? this.buildTopo() : await this.buildSpecies();
+      const layer = name;
+      // one build per layer: clicking again while the first is still decoding shares that promise instead of starting another
+      if (!this.layerPending[layer]) {
+        const build = layer === 'topo' ? Promise.resolve(this.buildTopo()) : this.buildSpecies();
+        this.layerPending[layer] = build.then((tex) => {
+          this.layerTex[layer] = tex;
+          return tex;
+        });
+      }
+      try {
+        await this.layerPending[layer];
+      } finally {
+        // the texture is cached in layerTex on success; on failure nothing is cached, so the next click retries
+        delete this.layerPending[layer];
+      }
     }
     this.layer = name;
     this.materials.forEach((material, t) => {

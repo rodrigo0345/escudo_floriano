@@ -16,6 +16,12 @@ export interface InterpolatedWeather {
   precipitationMmH: number | null;
   cloudCoverPct: number | null;
   solarRadiationWm2: number | null;
+  /** Horizontal surface visibility from the weather source (null when the source has none, e.g. ERA5). */
+  visibilityM: number | null;
+  /** Convective available potential energy (J/kg): instability for thunderstorms and convective columns. */
+  capeJkg: number | null;
+  /** Sun above the horizon at the location/time, from the source or computed from solar radiation. */
+  isDay: boolean | null;
 }
 
 export type FireRiskLevel = 'normal' | 'high' | 'extreme';
@@ -466,6 +472,9 @@ export function sampleWeatherAt(series: WeatherSample[], startMs: number, minute
     precipitationMmH: precip,
     cloudCoverPct: dynamicCloud > 0 ? dynamicCloud : null,
     solarRadiationWm2: a.solarRadiationWm2 != null && b.solarRadiationWm2 != null ? lerp(a.solarRadiationWm2, b.solarRadiationWm2, f) : a.solarRadiationWm2 ?? b.solarRadiationWm2 ?? null,
+    visibilityM: a.visibilityM != null && b.visibilityM != null ? lerp(a.visibilityM, b.visibilityM, f) : a.visibilityM ?? b.visibilityM ?? null,
+    capeJkg: a.capeJkg != null && b.capeJkg != null ? lerp(a.capeJkg, b.capeJkg, f) : a.capeJkg ?? b.capeJkg ?? null,
+    isDay: a.isDay ?? b.isDay ?? null,
   };
 }
 
@@ -486,6 +495,9 @@ function toInterpolated(a: WeatherSample, series?: WeatherSample[], times?: numb
     precipitationMmH: a.precipitationMmH ?? null,
     cloudCoverPct: dynamicCloud > 0 ? dynamicCloud : null,
     solarRadiationWm2: a.solarRadiationWm2 ?? null,
+    visibilityM: a.visibilityM ?? null,
+    capeJkg: a.capeJkg ?? null,
+    isDay: a.isDay ?? null,
   };
 }
 

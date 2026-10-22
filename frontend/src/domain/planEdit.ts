@@ -1,0 +1,188 @@
+import type { Action, LatLon, ResourceAssignment, Vehicle } from '@/api';
+
+/**
+ * The operator's edit of an agent plan (Epic A6): pure functions over the `Action` JSON, so the plan editor does not have to know
+ * which of the fifteen action types carries its target in `target`, `area`, `line` or `anchorPoint`. Nothing here invents a field:
+ * every change is one the backend already accepts in `PATCH /plans/{id}` (the action is sent whole).
+ */
+
+type Json = Record<string, unknown>;
+
+const object = (value: unknown): Json | null => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : null);
+const number = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+export const cloneAction = (action: Action): Action => JSON.parse(JSON.stringify(action)) as Action;
+
+/** The minute an `at_time` trigger starts, or null for a conditional/manual trigger (which the engine does not time yet — J3). */
+export function triggerStartMinute(action: Action): number | null {
+  const trigger = object((action as Json).trigger);
+  if (!trigger || trigger.kind !== 'at_time') return null;
+  return number(object(trigger.at)?.offsetMinutes);
+}
+
+export function triggerKind(action: Action): string {
+  return String(object((action as Json).trigger)?.kind ?? 'imediato');
+}
+
+/**
+ * Fix the action to a clock minute. If it already had an `at_time` trigger, the what-if windows move with it by the same delta;
+ * if it was conditional (fire arrival / another action), the windows start at the chosen minute, so re-simulating the plan actually
+ * reflects the change instead of silently keeping the old window.
+ */
+export function setTriggerMinute(action: Action, minute: number): Action {
+  const previous = triggerStartMinute(action);
+  const next = cloneAction(action) as Json;
+  next.trigger = { kind: 'at_time', at: { offsetMinutes: Math.max(0, Math.round(minute)) } };
+  const delta = previous == null ? null : Math.round(minute) - previous;
+  const effects = next.simulationEffects;
+  if (Array.isArray(effects)) {
+    for (const raw of effects) {
+      const effect = object(raw);
+      if (!effect) continue;
+      const start = object(effect.start);
+      const end = object(effect.end);
+      const s = number(start?.offsetMinutes);
+      const e = number(end?.offsetMinutes);
+      if (start && s != null) start.offsetMinutes = delta == null ? Math.max(0, Math.round(minute)) : s + delta;
+      if (end && e != null) end.offsetMinutes = delta == null ? Math.max(1, Math.round(minute) + Math.max(1, e - (s ?? e))) : e + delta;
+    }
+  }
+  if (number(object(next.startBy)?.offsetMinutes) != null) (next.startBy as Json).offsetMinutes = Math.max(0, Math.round(minute));
+  return next as Action;
+}
+
+/** The target fields each action type carries; anything else is not a place on the map. */
+const TARGET_KEYS: Record<string, string[]> = {
+  dispatch_units: ['target'],
+  stage_resources: ['stagingArea'],
+  establish_command_post: ['location'],
+  structure_protection: ['targets'],
+  fire_attack: ['anchorPoint', 'line'],
+  fuel_break: ['line'],
+  evacuation: ['area'],
+  shelter_in_place: ['area'],
+  reconnaissance: ['area'],
+  medical_standby: ['positions', 'casualtyCollectionPoint'],
+  air_support_request: ['targetArea'],
+  road_closure: ['geometry'],
+  traffic_control_point: ['position'],
+  public_alert: ['area'],
+  request_reinforcements: ['stagingArea'],
+  custom: ['target', 'geometry', 'area'],
+};
+
+const collectLatLons = (node: unknown, out: LatLon[]): void => {
+  if (Array.isArray(node)) {
+    // GeoJSON position: [lon, lat]
+    if (node.length >= 2 && typeof node[0] === 'number' && typeof node[1] === 'number') {
+      out.push({ lat: node[1], lon: node[0] });
+      return;
+    }
+    for (const item of node) collectLatLons(item, out);
+    return;
+  }
+  const obj = object(node);
+  if (!obj) return;
+  const lat = number(obj.lat);
+  const lon = number(obj.lon);
+  if (lat != null && lon != null) {
+    out.push({ lat, lon });
+    return;
+  }
+  if (Array.isArray(obj.coordinates)) {
+    collectLatLons(obj.coordinates, out);
+    return;
+  }
+  for (const value of Object.values(obj)) collectLatLons(value, out);
+};
+
+/** Centre of the action's target, or null when it has no place on the map (a public alert, a request for reinforcements without an area…). */
+export function actionCentre(action: Action): LatLon | null {
+  const raw = action as Json;
+  const keys = TARGET_KEYS[String(raw.type)] ?? ['target', 'geometry', 'area', 'position', 'line', 'anchorPoint'];
+  const points: LatLon[] = [];
+  for (const key of keys) collectLatLons(raw[key], points);
+  if (!points.length) return null;
+  return {
+    lat: points.reduce((sum, p) => sum + p.lat, 0) / points.length,
+    lon: points.reduce((sum, p) => sum + p.lon, 0) / points.length,
+  };
+}
+
+const shiftGeo = (node: unknown, dLat: number, dLon: number, inCoordinates = false): unknown => {
+  if (Array.isArray(node)) {
+    if (inCoordinates && node.length >= 2 && typeof node[0] === 'number' && typeof node[1] === 'number') {
+      return [node[0] + dLon, node[1] + dLat, ...node.slice(2)];
+    }
+    return node.map((item) => shiftGeo(item, dLat, dLon, inCoordinates));
+  }
+  const obj = object(node);
+  if (!obj) return node;
+  const lat = number(obj.lat);
+  const lon = number(obj.lon);
+  if (lat != null && lon != null) return { ...obj, lat: lat + dLat, lon: lon + dLon };
+  const result: Json = {};
+  for (const [key, value] of Object.entries(obj)) result[key] = shiftGeo(value, dLat, dLon, key === 'coordinates');
+  return result;
+};
+
+/**
+ * Translate the whole action by (dLat, dLon): its target, its geometry, its escape routes/safety zones and the what-if interventions
+ * (the line held, the area evacuated…). Moving only the label while the engine kept the old line is exactly the kind of silent
+ * disagreement A6 is meant to remove.
+ */
+export function shiftAction(action: Action, dLat: number, dLon: number): Action {
+  return shiftGeo(action, dLat, dLon) as Action;
+}
+
+/** `T+15–45` for the action's what-if interventions, so the operator sees what changing the trigger moved. */
+export function effectWindows(action: Action): { start: number; end: number }[] {
+  const effects = (action as Json).simulationEffects;
+  if (!Array.isArray(effects)) return [];
+  const windows: { start: number; end: number }[] = [];
+  for (const raw of effects) {
+    const effect = object(raw);
+    const start = number(object(effect?.start)?.offsetMinutes);
+    const end = number(object(effect?.end)?.offsetMinutes);
+    if (start != null) windows.push({ start, end: end ?? start });
+  }
+  return windows;
+}
+
+export const assignmentKey = (assignment: ResourceAssignment): string => `${assignment.resourceType}:${assignment.resourceId}`;
+
+export function addVehicleAssignment(action: Action, vehicle: Vehicle): Action {
+  const next = cloneAction(action) as Json;
+  const resources = Array.isArray(next.resources) ? (next.resources as ResourceAssignment[]) : [];
+  if (resources.some((r) => r.resourceType === 'vehicle' && r.resourceId === vehicle.id)) return next as Action;
+  const assignment: ResourceAssignment = {
+    resourceType: 'vehicle',
+    resourceId: vehicle.id as string,
+    personnel: Math.max(1, vehicle.minimumCrew ?? 1),
+  };
+  next.resources = [...resources, assignment];
+  return next as Action;
+}
+
+export function removeAssignment(action: Action, index: number): Action {
+  const next = cloneAction(action) as Json;
+  const resources = Array.isArray(next.resources) ? (next.resources as ResourceAssignment[]) : [];
+  next.resources = resources.filter((_, i) => i !== index);
+  return next as Action;
+}
+
+export function updateAssignment(action: Action, index: number, patch: Partial<ResourceAssignment>): Action {
+  const next = cloneAction(action) as Json;
+  const resources = Array.isArray(next.resources) ? (next.resources as ResourceAssignment[]) : [];
+  next.resources = resources.map((r, i) => (i === index ? { ...r, ...patch } : r));
+  return next as Action;
+}
+
+/** Drop an action and any `dependsOn` pointer that would now dangle (the validator reports unknown dependencies as errors). */
+export function removeAction(actions: Action[], index: number): Action[] {
+  const removed = actions[index]?.id;
+  return actions.filter((_, i) => i !== index).map((action) => {
+    const next = cloneAction(action) as Json;
+    if (removed && Array.isArray(next.dependsOn)) next.dependsOn = (next.dependsOn as string[]).filter((id) => id !== removed);
+    return next as Action;
+  });
+}

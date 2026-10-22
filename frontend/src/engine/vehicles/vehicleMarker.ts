@@ -8,6 +8,10 @@ const MARKER_LOGO_CACHE = new Map<string, HTMLImageElement>();
 
 const CW = 210;
 const CH = 92;
+/** Where the callsign starts inside the badge (after logo and type icon); the badge widens from here. */
+const CALLSIGN_X = 118;
+/** On-screen width of the narrowest badge, as a share of the viewport height (sizeAttenuation is off). */
+const SCREEN_WIDTH = 0.075;
 
 /**
  * Overhead marker sprite for each vehicle on the map.
@@ -53,8 +57,7 @@ export class VehicleMarker {
     );
     // Anchor at bottom tip of pointer pin
     this.sprite.center.set(0.5, 0.0);
-    const screenWidth = 0.075;
-    this.sprite.scale.set(screenWidth, (screenWidth * CH) / CW, 1);
+    this.sprite.scale.set(SCREEN_WIDTH, (SCREEN_WIDTH * CH) / CW, 1);
     this.sprite.renderOrder = 26;
 
     this.draw(false);
@@ -80,7 +83,16 @@ export class VehicleMarker {
     this.key = key;
 
     const ctx = this.canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, CW, CH);
+    // The badge always fits the whole callsign ("GNR-BT 171", never "GNR-BT…"): the map is read at a glance, and a truncated
+    // identifier makes two vehicles indistinguishable. The pill widens from the callsign's start; the pin stays centred.
+    const callsign = this.callsign;
+    ctx.font = '700 21px system-ui, sans-serif';
+    const badgeWidth = Math.max(CW, CALLSIGN_X + Math.ceil(ctx.measureText(callsign).width) + 12);
+    if (this.canvas.width !== badgeWidth) this.canvas.width = badgeWidth;
+    this.sprite.scale.x = (SCREEN_WIDTH * badgeWidth) / CW;
+    const W = badgeWidth;
+
+    ctx.clearRect(0, 0, W, CH);
 
     // Drop shadow
     ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
@@ -91,7 +103,7 @@ export class VehicleMarker {
     // Outer rounded badge
     ctx.fillStyle = isHovered ? 'rgba(16, 22, 30, 0.95)' : 'rgba(10, 14, 20, 0.88)';
     ctx.beginPath();
-    ctx.roundRect(4, 4, CW - 8, CH - 22, 16);
+    ctx.roundRect(4, 4, W - 8, CH - 22, 16);
     ctx.fill();
 
     // Border with organization color
@@ -103,9 +115,9 @@ export class VehicleMarker {
     // Pointer pin at bottom center
     ctx.fillStyle = isHovered ? orgColor : 'rgba(10, 14, 20, 0.9)';
     ctx.beginPath();
-    ctx.moveTo(CW / 2 - 10, CH - 22);
-    ctx.lineTo(CW / 2 + 10, CH - 22);
-    ctx.lineTo(CW / 2, CH - 6);
+    ctx.moveTo(W / 2 - 10, CH - 22);
+    ctx.lineTo(W / 2 + 10, CH - 22);
+    ctx.lineTo(W / 2, CH - 6);
     ctx.closePath();
     ctx.fill();
 
@@ -113,9 +125,9 @@ export class VehicleMarker {
       ctx.strokeStyle = orgColor;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.moveTo(CW / 2 - 10, CH - 22);
-      ctx.lineTo(CW / 2, CH - 6);
-      ctx.lineTo(CW / 2 + 10, CH - 22);
+      ctx.moveTo(W / 2 - 10, CH - 22);
+      ctx.lineTo(W / 2, CH - 6);
+      ctx.lineTo(W / 2 + 10, CH - 22);
       ctx.stroke();
     }
 
@@ -172,8 +184,7 @@ export class VehicleMarker {
     ctx.font = '700 21px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const displayCallsign = this.callsign.length > 7 ? `${this.callsign.slice(0, 6)}…` : this.callsign;
-    ctx.fillText(displayCallsign, 118, 34);
+    ctx.fillText(callsign, CALLSIGN_X, 34);
 
     this.texture.needsUpdate = true;
   }

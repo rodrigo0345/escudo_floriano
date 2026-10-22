@@ -42,6 +42,12 @@ const EMERGENCY_PASSES = '#ff9f1a';
 const PLACE_RING_M = 160;
 const LIFT = 2.2;
 const FOCUS_ROUTE = '#00e5ff';
+// The plan is an annotation over the map, not a wall over it: translucent at rest, so roads, places and the fire still read through it.
+const LINE_ALPHA = 0.55;
+const FILL_ALPHA = 0.14;
+const OUTLINE_ALPHA = 0.6;
+const ROUTE_ALPHA = 0.45;
+const CLOSURE_ALPHA = 0.8; // a road closure stays stronger than a fire line: it is a safety order
 
 const FIRE_LINE_COLORS: Record<string, string> = { handline: '#ffd400', wet_line: '#00e5ff', machine: '#ff9f1a' };
 const DROP_COLORS: Record<string, string> = { water: '#3b8cff', retardant: '#ff4fa3', foam: '#f4f4f4' };
@@ -61,8 +67,8 @@ interface Span extends Window {
 }
 
 const UPCOMING = 0.22; // share of its alpha an effect keeps before it starts (the plan is still readable ahead of time)
-const DONE = 0.1; // ...and once it is over, or when another action is focused
-const WORKING = 1.6; // a working effect is drawn stronger than the plan at rest
+const DONE = 0.07; // ...and once it is over, or when another action is focused
+const WORKING = 1.35; // a working effect is drawn stronger than the plan at rest, without turning opaque
 
 /** Triangles accumulated for one mesh; `tips[i]` is the tooltip of triangle `i` (what a hover on that face shows). */
 class MeshAcc {
@@ -263,13 +269,13 @@ export class PlanLayer {
     const shape = (kind: PlanKind, geometry: Parameters<typeof lineStringCoordinates>[0], color: THREE.Color, tip: string, width: number, win?: Window) => {
       const b = buckets.get(kind)!;
       if (geometry?.type === 'LineString') {
-        b.ribbons.ribbon(world(lineStringCoordinates(geometry)), width, color, 0.95, tip, false, win);
+        b.ribbons.ribbon(world(lineStringCoordinates(geometry)), width, color, LINE_ALPHA, tip, false, win);
         this.counts[kind]++;
       } else {
         const rings = polygonRings(geometry);
         rings.forEach((ring) => {
-          b.fills.fan(world(ring), color, 0.3, tip, win);
-          b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true, win);
+          b.fills.fan(world(ring), color, FILL_ALPHA, tip, win);
+          b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, OUTLINE_ALPHA, tip, true, win);
         });
         if (rings.length) this.counts[kind]++;
       }
@@ -310,8 +316,8 @@ export class PlanLayer {
             if (effect.geometry) shape('structure_protection', effect.geometry, color, effectTip, LINE_HALF_WIDTH, win);
             else if (ring) {
               const b = buckets.get('structure_protection')!;
-              b.fills.fan(world(ring), color, 0.3, effectTip, win);
-              b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, effectTip, true, win);
+              b.fills.fan(world(ring), color, FILL_ALPHA, effectTip, win);
+              b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, OUTLINE_ALPHA, effectTip, true, win);
               this.counts.structure_protection++;
             }
             break;
@@ -324,8 +330,8 @@ export class PlanLayer {
                 const ring = placeRing(id);
                 if (!ring) continue;
                 const b = buckets.get('evacuation')!;
-                b.fills.fan(world(ring), color, 0.3, tip);
-                b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true);
+                b.fills.fan(world(ring), color, FILL_ALPHA, tip);
+                b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, OUTLINE_ALPHA, tip, true);
                 this.counts.evacuation++;
               }
             break;
@@ -341,7 +347,7 @@ export class PlanLayer {
         for (const id of action.roadIds ?? []) {
           const points = roadGeometry?.(id) ?? [];
           if (points.length < 2) continue;
-          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, 0.95, tip);
+          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, CLOSURE_ALPHA, tip);
           drawn = true;
         }
         if (drawn) this.counts.road_closure++;
@@ -353,7 +359,7 @@ export class PlanLayer {
         // Proteção Civil's part of an evacuation: the road to the shelter and the shelter itself
         const orange = new THREE.Color(PLAN_KINDS.evacuation.color);
         for (const route of action.routes ?? []) {
-          buckets.get('evacuation')!.ribbons.ribbon(world(lineStringCoordinates(route.geometry)), ROUTE_HALF_WIDTH, orange, 0.9, `Rota de evacuação · ${tip}`);
+          buckets.get('evacuation')!.ribbons.ribbon(world(lineStringCoordinates(route.geometry)), ROUTE_HALF_WIDTH, orange, ROUTE_ALPHA, `Rota de evacuação · ${tip}`);
         }
         for (const shelter of action.shelters ?? []) marker(shelter.position.lat, shelter.position.lon, orange, `Abrigo: ${shelter.name ?? ''} · ${action.title}`, 'evacuation');
       }
@@ -367,7 +373,7 @@ export class PlanLayer {
       if (action.type === 'fire_attack') {
         const white = new THREE.Color(PLAN_KINDS.safety.color);
         for (const route of action.escapeRoutes ?? []) {
-          buckets.get('safety')!.ribbons.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH, white, 0.85, `Via de fuga · ${tip}`);
+          buckets.get('safety')!.ribbons.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH, white, ROUTE_ALPHA * 0.85, `Via de fuga · ${tip}`);
         }
         for (const zone of action.safetyZones ?? []) marker(zone.lat, zone.lon, new THREE.Color('#3dff7a'), `Zona de segurança · ${action.title}`);
         for (const look of action.lookouts ?? []) marker(look.lat, look.lon, new THREE.Color('#ffe14d'), `Vigia · ${action.title}`);

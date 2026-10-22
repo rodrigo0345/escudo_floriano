@@ -71,6 +71,8 @@ public sealed class WeatherService(IWeatherSource source, IMapReader map, FireTr
         var warnings = new List<ValidationIssue>();
         if (req.Weather.Events?.OfType<WindShiftEvent>().Any(e => e.ToDeg is null && e.DeltaDeg is null) == true)
             warnings.Add(new("warning", "wind_shift_without_target", "Um `wind_shift` sem `toDeg` nem `deltaDeg` não altera o vento."));
-        return new WeatherResolveResponse(req.LocationId, req.Start, req.DurationMinutes, step, samples, preview, warnings);
+        // Eco do que foi aplicado: o cliente compara a pré-visualização com a série que o motor vai ver, sem repetir a receita.
+        var applied = (req.Weather.Events ?? []).Where(e => e.Enabled).ToList();
+        return new WeatherResolveResponse(req.LocationId, req.Start, req.DurationMinutes, step, samples, preview, warnings, applied, req.Weather.Keyframes);
     }
 }

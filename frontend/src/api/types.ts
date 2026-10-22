@@ -130,9 +130,15 @@ export type PlanRequestStatus = Schemas['PlanRequestStatus'];
 export type PlanRequestProgress = Schemas['PlanRequestProgress'];
 
 export type Action = Schemas['Action'];
+export type ActionBase = Schemas['ActionBase'];
 export type ActionPriority = Schemas['ActionPriority'];
 export type ActionStatus = Schemas['ActionStatus'];
 export type ActionPatch = Schemas['ActionPatch'];
+export type Trigger = Schemas['Trigger'];
+export type TimeSpec = Schemas['TimeSpec'];
+export type Geometry = Schemas['Geometry'];
+export type ResourceAssignment = Schemas['ResourceAssignment'];
+export type ResourceType = Schemas['ResourceType'];
 export type CrewExposure = Schemas['CrewExposure'];
 export type CrewStatus = Schemas['CrewStatus'];
 export type ActionDispatchUnits = Schemas['ActionDispatchUnits'];

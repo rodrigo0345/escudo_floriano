@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import type { TimelineRangeEvent } from '@/domain/simulationForm';
 import { groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
 import { useEngine, useWorld } from '@/engine/EngineContext';
+import type { StormCell } from '@/engine/layers/stormLayer';
 import { useAppStore } from '@/store/appStore';
 
 const MIN_STEP_MS = 50;
@@ -62,6 +63,8 @@ export function useFrameLoop(): void {
         let effectivePrecipMmH = w?.precipitationMmH ?? 0;
         let effectiveCloudCoverPct = w?.cloudCoverPct ?? 0;
         let activeLocalEvent: TimelineRangeEvent | undefined;
+        let activeStorm: { event: TimelineRangeEvent; buildStart: number; finish: number } | undefined;
+        let stormIntensity = 0;
 
         // Continuous atmospheric event lifecycle:
         // 1. Buildup phase BEFORE startMinute: [startMinute - buildupMinutes, startMinute] (clouds form & thicken, no rain)
@@ -72,9 +75,10 @@ export function useFrameLoop(): void {
 
           const tStart = ev.startMinute;
           const tEnd = ev.endMinute;
-          const tBuildup = Math.max(1, ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
+          // A front passage is an abrupt air-mass change: no cloud buildup before it and no lingering rain after it.
+          const tBuildup = ev.type === 'front_passage' ? 0 : Math.max(1, ev.buildupMinutes ?? (ev.type === 'storm' ? 30 : ev.type === 'clouds' ? 15 : 20));
           const tBuildStart = Math.max(0, tStart - tBuildup);
-          const tDissipate = Math.max(1, ev.dissipationMinutes ?? 20);
+          const tDissipate = ev.type === 'front_passage' ? 0 : Math.max(1, ev.dissipationMinutes ?? 20);
           const tFinish = tEnd + tDissipate;
 
           if (tf >= tBuildStart && tf <= tFinish) {
@@ -82,8 +86,15 @@ export function useFrameLoop(): void {
               activeLocalEvent = ev;
             }
 
-            const targetPrecip = ev.type === 'storm' ? (ev.intensityMmH ?? 15) : ev.type === 'rain' ? (ev.intensityMmH ?? 6) : 0;
-            const targetCloud = ev.type === 'clouds' ? (ev.cloudCoverPct ?? 85) : (ev.type === 'storm' || ev.type === 'rain') ? 88 : 0;
+            const targetPrecip =
+              ev.type === 'storm' ? (ev.intensityMmH ?? 15)
+              : ev.type === 'front_passage' ? (ev.intensityMmH ?? 4)
+              : ev.type === 'rain' ? (ev.intensityMmH ?? 6)
+              : 0;
+            const targetCloud =
+              ev.type === 'clouds' ? (ev.cloudCoverPct ?? 85)
+              : ev.type === 'storm' || ev.type === 'rain' || ev.type === 'front_passage' ? 88
+              : 0;
 
             let cloudFactor = 0;
             let precipFactor = 0;
@@ -118,6 +129,10 @@ export function useFrameLoop(): void {
             if (targetCloud > 0) {
               effectiveCloudCoverPct = Math.max(effectiveCloudCoverPct, Math.round(targetCloud * cloudFactor));
             }
+            if (ev.type === 'storm') {
+              activeStorm ??= { event: ev, buildStart: tBuildStart, finish: tFinish };
+              stormIntensity = Math.max(stormIntensity, cloudFactor); // the cell grows and fades with the same envelope as the rain
+            }
           }
         }
 
@@ -147,6 +162,33 @@ export function useFrameLoop(): void {
 
         const rainDt = lastRainTs ? Math.min((ts - lastRainTs) / 1000, 0.1) : 0.016;
         lastRainTs = ts;
+
+        // One moving cumulonimbus per storm event (Epic E6): it crosses the territory (or the local spot) along the storm's own wind.
+        // D3 will replace this derived path with the explicit `storm_cell.path`; the layer already only draws where it is told.
+        let stormCell: StormCell | null = null;
+        if (activeStorm && s.cloudsEnabled && stormIntensity > 0.02) {
+          const ev = activeStorm.event;
+          const fromRad = ((ev.windFromDeg ?? w?.windFromDeg ?? 0) * Math.PI) / 180;
+          const dirX = -Math.sin(fromRad); // wind FROM: the air (and the cell) move towards the opposite bearing
+          const dirZ = Math.cos(fromRad);
+          const local = ev.scope === 'local' && ev.centerLat != null && ev.centerLon != null;
+          const radiusUnits = ((ev.radiusKm ?? (local ? 2.5 : 3)) * 1000) / world.geo.unit;
+          const progress = Math.max(0, Math.min(1, (tf - activeStorm.buildStart) / Math.max(1, activeStorm.finish - activeStorm.buildStart)));
+          const travel = local ? radiusUnits * 1.1 : Math.max(world.geo.W, world.geo.H) * 0.55;
+          let cx = 0, cz = 0;
+          if (local) {
+            const [u, v] = world.geo.uv(ev.centerLat as number, ev.centerLon as number);
+            cx = world.geo.x(u);
+            cz = world.geo.z(v);
+          }
+          const x = cx + dirX * (progress * 2 - 1) * travel;
+          const z = cz + dirZ * (progress * 2 - 1) * travel;
+          const gu = Math.max(0, Math.min(1, 0.5 + x / world.geo.W));
+          const gv = Math.max(0, Math.min(1, 0.5 + z / world.geo.H));
+          stormCell = { x, z, radiusUnits, intensity: stormIntensity, groundY: world.geo.y(world.geo.elevAtUV(gu, gv), x, z) };
+          if (local) cloudSpot = { x, z, radiusUnits }; // rain falls under the moving cell, not at a fixed pin on the map
+        }
+
         world.rain.update(
           rainDt,
           effectivePrecipMmH,
@@ -159,7 +201,9 @@ export function useFrameLoop(): void {
         if (s.cloudsEnabled) {
           world.clouds.update(
             rainDt,
-            effectiveCloudCoverPct,
+            // Under a storm cell the deck is still overcast, but thinner on screen: the cell's tower and anvil must read as the
+            // storm, not disappear inside a uniform grey wall. The atmosphere (sun, fog, visibility) keeps the full cloud cover.
+            stormCell ? effectiveCloudCoverPct * 0.55 : effectiveCloudCoverPct,
             w?.windKmh ?? 0,
             w?.windFromDeg ?? 0,
             effectivePrecipMmH,
@@ -168,6 +212,9 @@ export function useFrameLoop(): void {
             engine.camera,
           );
         }
+        world.storm.setThunderEnabled(s.thunderEnabled);
+        world.storm.setListener(engine.camera.position);
+        world.storm.update(rainDt, stormCell, engine.camera, engine.isLightningFlashingNow);
       }
       world.updateCity();
       const viewportPx = engine.renderer.domElement.height / engine.renderer.getPixelRatio();

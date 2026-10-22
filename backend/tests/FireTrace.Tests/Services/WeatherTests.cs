@@ -133,12 +133,36 @@ public class WeatherTests
     }
 
     [Fact]
-    public void Provider_gusts_and_rain_reach_the_weather_samples()
+    public void Provider_gusts_rain_visibility_cape_and_daylight_reach_the_weather_samples()
     {
-        var hour = new FireTrace.ExternalData.Weather.HourlyWeather(DateTimeOffset.Parse("2026-08-17T15:00:00Z"), 20, 270, 30, 25, "open-meteo-forecast", 42, 1.5);
+        var hour = new FireTrace.ExternalData.Weather.HourlyWeather(DateTimeOffset.Parse("2026-08-17T15:00:00Z"), 20, 270, 30, 25, "open-meteo-forecast", 42, 1.5, 80, 12500, 1200, true);
         var sample = hour.ToSample();
         Assert.Equal(42, sample.GustKmh);
         Assert.Equal(1.5, sample.PrecipitationMmH);
+        Assert.Equal(80, sample.CloudCoverPct);
+        Assert.Equal(12500, sample.VisibilityM);
+        Assert.Equal(1200, sample.CapeJkg);
+        Assert.True(sample.IsDay);
+    }
+
+    [Fact]
+    public void Provider_visibility_cape_and_daylight_flow_through_the_timeline_and_manual_series_derive_daylight()
+    {
+        var start = DateTimeOffset.Parse("2026-08-17T15:00:00Z");
+        var spec = new WeatherSpec { Base = WeatherBase.Provider, SpinUpHours = 0 };
+        var hourly = new List<WeatherSample>
+        {
+            new() { Time = start, WindKmh = 20, WindFromDeg = 270, HumidityPct = 30, TempC = 25, VisibilityM = 9000, CapeJkg = 800, IsDay = true },
+            new() { Time = start.AddHours(1), WindKmh = 22, WindFromDeg = 270, HumidityPct = 30, TempC = 25, VisibilityM = 6000, CapeJkg = 400, IsDay = false },
+        };
+        var track = WeatherTimeline.Build(spec, hourly, start, 60, TestSettings.All.Weather.Timeline, 0, new LatLon(41.44, -8.29));
+        Assert.Equal(9000, track.At(0).VisibilityM);
+        Assert.Equal(800, track.At(0).CapeJkg);
+        Assert.True(track.At(0).IsDay);
+        Assert.False(track.At(60).IsDay);
+
+        var manual = WeatherTimeline.Build(new WeatherSpec { Base = WeatherBase.None, SpinUpHours = 0 }, Array.Empty<WeatherSample>(), start, 60, TestSettings.All.Weather.Timeline, 0, new LatLon(41.44, -8.29));
+        Assert.True(manual.At(60).IsDay); // 16:00 UTC em agosto no Minho: ainda é dia, mesmo sem fonte
     }
 
     [Fact]

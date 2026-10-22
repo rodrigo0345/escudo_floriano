@@ -5610,7 +5610,7 @@
           "Weather"
         ],
         "summary": "Pré-visualizar a meteorologia efetiva",
-        "description": "Calcula, sem correr o motor, a série que seria usada (série real + pontos-chave + eventos + humidade do combustível). Alimenta o gráfico do editor de meteorologia.",
+        "description": "Calcula, sem correr o motor, a série que seria usada (série real + pontos-chave + eventos + humidade do combustível). Alimenta o gráfico do editor de meteorologia. A resposta ecoa `events` e `keyframes` aplicados: a mesma receita produz a mesma série em `GET /simulations/{id}/weather`.",
         "requestBody": {
           "required": true,
           "content": {
@@ -9040,6 +9040,22 @@
                 "minimum": 0,
                 "maximum": 300
               },
+              "visibilityM": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Visibilidade horizontal à superfície (metros). A previsão Open-Meteo fornece-a; o arquivo ERA5 não, e nesse caso é omitida."
+              },
+              "capeJkg": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000,
+                "description": "Energia potencial convectiva disponível (J/kg): instabilidade para trovoadas e colunas convectivas. Omitida quando a fonte não a tem."
+              },
+              "isDay": {
+                "type": "boolean",
+                "description": "O sol está acima do horizonte no local e instante (`is_day` da fonte, ou calculado a partir da radiação solar para séries manuais)."
+              },
               "dewPointC": {
                 "type": "number"
               },
@@ -9983,6 +9999,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ValidationIssue"
+            }
+          },
+          "events": {
+            "type": "array",
+            "description": "Eventos ativos efetivamente aplicados, pela ordem em que o motor os aplicou (eco do pedido, sem os desativados).",
+            "items": {
+              "$ref": "#/components/schemas/WeatherEvent"
+            }
+          },
+          "keyframes": {
+            "type": "array",
+            "description": "Pontos-chave efetivamente aplicados (eco do pedido).",
+            "items": {
+              "$ref": "#/components/schemas/WeatherKeyframe"
             }
           }
         },
