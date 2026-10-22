@@ -2,17 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { plansApi, simulationsApi, type Plan, type PlanSummary, type PlanStatus, type Simulation } from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
-import { OrgLogo } from '@/domain/organizationLogos';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
 import { AttackTimeline } from './AttackTimeline';
+import { PlanActionsNow } from './PlanActionsNow';
 import { PlanRequestBox } from './PlanRequestBox';
 import styles from './panels.module.css';
 
 const nf = (n: number) => n.toLocaleString('pt-PT');
-const ACTIONS_SHOWN = 40;
 
 const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
   proposed: 'Proposto',
@@ -30,15 +29,6 @@ const PLAN_STATUS_KIND: Record<PlanStatus, 'ok' | 'warn' | 'bad'> = {
   completed: 'ok',
   discarded: 'bad',
   cancelled: 'bad',
-};
-
-const ACTION_STATUS_LABEL: Record<string, string> = {
-  planned: 'Planeada',
-  acknowledged: 'Reconhecida',
-  in_progress: 'Em curso',
-  completed: 'Concluída',
-  blocked: 'Bloqueada',
-  cancelled: 'Cancelada',
 };
 
 type Stats = NonNullable<Simulation['stats']>;
@@ -175,7 +165,7 @@ function AgentRows({ m }: { m: AgentMetrics | null }) {
       <Row>
         <span>GNR</span>
         <span>
-          {m.gnr.roadsClosed} cortes patrulhados{m.gnr.roadsWithoutPatrol ? ` · ${m.gnr.roadsWithoutPatrol} sem patrulha` : ''}
+          {m.gnr.roadsClosed} acessos fechados{m.gnr.roadsWithoutPatrol ? ` · ${m.gnr.roadsWithoutPatrol} abertos (sem patrulha)` : ''}
         </span>
       </Row>
       <Row>
@@ -200,7 +190,6 @@ export function PlansPanel() {
   const showBanner = useAppStore((s) => s.showBanner);
   const setFocusedAction = useAppStore((s) => s.setFocusedAction);
   const { showSimulationById } = useSimulationActions();
-  const organizations = useResourcesStore((s) => s.organizations);
   const resourcesLoaded = useResourcesStore((s) => s.loaded);
   const loadResources = useResourcesStore((s) => s.load);
 
@@ -216,11 +205,6 @@ export function PlansPanel() {
   useEffect(() => {
     if (!resourcesLoaded) void loadResources();
   }, [resourcesLoaded, loadResources]);
-
-  const orgName = useCallback(
-    (organizationId: string) => organizations.find((o) => o.id === organizationId)?.name ?? organizationId,
-    [organizations],
-  );
 
   const refresh = useCallback(async (silent = false) => {
     if (!baseId) return;
@@ -306,7 +290,9 @@ export function PlansPanel() {
     try {
       setOpen(await plansApi.get(plan.id as string));
     } catch (e) {
-      showBanner(`Plano: ${(e as Error).message}`);
+      // a plan can disappear under the list (the agents replace or withdraw one): say so and show the list as it is now
+      showBanner(`Plano ${plan.variant ?? plan.title}: já não existe (a lista foi atualizada). ${(e as Error).message}`);
+      void refresh(true);
     }
   };
 
@@ -350,14 +336,6 @@ export function PlansPanel() {
         const sim = runs.get(id);
         const status = (plan.status ?? 'proposed') as PlanStatus;
         const statusKind = PLAN_STATUS_KIND[status] ?? 'warn';
-        const shownActions = open?.id === id ? open.actions.slice(0, ACTIONS_SHOWN) : [];
-        const groups = new Map<string, typeof shownActions>();
-        for (const action of shownActions) {
-          const organizationId = action.organizationId ?? '—';
-          const list = groups.get(organizationId);
-          if (list) list.push(action);
-          else groups.set(organizationId, [action]);
-        }
         return (
           <div key={id} className={`${styles.group} ${styles.spaced}`}>
             <div>
@@ -402,35 +380,7 @@ export function PlansPanel() {
               <div className={styles.actionGroups}>
                 <h3>Combate ao fogo</h3>
                 <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
-                <h3>Todas as ações ({open.actions.length}), por organização</h3>
-                {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
-                  <div key={organizationId} className={styles.actionGroup}>
-                    <div className={styles.orgHead} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={24} inline />
-                      <b>{orgName(organizationId)}</b>
-                      <small className="note" style={{ marginLeft: 'auto' }}>{actions.length} ação(ões)</small>
-                    </div>
-                    {actions.map((a) => (
-                      <Row key={a.id}>
-                        <span className={styles.actionText}>
-                          <b>{a.title}</b>
-                          {a.rationale ? <small className={styles.rationale}>{a.rationale}</small> : null}
-                          <small className="note">
-                            {a.type} · {orgName(a.organizationId ?? organizationId)}
-                            {a.supportingOrganizationIds?.length ? ` · apoia: ${a.supportingOrganizationIds.map(orgName).join(', ')}` : ''}
-                          </small>
-                        </span>
-                        <span className={styles.actionTags}>
-                          <Tag kind={a.priority === 'critical' ? 'bad' : 'ok'}>{a.priority ?? 'normal'}</Tag>
-                          <Tag kind={a.status === 'completed' ? 'ok' : a.status === 'blocked' ? 'bad' : 'warn'}>
-                            {ACTION_STATUS_LABEL[a.status ?? 'planned'] ?? a.status ?? 'planeada'}
-                          </Tag>
-                        </span>
-                      </Row>
-                    ))}
-                  </div>
-                ))}
-                {open.actions.length > ACTIONS_SHOWN ? <small className="note">… e mais {open.actions.length - ACTIONS_SHOWN} ações (a razão de cada uma está na dica ao passar o rato).</small> : null}
+                <PlanActionsNow plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
               </div>
             ) : null}
           </div>

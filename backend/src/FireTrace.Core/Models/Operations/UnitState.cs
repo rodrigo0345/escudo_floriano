@@ -20,4 +20,5 @@ public sealed record UnitState(
     int? Personnel = null,
     WaterStatus? Water = null,
     CrewStatus? Crew = null,
-    AerialStatus? Aerial = null);
+    AerialStatus? Aerial = null,
+    FuelStatus? Fuel = null);

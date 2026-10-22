@@ -103,8 +103,15 @@ services:
       AGENTS_AT_MINUTE: "${AGENTS_AT_MINUTE:-0}"
       AGENTS_BUILDING_ZONES: "${AGENTS_BUILDING_ZONES:-0}"
       AGENTS_NAME: "${AGENTS_NAME:-firetrace-agents}"   # who claims the operator's plan requests (shown in the Planos tab)
+      # The LLM commander (agents/firetrace_agents/llm): `llm` makes one more candidate plan that the engine judges against the rules'. Off unless asked for; with no key
+      # or a model the account cannot use, the service starts anyway and the rules decide. Every call is logged (brief, answer, tokens) under data/agents-logs.
+      AGENTS_COMMANDER: "${AGENTS_COMMANDER:-rules}"
+      AGENTS_LLM_MODEL: "${AGENTS_LLM_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      AGENTS_LLM_LOG_DIR: "${AGENTS_LLM_LOG_DIR:-/app/logs}"
     volumes:
       - ./api-spec:/app/api-spec:ro
+      - ./data/agents-logs:/app/logs
     depends_on:
       backend:
         condition: service_healthy

@@ -48,6 +48,41 @@ class NotReady(Exception):
     """A polled resource is not done yet (simulation still queued/running)."""
 
 
+MAX_429_WAIT_SECONDS = 90.0  # how long one request keeps being retried while the server says "slow down"
+MAX_429_PAUSE_SECONDS = 10.0
+
+
+class _PatientClient(httpx.Client):
+    """An ``httpx.Client`` for which HTTP 429 means "wait", not "failed".
+
+    The backend's rate limiters answer 429 with ``Retry-After``: a burst of routing calls, or more plans in flight than it takes at once, is a reason to
+    pause, not to give up a whole plan request (one rejected progress ``PATCH`` used to fail the request). Every verb goes through ``send``, so the
+    call sites need no retry code of their own; any other status is returned untouched.
+    """
+
+    def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        waited, attempt = 0.0, 0
+        while True:
+            response = super().send(request, **kwargs)
+            if response.status_code != 429:
+                return response
+            pause = self._pause(response, attempt)
+            if waited + pause > MAX_429_WAIT_SECONDS:
+                return response  # still limited after a long wait: the caller sees the 429 as before
+            log.warning("%s %s: HTTP 429, retrying in %.1f s", request.method, request.url.path, pause)
+            response.close()
+            time.sleep(pause)
+            waited, attempt = waited + pause, attempt + 1
+
+    @staticmethod
+    def _pause(response: httpx.Response, attempt: int) -> float:
+        try:
+            asked = float(response.headers.get("retry-after", ""))
+        except ValueError:
+            asked = 0.0
+        return min(MAX_429_PAUSE_SECONDS, max(asked, 0.25 * 2**attempt))
+
+
 class FiretraceClient:
     def __init__(
         self,
@@ -63,7 +98,7 @@ class FiretraceClient:
             kwargs["transport"] = transport
         # precedence: explicit argument > FIRETRACE_BASE_URL env > localhost:8080
         resolved = base_url or os.environ.get("FIRETRACE_BASE_URL") or DEFAULT_BASE_URL
-        self._http = httpx.Client(base_url=resolved, **kwargs)
+        self._http = _PatientClient(base_url=resolved, **kwargs)
 
     # -- helpers ---------------------------------------------------------------
     def close(self) -> None:
@@ -101,9 +136,10 @@ class FiretraceClient:
 
         A failed or cancelled simulation is *returned*, not raised: the caller branches on ``status``
         (``error.code`` / ``error.message`` explain a failure) and the planning service keeps running.
-        Only a timeout raises :class:`NotReady`.
+        Only a timeout raises :class:`NotReady`. The first polls come quickly (a what-if is often done in a second) and back off to ``poll_seconds``.
         """
         deadline = time.monotonic() + timeout_seconds
+        pause = min(0.25, poll_seconds)
         while time.monotonic() < deadline:
             simulation = self.get_simulation(simulation_id)
             status = simulation.get("status")
@@ -113,7 +149,8 @@ class FiretraceClient:
                 error = simulation.get("error") or {}
                 log.warning("simulation %s is %s: [%s] %s", simulation_id, status, error.get("code", "-"), error.get("title") or error.get("message", ""))
                 return simulation
-            time.sleep(poll_seconds)
+            time.sleep(pause)
+            pause = min(poll_seconds, pause * 1.5)
         raise NotReady(f"simulation {simulation_id} not done within {timeout_seconds:.0f}s")
 
     def get_threatened(self, simulation_id: str, *, horizon_minutes: int = 60, t_min: int | None = None) -> dict[str, Any]:
@@ -214,12 +251,28 @@ class FiretraceClient:
         """``GET /locations/{id}/facilities``: schools, shelters, hospitals, stations... (``id``, ``name``, ``kind``, ``position``, ``vulnerable``)."""
         return list(self._request("GET", self._fill("/locations/{locationId}/facilities", locationId=location_id), params={"limit": 2000}).get("items", []))
 
-    def water_points_near(self, location_id: str, lat: float, lon: float, *, helicopter_only: bool = False, limit: int = 1) -> list[dict[str, Any]]:
-        """``GET /locations/{id}/water-points/near``: the nearest water points (``point``, ``distanceM``), only those a helicopter can dip into with ``helicopter_only``."""
+    def water_points_near(
+        self, location_id: str, lat: float, lon: float, *, helicopter_only: bool = False, truck_only: bool = False, limit: int = 1,
+        radius_m: float | None = None, route_from: dict[str, float] | None = None, kinds: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """``GET /locations/{id}/water-points/near``: the nearest water points (``point``, ``distanceM``), only those a helicopter can dip into with ``helicopter_only``
+        or a tanker can reach with ``truck_only``. With ``route_from`` (a ``LatLon``) each also carries ``driveMinutes``, the time by road from there."""
         params: dict[str, Any] = {"lat": lat, "lon": lon, "limit": limit}
         if helicopter_only:
             params["helicopterOnly"] = "true"
+        if truck_only:
+            params["truckOnly"] = "true"
+        if radius_m is not None:
+            params["radiusM"] = radius_m
+        if route_from is not None:
+            params["routeFrom"] = f"{route_from['lat']},{route_from['lon']}"
+        if kinds:
+            params["kind"] = ",".join(kinds)
         return list(self._request("GET", self._fill("/locations/{locationId}/water-points/near", locationId=location_id), params=params).get("items", []))
+
+    def terrain_at(self, location_id: str, lat: float, lon: float) -> dict[str, Any]:
+        """``GET /locations/{id}/terrain-at``: what is known of a point: elevation, slope and aspect (degrees), vegetation, buildings, the nearest road, water and place."""
+        return self._request("GET", self._fill("/locations/{locationId}/terrain-at", locationId=location_id), params={"lat": lat, "lon": lon})
 
     def patch_plan(self, plan_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         """``PATCH /plans/{id}`` with ``application/merge-patch+json``: only the fields sent change (``actions`` is replaced as a whole)."""
@@ -317,11 +370,18 @@ class FiretraceClient:
             validate_against_spec("PlanInput", plan_input)
         return self._request("POST", "/plans/validate", json_body=plan_input)
 
-    def simulate_plan(self, plan_id: str, *, baseline_simulation_id: str | None = None, wait_seconds: int | None = 60) -> dict[str, Any]:
-        """``POST /plans/{id}/simulate`` — the what-if run of a published plan."""
+    def simulate_plan(
+        self, plan_id: str, *, baseline_simulation_id: str | None = None, wait_seconds: int | None = 60, engine: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``POST /plans/{id}/simulate`` — the what-if run of a published plan.
+
+        ``engine`` replaces the baseline's engine options for this run as a whole (``PlanSimulationRequest.engine``): pass the baseline's own, changed only where intended.
+        """
         body: dict[str, Any] = {"label": f"what-if {plan_id}"}
         if baseline_simulation_id:
             body["baselineSimulationId"] = baseline_simulation_id
+        if engine is not None:
+            body["engine"] = engine
         response = self._http.post(
             self._fill("/plans/{planId}/simulate", planId=plan_id),
             json=body,

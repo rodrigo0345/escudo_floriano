@@ -51,6 +51,9 @@ backend does not count evacuations), roads closed and left open for lack of a pa
 | `fuelbreak.py` | Squads that are not on the fire's outline clear a fuel strip ahead of the fire (`fuel_removal`), only where they can get there, finish (15 m/h per person, the backend's rate) and be gone 20 min before the fire arrives. The engine applies a strip from minute 0, so this feasibility check is the plan's only realism guard. |
 | `adaptation.py` | **Re-planning along the fire.** Every `AGENTS_REPLAN_MINUTES` (45) the agents read the plan's what-if run: if the fire is not under control they decide again with the units that are free (the reserve, those waiting at a staging point, those whose work ended, those still on the road) on the fire as the plan left it; a wave is kept only if the engine says it helps and keeps zero casualties, first trying to attack the fire, then to defend what is in its way. |
 | `campaign.py` | The rolling-horizon loop: forecast → plan → choose → execute → next state, with a **chained control** (same chain, no response). |
+| `terrain.py` | **The ground where a crew works.** The backend slows a *road trip* on a slope but not a *crew* on one, so the agents do: a crew's effect is scaled by its slope, fuel (eucalyptus is not grass), whether the fire is running up the slope at it, and for an engine how far it is from a road; the plan says why in `safetyNotes`. Sectors are ranked by workability as well as danger, and an engine's refill trip is the real drive to water (`GET /locations/{id}/water-points/near?routeFrom`), not the backend's generic 12+4 min. Every number is an assumption to calibrate with the corporations, marked in the file. Switches: `AGENTS_TERRAIN`, `AGENTS_REAL_REFILL`. |
+| `advisor.py` | The contract of an **advisor** (an LLM commander): at five places it is shown the options the rules have worked out (each with an id and the facts a commander wants) and chooses among them. It never writes ids, coordinates or action JSON; a choice that names something it was not shown, or breaks a rule, is discarded and the rules decide. No LLM in this module: contract, briefs and validators are plain Python. |
+| `llm/` | **The LLM commander** (optional, `pip install .[llm]`): a LangGraph with one agent per organization (Bombeiros, Proteção Civil, GNR, INEM) and a commander's review, through `ChatOpenAI`. Doctrine and instructions in `prompts.py` (to be reviewed by the corporations), answer schemas in `schemas.py`, hard rules in `checks.py`. |
 
 ## Scripts (`scripts/`), run from the repo root
 
@@ -129,7 +132,7 @@ re-plan a crew that has finished a job leaves from where it is (`RouteRequest.fr
   in these scenarios there is no real trade-off between them: the crews taken out were redundant. A genuine second axis (robustness to a wrong forecast, or the number of units committed) is still to do.
   The agent also sets `expectedDurationMinutes` from the crew's real stay: without it the backend counts casualties over a 30 min default window instead.
 * **Units that cannot reach the fire are not dropped**: they go as near as the routing says is safe (800 m, then 1.6, 3.2, 6.4 km out) and wait there (`stage_resources`, one per organization).
-  In São Bento that is 38 units that used to disappear. Building a pair of plans takes about 2.5 min per baseline (a candidate plan is published, simulated and deleted for each judgement).
+  In São Bento that is 38 units that used to disappear. A pair of plans takes about 20-80 s per baseline (see *Speed* below; it was 2.5-7 min): a candidate plan is published, simulated and deleted for each judgement.
 * **GNR closures have no effect on the fire** (the backend uses closures for routing and road status, not for the spread). Every road the fire cuts until the end of the simulation is closed (at most 60 closures, the most urgent first; a road is shut *before* the fire reaches it, by the action's trigger). A road is cut into closures of at most 1500 m whose
   segments the fire cuts within 30 min of each other (`MAX_CLOSURE_M`, `MAX_CUT_SPREAD_MIN`), and the map draws them (orange: emergency vehicles pass, red: nobody) with the
   control points. Known rough edges: the intensity that decides whether emergency vehicles may cross is the fire's maximum at that minute (the contract has no intensity per
@@ -148,6 +151,38 @@ re-plan a crew that has finished a job leaves from where it is (`RouteRequest.fr
   target it can read, so fire-attack actions carry `line` / `anchorPoint`. `--no-travel` restores the old assumption, but those plans are then rejected by the backend when a unit cannot get there.
 * `fuel_removal` (the only tool that truly blocks the fire) is disabled: the spec and the backend disagree on its shape.
 
+## Speed
+
+A plan pair used to take 2.5-7 minutes (and failed outright when the backend answered HTTP 429). Measured on the same baselines, with **identical plans** (every action, effect, resource and route, and the summaries, compared with the ones the slow version published):
+
+| baseline | before | now |
+|---|---|---|
+| Penha (T+0, 34 units) | ~415 s | **21 s** |
+| Falperra heavy case | 136 s | **42 s** |
+
+What changed:
+
+* **Backend** (`PlanValidator`, `SmokePlume`, `FireResults`, `RoadGraph`...): publishing a plan went from 10-49 s to ~0.3 s. The smoke check scanned the whole grid for 121 past minutes for every action; the plan was validated twice on every publish; every stored route was re-checked against the road network; route costs were recomputed per vehicle. All are memoizations or hoistings that return exactly what they returned (the golden outputs of every results endpoint are byte-identical, and there are oracle tests for the rewritten arithmetic).
+* **Limits**: the `planning` endpoints allow 6 at a time (was 1, with 5 queued), plan requests have their own light limiter, and the per-IP window is 6000/min (was 300). All are keys in `appsettings.json`.
+* **Agents**: a 429 is waited out with `Retry-After` instead of failing the request; the judge remembers what it has already asked the engine (a plan is identified by a hash of its actions), runs A and B at the same time, and asks the engine for the central member only on the two wrong-wind runs (same casualties and area, checked on published plans; the forecast run keeps its ensemble because the next decision reads its probabilities). The contract check follows the spec's `discriminator`, so each action is checked against its own schema instead of all fifteen (8.5 s -> 0.4 s for a 33-action plan). `AGENTS_JUDGE_CENTRAL_ONLY=0` turns the central-only saving off.
+* The backend logs where the time of each publish goes (`plano criado: ... rotas x ms, validação y ms`), and which limiter rejected each 429.
+
+## The LLM commander
+
+`AGENTS_COMMANDER=llm` (with `OPENAI_API_KEY` and `AGENTS_LLM_MODEL`; the account may be allowed only some models, and a refused one is detected at start) adds **one more candidate plan**: the first rules candidate with the commander's choices where it has them. The engine judges both exactly the same way and the better ships; a tie goes to the commander, because the engine measures what burns, not what a closure, a shelter or an ambulance spot is worth.
+
+| agent | decides | among |
+|---|---|---|
+| Bombeiros | which sector each unit works | the stretches of the fire front, each with slope, fuel, fire-runs-uphill, road distance and workability |
+| Proteção Civil | the order of the evacuations and the shelter of each | the places at risk; the shelters far enough and not reached by the fire |
+| GNR | which closures are enforced and in what order the patrols are committed | the roads the fire cuts |
+| INEM | where the ambulances wait and how many | the safe distances behind the crews |
+| Comando | a note to the operator: what the plan does and what to confirm on the ground | the finished plan |
+
+Safety is structural, not a matter of trusting the model: it answers with ids it was shown; an id it was not shown, or a rule it breaks (a crew on foot sent up a 25°+ slope the fire is running up, an evacuation order that puts a place the fire reaches 20 min sooner behind a later one), sends the answer back with what was wrong (twice), and what still breaks a rule is dropped item by item. A model error, a timeout, no key or a model the account cannot use means the rules decide that point (or the whole plan): the service always starts and always plans. The plan says what the commander decided and how the engine judged it against the rules (`summary` and `metadata["agents.llm"]`: model, calls, tokens, seconds, what was applied and discarded); every call is also logged as JSON lines (brief, answer, tokens) under `data/agents-logs` for audit. The re-plans along the fire (`adaptation.py`) and the operator's revisions use the rules only.
+
+The doctrine in `llm/prompts.py` is a written-down starting point (LACES, uphill fire, direct attack vs containment, refill cycle, vulnerable first, patrols at both ends of a closure): **to be validated with the corporations**, like the assumptions in `terrain.py`, `life.py` and `capacity.py`. A model that accepts only its default temperature is fine (nothing is sent unless `AGENTS_LLM_TEMPERATURE` is set), so answers are not reproducible run to run: the judge, not the model, decides what ships.
+
 ## Open proposals for the spec / backend (not applied: they belong to those verticals)
 
 Each was found by running the agents against the live backend; the evidence is in the limits above.
@@ -160,6 +195,9 @@ Each was found by running the agents against the live backend; the evidence is i
 5. **`RoadCutsCache` key** is only the simulation id: after the road network is ingested, cached cuts have 0 edges and `/threatened` answers 500 until a restart. Key it by network version.
 6. **Exact continuation**: `initialFire` from an outline restarts the fire and ends ~9% larger. A "resume from simulation X at minute T" would remove the error.
 7. Nice to have: facilities such as camp sites report no `population`; the seeder creates no helicopters and no evacuation transport.
+8. **A crew on a steep slope is not slower in the engine**: `crew_deployment` strength is `f(people, water)` only (slope slows road trips, not crews). The agents scale `effectiveness` themselves (`terrain.py`); the engine should know the slope and fuel under a crew.
+9. **`CrewWorkSchedule` refills with a fixed 12+4 min shuttle**: the agents use the real drive to the nearest water point in their plans, so the unit tracks on the map (the backend's) show a shorter refill than the plan assumed.
+10. **Aerial wind and visibility limits** (`Rules.aerial.limits.maxWindKmh`, `minVisibilityM`) are published but enforced by nobody; evacuations, closures and standby spots have no effect in the engine, so it cannot judge them.
 
 ## Tests
 
@@ -168,6 +206,7 @@ Each was found by running the agents against the live backend; the evidence is i
 ```
 
 The suite is contract and logic testing against `httpx.MockTransport` (no live backend); the scripts above are the live checks.
+The LLM commander's tests (`tests/test_llm_graph.py`) run against a scripted stand-in for the model (no network, no key) and are skipped unless the extra is installed: `pip install -e "agents[test,llm]"`.
 
 ## Adding an agent kind
 

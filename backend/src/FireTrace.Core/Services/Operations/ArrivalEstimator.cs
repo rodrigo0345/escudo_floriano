@@ -69,7 +69,37 @@ public sealed class ArrivalEstimator(RoutingService routing, IMapReader map, IDo
     /// </summary>
     public async Task<ValidationIssue?> CheckRouteAsync(LineString route, string locationId, string pointer, CancellationToken ct)
     {
-        var index = queries.IndexOf(await map.GetRoadsAsync(locationId, ct));
+        var network = await map.GetRoadsAsync(locationId, ct);
+        // o resultado só depende da rota e da rede: os planos de um mesmo pedido repetem as mesmas rotas (mesmo meio, mesmo alvo) e cada uma custava dezenas de milhares de
+        // consultas ao índice espacial; guarda-se por rede (outra rede, outras estradas) e pelo conteúdo da rota
+        var known = _routeChecks.GetOrCreateValue(network);
+        string key = RouteKey(route);
+        if (!known.TryGetValue(key, out var message))
+        {
+            message = OffNetworkMessage(queries.IndexOf(network), route);
+            if (known.Count < MaxRememberedRoutes) known[key] = message;
+        }
+        return message is null ? null : new("error", "route_off_network", message, pointer);
+    }
+
+    const int MaxRememberedRoutes = 20_000;
+    readonly System.Runtime.CompilerServices.ConditionalWeakTable<RoadNetwork, System.Collections.Concurrent.ConcurrentDictionary<string, string?>> _routeChecks = new();
+
+    static string RouteKey(LineString route)
+    {
+        var c = route.Coordinates;
+        var bytes = new byte[c.Length * 16];
+        for (int i = 0; i < c.Length; i++)
+        {
+            BitConverter.TryWriteBytes(bytes.AsSpan(i * 16, 8), c[i].X);
+            BitConverter.TryWriteBytes(bytes.AsSpan(i * 16 + 8, 8), c[i].Y);
+        }
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+    }
+
+    /// <summary>Nulo se a rota anda na rede; senão, onde sai dela.</summary>
+    string? OffNetworkMessage(RoadIndex index, LineString route)
+    {
         var c = route.Coordinates;
         for (int i = 0; i < c.Length; i++)
         {
@@ -79,7 +109,7 @@ public sealed class ArrivalEstimator(RoutingService routing, IMapReader map, IDo
             {
                 var p = i == 0 ? c[0] : new Coordinate(c[i - 1].X + (c[i].X - c[i - 1].X) * k / steps, c[i - 1].Y + (c[i].Y - c[i - 1].Y) * k / steps);
                 if (index.Nearest(p.Y, p.X, settings.RouteToleranceM) is null)
-                    return new("error", "route_off_network", $"A rota sai da rede viária perto de {p.Y:F5}, {p.X:F5} (a mais de {settings.RouteToleranceM:F0} m de qualquer estrada): as viaturas só andam por estrada.", pointer);
+                    return $"A rota sai da rede viária perto de {p.Y:F5}, {p.X:F5} (a mais de {settings.RouteToleranceM:F0} m de qualquer estrada): as viaturas só andam por estrada.";
             }
         }
         return null;

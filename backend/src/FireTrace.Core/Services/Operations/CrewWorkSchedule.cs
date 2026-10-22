@@ -3,7 +3,7 @@ using FireTrace.Core.Domain.Rules;
 namespace FireTrace.Core.Services.Operations;
 
 /// <summary>
-/// Quando é que uma equipa está mesmo a combater: com água para `water / (bomba × dutyCycle)` minutos e depois a ir reabastecer (`shuttle + setup`), a cansar-se
+/// Quando é que uma equipa está mesmo a combater: com água para `water / (min(bomba, attackFlowLpm) × dutyCycle)` minutos e depois a ir reabastecer (`shuttle + setup`), a cansar-se
 /// (`fatiguePctPerHour`, até à eficácia mínima) e a ter de descansar depois de `maxContinuousWorkMinutes`. Uma viatura sem água (ou sem bomba) trabalha sem pausas de reabastecimento.
 /// </summary>
 public static class CrewWorkSchedule
@@ -15,7 +15,8 @@ public static class CrewWorkSchedule
     {
         double duty = rules.Water.DutyCycle, gap = rules.Water.Refill.ShuttleMinutes + rules.Water.Refill.SetupMinutes;
         double floor = rules.Crews.MinimumEffectivenessPct / 100;
-        double perFill = waterL > 0 && pumpLpm > 0 && duty > 0 ? waterL / (pumpLpm * duty) : double.PositiveInfinity;
+        double lpm = rules.Water.WorkingLpm(pumpLpm);
+        double perFill = waterL > 0 && lpm > 0 && duty > 0 ? waterL / lpm : double.PositiveInfinity;
         var segments = new List<Segment>();
         double t = arrival, worked = 0;
         while (t < until - 1e-9)

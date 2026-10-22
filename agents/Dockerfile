@@ -8,7 +8,8 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY firetrace_agents ./firetrace_agents
-RUN pip install --no-cache-dir .
+# the [llm] extra is the LLM commander (LangChain + LangGraph); the service only uses it when AGENTS_COMMANDER=llm, and runs on the rules if the key or model is missing
+RUN pip install --no-cache-dir ".[llm]"
 ENV PYTHONUNBUFFERED=1 \
     FIRETRACE_BASE_URL=http://backend:8080/api/v1 \
     FIRETRACE_SPEC=/app/api-spec/openapi.json

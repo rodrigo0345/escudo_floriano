@@ -70,22 +70,33 @@ class SupportAgents:
         return self.clock is None or self.clock.safe(float(point["lat"]), float(point["lon"]), 0, self.run_minutes)
 
     # -- INEM -------------------------------------------------------------------------
-    def medical_standby(self, crew_sites: list[dict[str, float]], head_bearing: float, decided_at: float) -> SupportPlan:
+    def standby_options(self, crew_sites: list[dict[str, float]], head_bearing: float) -> tuple[dict[str, float] | None, list[tuple[float, dict[str, float]]]]:
+        """Where the ambulances could wait: the middle of the crews and, behind them (away from the fire's heading), each distance in ``STANDBY_BACK_M`` whose spot the
+        fire never reaches during the run, nearest first. The rules take the first; a commander may weigh them (``advisor.py``)."""
+        if not crew_sites:
+            return None, []
+        middle = {"lat": sum(p["lat"] for p in crew_sites) / len(crew_sites), "lon": sum(p["lon"] for p in crew_sites) / len(crew_sites)}
+        back = (head_bearing + 180.0) % 360.0
+        options = [(d, {"lat": lat, "lon": lon}) for d in STANDBY_BACK_M for lat, lon in [destination(middle["lat"], middle["lon"], back, d)] if self._safe_all_run({"lat": lat, "lon": lon})]
+        return middle, options
+
+    def medical_standby(self, crew_sites: list[dict[str, float]], head_bearing: float, decided_at: float, choice: dict[str, Any] | None = None) -> SupportPlan:
+        """Two ambulances behind the crews, at the nearest safe distance; ``choice`` (``{"backM", "ambulances"}``, one of the offered options) is a commander's pick instead."""
         out = SupportPlan(ambulances_left=list(self.ambulances))
         if not crew_sites or not self.ambulances:
             return out
-        middle = {"lat": sum(p["lat"] for p in crew_sites) / len(crew_sites), "lon": sum(p["lon"] for p in crew_sites) / len(crew_sites)}
-        back = (head_bearing + 180.0) % 360.0
-        spot = next((
-            {"lat": lat, "lon": lon} for d in STANDBY_BACK_M for lat, lon in [destination(middle["lat"], middle["lon"], back, d)] if self._safe_all_run({"lat": lat, "lon": lon})
-        ), None)
+        middle, options = self.standby_options(crew_sites, head_bearing)
+        assert middle is not None
+        picked = next((spot for d, spot in options if choice and abs(d - float(choice["backM"])) < 1.0), None)
+        spot = picked if picked is not None else (options[0][1] if options else None)
         if spot is None:
             out.issues.append("INEM: no spot behind the crews the fire never reaches; no medical standby")
             return out
+        wanted = int(choice["ambulances"]) if choice and picked is not None else STANDBY_AMBULANCES
         ranked = sorted(self.ambulances, key=lambda v: self._distance_from_station(v, spot))
         resources: list[dict[str, Any]] = []
         for vehicle in ranked:
-            if len(resources) >= STANDBY_AMBULANCES:
+            if len(resources) >= wanted:
                 break
             travel = self.route(vehicle, spot)
             if travel is not None and not travel.reachable:
@@ -146,8 +157,11 @@ class SupportAgents:
             "commandOrganizationId": self.civil_org,
         }
 
-    def shelter_for(self, place: dict[str, float], ready_by: float) -> dict[str, Any] | None:
-        """The nearest shelter (school, town hall...) that is not next door and that the fire does not reach until long after ``ready_by``."""
+    def shelter_options(self, place: dict[str, float], ready_by: float) -> list[tuple[dict[str, Any], float, float | None]]:
+        """The shelters (school, town hall...) a population can go to from ``place``: not next door, and not reached by the fire until long after ``ready_by``.
+
+        ``(facility, metres away, minute the fire reaches it or None)``, in the rules' order: real shelters before schools and town halls, then nearest first.
+        """
         candidates = []
         for facility in self.facilities:
             position = facility.get("position")
@@ -157,11 +171,45 @@ class SupportAgents:
             reached = self.clock.reached(float(position["lat"]), float(position["lon"])) if self.clock else None
             if away < MIN_SHELTER_DISTANCE_M or (reached is not None and reached < ready_by + SHELTER_SAFE_AFTER_MIN):
                 continue
-            candidates.append((0 if facility.get("kind") == "shelter" else 1, away, facility))
-        return min(candidates, key=lambda c: (c[0], c[1]))[2] if candidates else None
+            candidates.append((0 if facility.get("kind") == "shelter" else 1, away, facility, reached))
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        return [(facility, away, reached) for _rank, away, facility, reached in candidates]
 
-    def enrich_evacuations(self, plan: dict[str, Any], people: dict[str, tuple[int, bool, str]], ambulances: list[dict[str, Any]]) -> list[str]:
-        """Shelter, route, people and transport for every evacuation of ``plan`` (in place). ``people`` maps a place id to (people, vulnerable, kind)."""
+    def shelter_for(self, place: dict[str, float], ready_by: float, prefer: str | None = None) -> dict[str, Any] | None:
+        """The nearest shelter (school, town hall...) that is not next door and that the fire does not reach until long after ``ready_by``; ``prefer`` (a facility id
+        among the options) is a commander's pick instead."""
+        options = self.shelter_options(place, ready_by)
+        if prefer is not None:
+            chosen = next((f for f, _a, _r in options if str(f["id"]) == prefer), None)
+            if chosen is not None:
+                return chosen
+        return options[0][0] if options else None
+
+    def evacuation_choices(self, plan: dict[str, Any], people: dict[str, tuple[int, bool, str]]) -> list[dict[str, Any]]:
+        """Per evacuation of ``plan``, the place's facts and the shelters it can go to (for a commander to choose among): what ``enrich_evacuations`` will use."""
+        out: list[dict[str, Any]] = []
+        for action in plan["actions"]:
+            if action.get("type") != "evacuation":
+                continue
+            place = _centre(action.get("area"))
+            if place is None:
+                continue
+            ids = [str(i) for i in action.get("placeIds") or []]
+            count, vulnerable, _kind = next((people[i] for i in ids if i in people), (0, False, ""))
+            ready_by = float((action.get("completeBy") or {}).get("offsetMinutes") or 60)
+            options = self.shelter_options(place, ready_by)
+            if len(options) < 2:
+                continue  # nothing to choose between
+            out.append({
+                "placeId": ids[0] if ids else str(action.get("id")), "placeIds": ids, "name": action.get("title"), "people": int(count), "vulnerable": bool(vulnerable),
+                "options": [{"id": str(f["id"]), "name": str(f.get("name") or "Abrigo"), "kind": f.get("kind"), "distanceKm": round(away / 1000, 1),
+                             "fireReachesMin": None if reached is None else round(reached)} for f, away, reached in options[:6]],
+            })
+        return out
+
+    def enrich_evacuations(self, plan: dict[str, Any], people: dict[str, tuple[int, bool, str]], ambulances: list[dict[str, Any]], shelters: dict[str, str] | None = None) -> list[str]:
+        """Shelter, route, people and transport for every evacuation of ``plan`` (in place). ``people`` maps a place id to (people, vulnerable, kind); ``shelters`` is
+        a commander's choice of shelter per place id (a facility id among the options), used when it is one of them."""
         issues: list[str] = []
         free = list(ambulances)
         for action in plan["actions"]:
@@ -173,7 +221,7 @@ class SupportAgents:
             ids = [str(i) for i in action.get("placeIds") or []]
             count, vulnerable, kind = next((people[i] for i in ids if i in people), (0, False, ""))
             ready_by = float((action.get("completeBy") or {}).get("offsetMinutes") or 60)
-            shelter = self.shelter_for(place, ready_by)
+            shelter = self.shelter_for(place, ready_by, next((shelters[i] for i in ids if shelters and i in shelters), None))
             action.setdefault("supportingOrganizationIds", [])
             if self.civil_org not in action["supportingOrganizationIds"]:
                 action["supportingOrganizationIds"].append(self.civil_org)

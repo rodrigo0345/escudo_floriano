@@ -10,16 +10,26 @@ The three what-if runs are asked for together (a plan is published, simulated an
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import logging
+import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .alternatives import SAFETY_ROUNDS, WIND_ERROR_DEG, Evaluation, evaluate, withdraw
+from .alternatives import SAFETY_ROUNDS, WIND_ERROR_DEG, Evaluation, central_engine, evaluate, withdraw
 from .campaign import scenario_at
 from .client import FiretraceClient
 
 log = logging.getLogger("firetrace.judge")
+
+
+def plan_fingerprint(plan: dict[str, Any]) -> str:
+    """A hash of everything about a plan that changes what the engine does with it (its actions, where and on what basis), not of its prose."""
+    relevant = {"locationId": plan.get("locationId"), "basis": plan.get("basis"), "actions": plan.get("actions")}
+    return hashlib.sha256(json.dumps(relevant, sort_keys=True, default=str).encode()).hexdigest()
 
 
 @dataclass
@@ -52,26 +62,57 @@ class Verdict:
 class Judge:
     """Judges plans of one baseline. The no-response runs on the shifted winds are made once and reused for every plan."""
 
-    def __init__(self, client: FiretraceClient, baseline_id: str, snapshot: dict[str, Any]) -> None:
+    def __init__(self, client: FiretraceClient, baseline_id: str, snapshot: dict[str, Any], *, central_only: bool | None = None) -> None:
         self.client, self.baseline_id, self.snapshot = client, baseline_id, snapshot
         self._idle: dict[float, tuple[str, float]] = {}  # shift → (baseline simulation id, burned ha with no response)
+        self._idle_lock = threading.Lock()
+        self._evaluations: dict[tuple[str, str, bool], Evaluation] = {}  # (baseline, plan fingerprint, central only) → what the engine said
+        self._evaluations_lock = threading.Lock()
+        # The wrong-wind runs only give casualties and burned area, which the central run alone gives identically; the forecast run feeds the next decision
+        # (its ensemble probabilities) and always keeps the whole ensemble. ``AGENTS_JUDGE_CENTRAL_ONLY=0`` turns the saving off.
+        if central_only is None:
+            central_only = os.environ.get("AGENTS_JUDGE_CENTRAL_ONLY", "1") not in {"0", "false", "no"}
+        self._central: dict[str, Any] | None = central_engine(snapshot) if central_only else None
 
     def _idle_run(self, shift: float) -> tuple[str, float]:
-        if shift not in self._idle:
-            total = int(self.snapshot["durationMinutes"])
-            label = f"[lab] sem resposta {shift:+.0f}°"
-            idle = self.client.run_scenario(scenario_at(self.snapshot, 0, total, perimeter=None, interventions=[], name=label, wind_shift_deg=shift), label=label)
-            self._idle[shift] = (str(idle["id"]), float((idle.get("stats") or {}).get("burnedHa") or 0.0))
-        return self._idle[shift]
+        with self._idle_lock:  # two plans judged at once need the same two runs: made once
+            if shift not in self._idle:
+                total = int(self.snapshot["durationMinutes"])
+                label = f"[lab] sem resposta {shift:+.0f}°"
+                scenario = scenario_at(self.snapshot, 0, total, perimeter=None, interventions=[], name=label, wind_shift_deg=shift)
+                if self._central is not None:
+                    scenario["engine"] = copy.deepcopy(self._central)
+                idle = self.client.run_scenario(scenario, label=label)
+                self._idle[shift] = (str(idle["id"]), float((idle.get("stats") or {}).get("burnedHa") or 0.0))
+            return self._idle[shift]
+
+    def _evaluate(self, plan: dict[str, Any], baseline_id: str, *, wrong_wind: bool) -> Evaluation | None:
+        """``evaluate`` with a memory: a plan the engine has already judged on this baseline is not published, simulated and deleted again.
+
+        The same plan is judged several times (the forecast inside every full verdict, a wave's candidate after the cheap look at it); only a change to its actions
+        changes the answer, and the engine is deterministic.
+        """
+        key = (baseline_id, plan_fingerprint(plan), wrong_wind)
+        with self._evaluations_lock:
+            hit = self._evaluations.get(key)
+        if hit is not None:
+            return replace(hit)  # a copy: callers fill in fields (units, fire...) on what they get
+        result = evaluate(self.client, copy.deepcopy(plan), baseline_id, self._central if wrong_wind else None)
+        if result is not None:
+            with self._evaluations_lock:
+                self._evaluations[key] = result
+            return replace(result)
+        return None
 
     def verdict(self, plan: dict[str, Any], *, wrong_wind: bool = True) -> Verdict | None:
         """Forecast and wrong-wind what-ifs of ``plan`` together (the forecast alone with ``wrong_wind=False``, a third of the cost); ``None`` if the forecast one did not succeed."""
         shifts = (-WIND_ERROR_DEG, WIND_ERROR_DEG) if wrong_wind else ()
-        with ThreadPoolExecutor(max_workers=1 + len(shifts)) as pool:
-            idle = list(pool.map(self._idle_run, shifts))  # no-ops once made
-            futures = [pool.submit(evaluate, self.client, copy.deepcopy(plan), self.baseline_id)]
-            futures += [pool.submit(evaluate, self.client, copy.deepcopy(plan), base_id) for base_id, _ha in idle]
-            results = [f.result() for f in futures]
+        with ThreadPoolExecutor(max_workers=2 + 2 * len(shifts)) as pool:
+            idle_futures = [pool.submit(self._idle_run, shift) for shift in shifts]  # no-ops once made
+            forecast_future = pool.submit(self._evaluate, plan, self.baseline_id, wrong_wind=False)  # does not wait for the shifted baselines
+            idle = [f.result() for f in idle_futures]
+            wrong_futures = [pool.submit(self._evaluate, plan, base_id, wrong_wind=True) for base_id, _ha in idle]
+            results = [forecast_future.result(), *(f.result() for f in wrong_futures)]
         forecast, wrong = results[0], [r for r in results[1:] if r is not None]
         if forecast is None:
             return None

@@ -40,9 +40,10 @@ public sealed class CrewSafety(IDocumentStore<Vehicle> vehicles, TargetResolver 
 
                 double eta = r.EtaMinutes ?? 0;
                 int first = -1, minutes = 0; LatLon? where = null;
+                var path = RoutePath.Of(r.Route);
                 for (int m = (int)Math.Floor(start); m <= Math.Min(start + eta + duration, run.DurationMinutes); m++)
                 {
-                    var p = PositionAt(r.Route, eta, site, m - start);
+                    var p = PositionOn(path, eta, site, m - start);
                     int cell = run.Spec.CellAt(p.Lat, p.Lon);
                     if (cell < 0 || run.Ignition[cell] < 0 || m < run.Ignition[cell] || m >= run.Ignition[cell] + fuels.Get(terrain.LandCover[cell]).BurnMinutes) continue;
                     if (first < 0) { first = m; where = p; }
@@ -57,13 +58,14 @@ public sealed class CrewSafety(IDocumentStore<Vehicle> vehicles, TargetResolver 
     }
 
     /// <summary>Onde a equipa está `minute` minutos depois de partir: ao longo da rota até chegar (em `eta` minutos) e no alvo depois disso.</summary>
-    public static LatLon PositionAt(LineString? route, double eta, LatLon site, double minute)
+    public static LatLon PositionAt(LineString? route, double eta, LatLon site, double minute) => PositionOn(RoutePath.Of(route), eta, site, minute);
+
+    /// <summary>Como acima, para um percurso já medido: quem o percorre minuto a minuto mede-o uma vez e não a cada minuto.</summary>
+    public static LatLon PositionOn(RoutePath? route, double eta, LatLon site, double minute)
     {
-        if (route is null || route.NumPoints < 2 || eta <= 0 || minute >= eta) return site;
-        var c = route.Coordinates;
-        var legs = new double[c.Length - 1];
-        for (int i = 1; i < c.Length; i++) legs[i - 1] = RoadGeometry.DistanceM(c[i - 1].Y, c[i - 1].X, c[i].Y, c[i].X);
-        double target = Math.Max(0, minute) / eta * legs.Sum();
+        if (route is null || eta <= 0 || minute >= eta) return site;
+        var (c, legs) = (route.Coordinates, route.Legs);
+        double target = Math.Max(0, minute) / eta * route.TotalM;
         for (int i = 0; i < legs.Length; i++)
         {
             if (target <= legs[i] || i == legs.Length - 1)

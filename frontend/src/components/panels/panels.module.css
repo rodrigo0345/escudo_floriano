@@ -117,11 +117,72 @@
 
 .orgHead {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   padding-bottom: 3px;
   border-bottom: 1px solid var(--line);
+}
+
+.actionsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.actionCard {
+  display: grid;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.actionCard:hover {
+  border-color: var(--accent, #4da3ff);
+}
+
+.actionCardOn {
+  border-color: var(--accent, #4da3ff);
+  box-shadow: inset 3px 0 0 var(--accent, #4da3ff);
+}
+
+.actionCardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.actionKind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.actionTitle {
+  line-height: 1.3;
+}
+
+.unitChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.unitChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 2px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.unitChip small {
+  opacity: 0.7;
 }
 
 .actionText {

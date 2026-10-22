@@ -22,20 +22,30 @@ namespace FireTrace.Core.Services.Operations;
 /// Também guarda a execução de cada ação por quem as cumpre.
 /// </summary>
 public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator, DispatchService dispatching, CrudService<Dispatch> dispatches, CrudService<RoadClosure> closures,
-    PlanRouter router, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock)
+    PlanRouter router, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock, ILogger<PlanService> log)
 {
     // ===================================================================================================== criar e alterar
     public Task<PlanValidation> ValidateAsync(Plan input, CancellationToken ct = default) => validator.ValidateAsync(input, ct);
 
     public async Task<Plan> CreateAsync(Plan input, CancellationToken ct = default)
     {
+        var begin = System.Diagnostics.Stopwatch.GetTimestamp();
         input = await router.ApplyAsync(input, ct);
+        var routed = System.Diagnostics.Stopwatch.GetElapsedTime(begin);
+        // validar uma só vez: a política do plano valida ao criar, o que repetia a mesma conta cara (rotas e fumo por ação) sobre o mesmo conteúdo
+        var validation = await validator.ValidateAsync(input, ct);
+        if (validation.Issues.Any(i => i.Severity == "error")) throw new ValidationException(validation.Issues);
         var plan = input with
         {
-            Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = await validator.ValidateAsync(input, ct),
+            Status = PlanStatus.Proposed, StatusHistory = new() { new(PlanStatus.Proposed, clock.GetUtcNow(), input.Author) }, Validation = validation,
             ActivatedAt = null, CompletedAt = null,
         };
-        return await plans.CreateAsync(plan, ct);
+        var validated = System.Diagnostics.Stopwatch.GetElapsedTime(begin) - routed;
+        var saved = await plans.CreateValidatedAsync(plan, ct);
+        // onde se gasta o tempo de publicar um plano: sem isto "é lento" não se mede
+        log.LogInformation("plano criado: {Actions} ações, rotas {RoutesMs:F0} ms, validação {ValidateMs:F0} ms, total {TotalMs:F0} ms",
+            input.Actions.Count, routed.TotalMilliseconds, validated.TotalMilliseconds, System.Diagnostics.Stopwatch.GetElapsedTime(begin).TotalMilliseconds);
+        return saved;
     }
 
     public async Task<Plan> PatchAsync(string id, JsonElement patch, CancellationToken ct = default)

@@ -14,7 +14,7 @@ namespace FireTrace.Core.Controllers;
 public sealed class PlanRequestsController(PlanRequestService service) : ApiController
 {
     [HttpPost("/api/v1/simulations/{simulationId}/plan-requests")]
-    [EnableRateLimiting("planning")]
+    [EnableRateLimiting("planning-light")]
     public async Task<ActionResult<PlanRequest>> Create(string simulationId, [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] PlanRequestInput? body, CancellationToken ct)
     {
         var (request, created) = await service.CreateAsync(simulationId, body ?? new PlanRequestInput(), ct);
@@ -33,6 +33,6 @@ public sealed class PlanRequestsController(PlanRequestService service) : ApiCont
     public async Task<ActionResult<PlanRequest>> Patch(string id, [FromBody] PlanRequestPatch body, CancellationToken ct) => Ok(await service.PatchAsync(id, body, ct));
 
     [HttpPost("{id}/claim")]
-    [EnableRateLimiting("planning")]
+    [EnableRateLimiting("planning-light")]
     public async Task<ActionResult<PlanRequest>> Claim(string id, [FromBody] PlanRequestClaim body, CancellationToken ct) => Ok(await service.ClaimAsync(id, body, ct));
 }

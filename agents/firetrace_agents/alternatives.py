@@ -15,9 +15,11 @@ is trimmed and tried again (a few rounds): the engine, not a rule of thumb here,
 """
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -29,6 +31,7 @@ from .orchestrator import AgentIssue, CycleResult, OrchestratorAgent
 log = logging.getLogger("firetrace.alternatives")
 
 WIND_ERROR_DEG = 30.0  # the forecast wind is wrong by this much, either way
+CANDIDATE_PREFIX = "[lab] "  # title of a plan published only to be judged and deleted (the UI hides these)
 SAFETY_ROUNDS = 4
 WITHDRAW_MARGIN_MIN = 5  # a crew leaves this long before the fire reaches its ground
 MIN_USEFUL_WORK_MIN = 10  # a crew that could work less than this before the fire arrives is not sent
@@ -82,14 +85,34 @@ class Alternatives:
     unsafe: set[str] = field(default_factory=set)  # variants that could not be shown safe: never published
 
 
-def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str) -> Evaluation | None:
-    """Publish ``plan``, run its what-if, read the result and delete the plan again. ``None`` if the what-if did not succeed."""
+def central_engine(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The baseline's engine options with the ensemble cut to the central run (``members: 0``), for runs of which only ``stats`` and ``crewExposures`` are read.
+
+    ``PlanSimulationRequest.engine`` replaces the baseline's options as a whole, so spotting, seed and the rest of the ensemble spec are carried over unchanged.
+    The central run does not depend on how many members follow it, so those two figures are identical (checked on published plans); what a one-member run
+    cannot give is the ensemble's probabilities (``/threatened``, ``/impact``...): never use it for a run the next decision is read from.
+    """
+    engine = copy.deepcopy(snapshot.get("engine") or {})
+    ensemble = dict(engine.get("ensemble") or (snapshot.get("weather") or {}).get("ensemble") or {})
+    ensemble["members"] = 0
+    engine["ensemble"] = ensemble
+    return engine
+
+
+def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str, engine: dict[str, Any] | None = None) -> Evaluation | None:
+    """Publish ``plan``, run its what-if, read the result and delete the plan again. ``None`` if the what-if did not succeed.
+
+    ``engine`` (see :func:`central_engine`) overrides the baseline's engine options for this run.
+
+    The candidate is titled ``[lab] …`` (the repo's mark for throwaway objects): it lives a few seconds, and the UI must not offer it to the operator as a plan.
+    """
     started = time.monotonic()
-    created = client.create_plan(plan)
+    title = str(plan.get("title") or "")
+    created = client.create_plan({**plan, "title": title if title.startswith(CANDIDATE_PREFIX) else f"{CANDIDATE_PREFIX}{title}"})
     plan_id = str(created["id"])
     published_in = time.monotonic() - started
     try:
-        run = client.simulate_plan(plan_id, baseline_simulation_id=baseline_id, wait_seconds=None)
+        run = client.simulate_plan(plan_id, baseline_simulation_id=baseline_id, wait_seconds=None, engine=engine)
         done = client.wait_for_simulation(str(run["id"]), timeout_seconds=300)
     finally:
         client.delete_plan(plan_id)
@@ -99,6 +122,51 @@ def evaluate(client: FiretraceClient, plan: dict[str, Any], baseline_id: str) ->
     stats = done.get("stats") or {}
     exposures = list(done.get("crewExposures") or [])
     return Evaluation(float(stats.get("burnedHa") or 0.0), int(stats.get("buildingsAffected") or 0), int(stats.get("crewCasualties") or sum(int(e.get("casualties") or 0) for e in exposures)), exposures, run_id=str(done.get("id") or ""))
+
+
+def _lives_cost(result: CycleResult) -> tuple[int, int]:
+    """What the plan's evacuation decisions cost in the agents' lives model (``life.py``): people left in the fire's way, then people told to shelter in place because
+    there were no responders to evacuate them in time. Lower is better; ``(0, 0)`` when nobody is at risk."""
+    if not result.life:
+        return (0, 0)
+    report = result.life.report
+    return (report.exposed, report.sheltered)
+
+
+def _llm_outcome(advisor: Any, tried: list[tuple[bool, tuple[Any, ...], str | None, CycleResult]], winner: CycleResult) -> dict[str, Any]:
+    """What to tell the operator about the LLM commander's candidate: what it decided (and what was thrown away), the engine's numbers for it and for the rules' plan,
+    and which one is the plan. ``summary`` is prose for the plan, ``metadata`` the same facts for programs (``metadata["agents.llm"]``)."""
+    llm = next(((score, line, result) for used, score, line, result in tried if used), None)
+    rules = next(((score, line, result) for used, score, line, result in tried if not used), None)
+    advice = llm[2].advice if llm is not None else None
+    chosen = llm is not None and llm[2] is winner
+    stats = advisor.stats() if hasattr(advisor, "stats") else {}
+    metadata: dict[str, Any] = {
+        "evaluated": llm is not None, "chosen": chosen, "applied": list(advice.applied) if advice else [], "discarded": list(advice.discarded)[:12] if advice else [],
+        "comparison": {"llm": llm[1] if llm else None, "rules": rules[1] if rules else None}, **stats,
+    }
+    lines = ["### Comando LLM (Bombeiros, Proteção Civil, GNR, INEM)"]
+    if llm is None:
+        lines.append("- O comando LLM não chegou a propor um plano.")
+    else:
+        tied = llm[0] == (rules[0] if rules else None)
+        if chosen:
+            verdict_line = ("o motor mediu os dois planos e deu o mesmo resultado (não mede cortes, evacuações, abrigos nem a prevenção do INEM): ficou o do comando, que não deixa mais pessoas expostas nem abrigadas em vez de evacuadas."
+                            if tied else "o motor avaliou os dois e ficou com o do comando (melhor).")
+        else:
+            verdict_line = "o motor avaliou os dois e ficou com o das regras (o do comando foi pior onde o motor consegue medir)."
+        lines.append(f"- Este plano é {'**o do comando LLM**' if chosen else 'o das regras'}: {verdict_line}")
+        lines.append(f"- Comando LLM: {llm[1] or 'sem avaliação'}")
+        lines.append(f"- Regras: {rules[1] if rules and rules[1] else 'sem avaliação'}")
+        if advice and advice.applied:
+            lines.extend(f"- Decisão do comando: {a}" for a in advice.applied)
+        if advice and advice.discarded:
+            lines.append(f"- Escolhas do comando que foram descartadas por regra ({len(advice.discarded)}): " + "; ".join(advice.discarded[:3]))
+        for note in [n for n in (advice.notes if advice else []) if n["agent"] != "Comando"][:8]:  # the commander's note is printed once, below
+            lines.append(f"- **{note['agent']}**: {note['text']}")
+        if advice and advice.review:
+            lines.append(f"- **Nota do comandante**: {advice.review}")
+    return {"metadata": metadata, "summary": "\n".join(lines) + "\n\n"}
 
 
 def committed_units(plan: dict[str, Any]) -> int:
@@ -214,7 +282,7 @@ def agent_metrics(cycle: CycleResult, plan: dict[str, Any], evaluation: Evaluati
     actions = plan["actions"]
     report = cycle.life.report if cycle.life else None
     closures = len(cycle.traffic.closures) if cycle.traffic else 0
-    uncovered = sum(1 for issue in (cycle.traffic.issues if cycle.traffic else []) if "not closed" in issue)
+    uncovered = sum(1 for issue in (cycle.traffic.issues if cycle.traffic else []) if "fica aberto" in issue or "not closed" in issue)
     standby = [r for a in actions if a.get("type") == "medical_standby" for r in a.get("resources") or []]
     transports = [r for a in actions if a.get("type") == "evacuation" for r in a.get("resources") or [] if r.get("responsibility") == "evacuation" and r.get("resourceType") == "vehicle"]
     fire = evaluation.fire if evaluation is not None else None
@@ -246,7 +314,7 @@ def metrics_text(m: dict[str, Any]) -> str:
         f" ({people['vulnerableEvacuated']} de {people['vulnerableAtRisk']} vulneráveis evacuadas).\n"
         f"- Proteção Civil: {pc['evacuations']} evacuações ({pc['withShelter']} com abrigo e rota), {pc['transports']} transportes, {pc['publicAlerts']} avisos à população"
         f"{', posto de comando' if pc['commandPost'] else ''}.\n"
-        f"- GNR: {gnr['roadsClosed']} estradas cortadas com patrulha em todas as entradas ({gnr['patrols']} patrulhas); {gnr['roadsWithoutPatrol']} que o fogo corta ficam sem corte por falta de patrulha.\n"
+        f"- GNR: cerco à zona do incêndio, {gnr['roadsClosed']} acessos fechados, cada um com a sua patrulha ({gnr['patrols']} patrulhas); {gnr['roadsWithoutPatrol']} acessos ficam abertos por falta de patrulha a tempo.\n"
         f"- INEM: {inem['ambulancesOnStandby']} ambulâncias de prevenção, {inem['hospitalsAlerted']} hospitais de pré-aviso.\n"
         f"- Meios: {units['committed']} no terreno, {units['forwardReserve']} em reserva avançada, {units['noSafeSpot']} sem posição segura (não enviados); "
         f"segurança: {units['safetyShortened']} saem mais cedo, {units['safetyRemoved']} retirados.\n\n"
@@ -306,10 +374,18 @@ def build_alternatives(
               {"building_zones": house_zones + 6, "lean": True, "air_support": True, "reserve_share": RESERVE_SHARE_B}],
     }
     chosen: dict[str, tuple[CycleResult, dict[str, Any], Any, int, int]] = {}
+    # An LLM commander (``advisor.py``, ``llm/``) makes one more candidate, on top of the rules': the same plan as the first, with its choices where it has them. The
+    # engine judges them all the same way and the best ships; a tie goes to the rules (they come first), so the LLM plan has to be better, not just different.
+    advising = orchestrator.advisor.name != "rules"
+    llm_outcome: dict[str, dict[str, Any]] = {}
     for variant, choices in options.items():
         report("composing", 10 if variant == "A" else 25, f"A compor o plano {variant} ({'ofensivo' if variant == 'A' else 'defensivo'})")
+        if advising:
+            choices = [choices[0], {**choices[0], "use_advisor": True}, *choices[1:]]
+        wanted = max(1, candidates) + (1 if advising else 0)
+        tried: list[tuple[bool, tuple[Any, ...], str | None, CycleResult]] = []
         best: tuple[tuple[Any, ...], CycleResult, dict[str, Any], Any, int, int] | None = None
-        for overrides in choices[:max(1, candidates)]:
+        for overrides in choices[:wanted]:
             result = orchestrator.run_cycle(simulation_id, publish=False, validate=False, **{**cycle, **overrides})
             plan = result.plan_a  # the composition that sequences the evacuation first
             assert plan is not None
@@ -318,7 +394,7 @@ def build_alternatives(
                 taken = prune_unreachable(client, plan)
                 if taken:
                     result.issues.append(AgentIssue("orchestrator", plan.get("title", ""), f"{taken} action(s) taken out because the backend finds no road to them"))
-                verdict, shortened, removed = judge.make_safe(plan, decided_at, wrong_wind=False) if judge is not None and min(len(choices), candidates) > 1 else (None, 0, 0)
+                verdict, shortened, removed = judge.make_safe(plan, decided_at, wrong_wind=False) if judge is not None and min(len(choices), wanted) > 1 else (None, 0, 0)
             except ApiProblem as error:
                 issues.append(f"plan {variant}: could not judge a candidate [{error.code}]: {error}")
                 verdict, shortened, removed = None, 0, 0
@@ -326,12 +402,20 @@ def build_alternatives(
             state = fire_state(client, verdict.forecast.run_id) if verdict is not None else None
             out_at = state.out_at if state is not None and state.out_at is not None else math.inf
             score = (verdict is None, verdict.casualties if verdict else 0, verdict.forecast.buildings if verdict else 0, out_at, verdict.forecast.burned_ha if verdict else 0.0)
-            if best is None or score < best[0]:
+            if verdict is not None:
+                verdict.forecast.units = committed_units(plan)  # so the line that compares the candidates says how many units each commits
+            tried.append((bool(overrides.get("use_advisor")), score, verdict.forecast.line() if verdict is not None else None, result))
+            # The engine judges what burns, not what a closure, a shelter or an ambulance's spot is worth: those decisions only reach a plan if the commander's candidate is
+            # at least as good where the engine can tell (a tie goes to the commander) and does not leave more people exposed or sheltering instead of evacuated (``life.py``).
+            tie_to_commander = bool(overrides.get("use_advisor")) and best is not None and score == best[0] and _lives_cost(result) <= _lives_cost(best[1])
+            if best is None or score < best[0] or tie_to_commander:
                 best = (score, result, plan, verdict, shortened, removed)
         assert best is not None
         chosen[variant] = best[1:]
-        if len(choices) > 1 and candidates > 1 and best[3] is not None:
-            log.info("baseline %s: plan %s: best of %d candidates: %s", simulation_id, variant, min(len(choices), candidates), best[3].forecast.line())
+        if len(choices) > 1 and wanted > 1 and best[3] is not None:
+            log.info("baseline %s: plan %s: best of %d candidates: %s", simulation_id, variant, min(len(choices), wanted), best[3].forecast.line())
+        if advising:
+            llm_outcome[variant] = _llm_outcome(orchestrator.advisor, tried, best[1])
 
     cycle_a, plan_a = chosen["A"][0], chosen["A"][1]
     cycle_b, plan_b = chosen["B"][0], chosen["B"][1]
@@ -345,14 +429,21 @@ def build_alternatives(
     verdicts: dict[str, Any] = {}
     report("judging", 40, "O motor avalia a segurança das equipas nos dois planos (previsão e vento errado)")
     if judge is not None:
-        for variant, plan in (("A", plan_a), ("B", plan_b)):
+        def judge_variant(variant: str, plan: dict[str, Any]) -> tuple[Any, int, int, float]:
+            started = time.monotonic()
+            verdict, shortened, removed = judge.make_safe(plan, decided_at)  # the forecast again (cached if the plan has not changed) and the wrong wind
+            return verdict, shortened, removed, time.monotonic() - started
+
+        # A and B are independent plans judged by the same engine: asked together, the publishing, polling and deleting of one overlap the other's
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            judging = {variant: pool.submit(judge_variant, variant, plan) for variant, plan in (("A", plan_a), ("B", plan_b))}
+        for variant, future in judging.items():
             _result, _plan, _verdict, cut_before, gone_before = chosen[variant]
             try:
-                started = time.monotonic()
-                verdict, shortened, removed = judge.make_safe(plan, decided_at)  # the forecast again (cheap if already safe) and the wrong wind
+                verdict, shortened, removed, seconds = future.result()
                 verdicts[variant] = verdict
                 out.safety[variant] = (cut_before + shortened, gone_before + removed)
-                log.info("baseline %s: plan %s judged in %.0f s: %s", simulation_id, variant, time.monotonic() - started,
+                log.info("baseline %s: plan %s judged in %.0f s: %s", simulation_id, variant, seconds,
                          f"{verdict.forecast.line()} · {verdict.casualties} baixas (previsão + vento errado)" if verdict else "no result")
             except ApiProblem as error:
                 out.issues.append(f"could not judge plan {variant} [{error.code}]: {error}")
@@ -411,6 +502,10 @@ def build_alternatives(
         plan["metadata"] = {**(plan.get("metadata") or {}), **(plan_metadata or {}), "agents.metrics": metrics}
         plan["summary"] = metrics_text(metrics) + plan.get("summary", "")
         plan["summary"] = f"### Avaliação do incêndio\n- {result.assessment(orchestrator._load_rules())}\n\n" + plan["summary"]  # noqa: SLF001 — the rules the cycle used
+    for variant, plan in (("A", plan_a), ("B", plan_b)):  # the LLM commander: what it decided, and how the engine judged it against the rules
+        if (outcome := llm_outcome.get(variant)) is not None:
+            plan["metadata"] = {**(plan.get("metadata") or {}), "agents.llm": outcome["metadata"]}
+            plan["summary"] = outcome["summary"] + plan["summary"]
     if out.eval_a and out.eval_b:
         plan_a["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_a["summary"]
         plan_b["summary"] = f"### A ou B?\n- A: {out.eval_a.line()}\n- B: {out.eval_b.line()}\n\n" + plan_b["summary"]

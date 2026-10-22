@@ -299,6 +299,10 @@ function PlanBox() {
         <b className={styles.sectionTitle}>Plano {plan.variant ?? ''} dos agentes</b>
         <span className={styles.sectionMeta}>{total} elementos</span>
       </div>
+      <label className={styles.waterKind}>
+        <input type="checkbox" checked={world.plan.isOnlyActive()} onChange={(e) => world.plan.setOnlyActive(e.target.checked)} />
+        <span>Só o que está a decorrer no minuto da linha do tempo</span>
+      </label>
       {kinds.map((k) => (
         <label className={styles.waterKind} key={k}>
           <input
