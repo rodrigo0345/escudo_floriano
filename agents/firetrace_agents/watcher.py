@@ -88,6 +88,8 @@ class WatcherSettings:
     simulate_timeout_seconds: float = 900.0
     agent_name: str = "firetrace-agents"
     seed_demo: bool = True
+    auto_plan: bool = False  # plans are made when the operator asks: planning every new baseline on its own spent the OpenAI tokens on plans nobody looked at
+    keep_only_latest: bool = True  # once a request is done, every older plan and what-if run is deleted: one pair is stored
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "WatcherSettings":
@@ -110,6 +112,8 @@ class WatcherSettings:
             simulate_timeout_seconds=float(e.get("AGENTS_SIMULATE_TIMEOUT", d.simulate_timeout_seconds)),
             agent_name=e.get("AGENTS_NAME", d.agent_name) or d.agent_name,
             seed_demo=str(e.get("AGENTS_SEED_DEMO", "1" if d.seed_demo else "0")).strip().lower() not in ("0", "false", "no"),
+            auto_plan=str(e.get("AGENTS_AUTO_PLAN", "1" if d.auto_plan else "0")).strip().lower() in ("1", "true", "yes"),
+            keep_only_latest=str(e.get("AGENTS_KEEP_ONLY_LATEST", "1" if d.keep_only_latest else "0")).strip().lower() not in ("0", "false", "no"),
         )
 
 
@@ -158,6 +162,10 @@ class Watcher:
                 planned.append(served)
         except ApiProblem as error:  # an older backend without /plan-requests must not stop the automatic plans
             log.error("plan requests: %s", error)
+        if not self.settings.auto_plan:
+            if self.reviser is not None:
+                self.reviser.poll()
+            return planned
         found = self.client.list_simulations(kind="baseline", status="succeeded", updated_after=self.since.isoformat())
         found_ids = {str(s["id"]) for s in found}
         found = [*found, *(s for sim_id, s in self.retry.items() if sim_id not in found_ids)]
@@ -281,12 +289,51 @@ class Watcher:
             self.client.patch_plan_request(req_id, {"status": "simulating", "planIds": plan_ids,
                                                     "progress": {"phase": "simulating", "percent": 80, "message": f"Planos {variants} publicados; a correr o what-if de cada um"}})
             self._simulate(sim_id, published, progress=report)
+            if self.settings.keep_only_latest:
+                self.prune_to(sim_id, plan_ids)
             self._close(req_id, "done", plan_ids=plan_ids, message=f"Planos {variants} prontos para comparar")
             return True
         except Exception as error:  # noqa: BLE001 — the operator must hear why, not wait for a request that never ends
             log.error("request %s: failed: %s: %s", req_id, type(error).__name__, error)
             self._close(req_id, "failed", error=f"{type(error).__name__}: {error}"[:2000])
             return False
+
+    PRUNABLE = ("proposed", "discarded")  # what a new pair replaces; selected, active, completed and cancelled plans are the operator's execution history
+
+    def prune_to(self, simulation_id: str, keep_plan_ids: list[str]) -> tuple[int, int]:
+        """Delete the plans a request replaced, so the operator sees the latest pair: the older ``proposed``/``discarded`` plans of the same scenario (of this
+        baseline alone when it has no scenario) and their what-if runs. Other scenarios, the baselines and the execution history stay.
+
+        Runs only once every kept plan has a succeeded what-if run (a pair that cannot be compared does not replace the previous one). Returns ``(plans, runs)``
+        deleted; whatever cannot be deleted is left and logged, and a failed cleanup never fails the request.
+        """
+        keep = set(keep_plan_ids)
+        plans_gone = runs_gone = 0
+        try:
+            if not all(self.client.list_simulations(kind="what_if", plan_id=plan_id, status="succeeded") for plan_id in keep):
+                log.info("prune: skipped, the new pair's what-if runs did not all succeed")
+                return 0, 0
+            scenario_id = self.client.get_simulation(simulation_id).get("scenarioId")
+            baselines = [str(s["id"]) for s in self.client.list_simulations(kind="baseline", scenario_id=str(scenario_id))] if scenario_id else []
+            if simulation_id not in baselines:
+                baselines.append(simulation_id)
+            for baseline_id in baselines:
+                for plan in self.client.list_plans(baseline_id):
+                    plan_id = str(plan["id"])
+                    if plan_id in keep or plan.get("status") not in self.PRUNABLE:
+                        continue
+                    try:
+                        self.client.delete_plan(plan_id)
+                        plans_gone += 1
+                        for run in self.client.list_simulations(kind="what_if", plan_id=plan_id):
+                            self.client.delete_simulation(str(run["id"]))
+                            runs_gone += 1
+                    except ApiProblem as error:
+                        log.warning("prune: plan %s kept [%s]: %s", plan_id, error.code, error)
+        except Exception as error:  # noqa: BLE001 — the pair is ready: a cleanup that fails is logged, not reported as a failed request
+            log.warning("prune: %s: %s", type(error).__name__, error)
+        log.info("prune: %d replaced plans and %d of their what-if runs deleted; %d plans kept", plans_gone, runs_gone, len(keep))
+        return plans_gone, runs_gone
 
     def _close(self, req_id: str, status: str, *, plan_ids: list[str] | None = None, error: str | None = None, message: str | None = None) -> None:
         patch: dict[str, Any] = {"status": status, "progress": {"phase": status, "percent": 100, "message": (message or error or status)[:500]}}

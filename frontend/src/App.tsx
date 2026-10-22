@@ -8,6 +8,7 @@ import { ResourcesView } from '@/components/resources/ResourcesView';
 import { SidePanel } from '@/components/panels/SidePanel';
 import { Viewport } from '@/components/viewport/Viewport';
 import { EngineProvider, useWorld } from '@/engine/EngineContext';
+import { usePeopleSync } from '@/hooks/usePeopleSync';
 import { useUnitsSync } from '@/hooks/useUnitsSync';
 import { useBootstrap } from '@/hooks/useBootstrap';
 import { useFrameLoop } from '@/hooks/useFrameLoop';
@@ -27,6 +28,7 @@ function Controllers() {
   useFrameLoop();
   useWorldSync();
   useUnitsSync();
+  usePeopleSync();
 
   // once the map is up, show the simulation named by `?sim=<id>` (a baseline or a plan's what-if), else the first built-in scenario
   useEffect(() => {

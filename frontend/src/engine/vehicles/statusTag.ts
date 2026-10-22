@@ -39,6 +39,9 @@ const ACTIVITY: Record<Activity, { text: string; color: string }> = {
   out_of_service: { text: 'Fora de serviço', color: '#7a838c' },
 };
 
+/** The colour of an activity (the badge's dot on the map uses it too). */
+export const activityColor = (activity: Activity): string => ACTIVITY[activity].color;
+
 /** The activity's status dot (in place of an icon), centred at (x, y). */
 function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
   ctx.fillStyle = color;

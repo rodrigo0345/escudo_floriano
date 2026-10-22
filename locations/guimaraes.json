@@ -18,7 +18,15 @@
   // Instalações curadas prevalecem sobre OSM (o OSM cobre mal GNR e Proteção Civil).
   // Formato: { "type": "civil_protection", "name": "...", "lat": 0, "lon": 0, "operator": "...", "source": "..." }
   // Tipos: fire_station | gnr | civil_protection | inem | hospital | town_hall
-  "curatedFacilities": [],
+  "curatedFacilities": [
+    { "type": "fire_station", "name": "Associação Humanitária dos Bombeiros Voluntários de Guimarães", "lat": 41.4406, "lon": -8.2917, "operator": "Bombeiros Voluntários de Guimarães", "source": "curated" },
+    { "type": "gnr", "name": "Destacamento Territorial da GNR de Guimarães", "lat": 41.4445, "lon": -8.2982, "operator": "Guarda Nacional Republicana", "source": "curated" },
+    { "type": "civil_protection", "name": "Serviço Municipal de Proteção Civil de Guimarães", "lat": 41.4415, "lon": -8.2955, "operator": "Município de Guimarães", "source": "curated" },
+    { "type": "civil_protection", "name": "Posto de Comando Operacional (PCO Penha)", "lat": 41.4305, "lon": -8.2710, "operator": "Proteção Civil Municipal", "source": "curated" },
+    { "type": "hospital", "name": "Hospital da Senhora da Oliveira - Guimarães", "lat": 41.4428, "lon": -8.3060, "operator": "SNS", "source": "curated" },
+    { "type": "inem", "name": "Base INEM Norte - Guimarães", "lat": 41.4430, "lon": -8.3050, "operator": "INEM", "source": "curated" },
+    { "type": "heliport", "name": "Heliporto do Hospital da Senhora da Oliveira", "lat": 41.4423, "lon": -8.3055, "operator": "INEM / Proteção Civil", "source": "curated" }
+  ],
 
   // Cenários de incêndio. "historical": false = cenário hipotético com meteorologia real de uma data,
   // não um incêndio que tenha realmente ocorrido.

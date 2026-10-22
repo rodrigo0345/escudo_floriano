@@ -16,19 +16,20 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
-from .sectors import Sector, destination
+from .sectors import Sector, destination, distance_m
 
 CREW_RATE_M_PER_H_PER_PERSON = 15.0  # = backend InterventionSettings.FuelRemoval.CrewRateMPerHourPerPerson (appsettings.json); the contract does not expose it
 STRIP_WIDTH_M = 20.0  # = backend FuelRemoval.DefaultWidthM
-BUILD_MINUTES = 90
+BUILD_MINUTES = 30  # one stage: an operation is what a crew does in one stage, not a whole run (it was 90: strips of 225-450 m, stacked into 1 km+ lines)
 MARGIN_MIN = 20  # the strip is finished this long before the fire reaches it
-MIN_LENGTH_M = 80.0
-MAX_LENGTH_M = 900.0
-FIRST_AHEAD_M = 500.0  # nearest the strip may be to the head
+MIN_LENGTH_M = 40.0
+MAX_LENGTH_M = 120.0  # a strip one crew opens, not a barrier across the front (was 300)
+FIRST_AHEAD_M = 200.0  # nearest the strip may be to the head
 STEP_AHEAD_M = 250.0
-MAX_AHEAD_M = 4000.0
-WET_LINE_M = 400.0  # an engine's hose lay across the fire's path (the length its lines reach)
-WET_LINE_MINUTES = 40  # = the wet line's constructionMinutes in firefighter.py
+MAX_AHEAD_M = 100.0  # the crew's subsection: a strip or line further out than this is not in the fire's path, and the crew would be 3-7 km from the fire (measured on plan A of sim-2aa501ce9e)
+WET_LINE_M = 50.0  # an engine's hose lay across the fire's path (the length its lines reach)
+MAX_LINE_FROM_FRONT_M = 600.0  # a wet line lies on the front it fights: no further out than this (the strips measured 2.7-3.8 km from the head)
+WET_LINE_MINUTES = 20  # = the wet line's constructionMinutes in firefighter.py
 
 
 @dataclass(frozen=True)
@@ -109,8 +110,8 @@ def plan_wet_line(
     in place it does not (the fire is slowed where it crosses it).
     """
     strip = _ahead(sector, WET_LINE_M, WET_LINE_MINUTES, decided_at, travel=travel, perimeters_at=perimeters_at)
-    if strip is None:
-        return None
+    if strip is None or distance_m(strip.center["lat"], strip.center["lon"], sector.lat, sector.lon) > MAX_LINE_FROM_FRONT_M:
+        return None  # a line kilometres from the front is not in the fire's path: the engine keeps its own job instead
     across = (sector.bearing_deg + 90.0) % 360.0
     (a_lat, a_lon), (b_lat, b_lon) = (destination(strip.center["lat"], strip.center["lon"], across, side * WET_LINE_M / 2.0) for side in (-1, 1))
     return replace(strip, geometry={"type": "LineString", "coordinates": [[a_lon, a_lat], [b_lon, b_lat]]})

@@ -6,7 +6,7 @@ import { DISPATCH_STATUS_LABEL } from '@/domain/resourceLabels';
 
 import type { Pickable } from '../picking';
 import { spreadPositions } from '../vehicles/declutter';
-import type { Activity } from '../vehicles/statusTag';
+import { activityColor, type Activity } from '../vehicles/statusTag';
 import { headingBetween, VehicleActor } from '../vehicles/vehicleActor';
 import { modelClassOf } from '../vehicles/vehicleModels';
 import { WaterEffects } from '../vehicles/waterEffects';
@@ -29,9 +29,21 @@ export interface UnitStyle {
 type UnitRole = 'attack' | 'air' | 'traffic' | 'medical' | 'command';
 
 /** Real flying heights (m): cruising, working over the fire with the bucket out, and refilling the bucket at a water source. */
-const AIR_CRUISE_M = 220;
+const AIR_CRUISE_M = 120;
 const AIR_WORK_M = 45;
-const AIR_FILL_M = 20;
+const AIR_FILL_M = 12;
+
+type Sample = { status: DispatchStatus; waterLevelL?: number | null };
+
+/** True while a refilling aircraft is at the water point (its tank is filling), false while it flies to or from it. */
+const dipping = (a: Sample, b: Sample): boolean => a.status === 'refilling' && b.status === 'refilling' && (b.waterLevelL ?? 0) > (a.waterLevelL ?? 0);
+
+/** Flying height of an aircraft between two samples: low over the target while it drops, lower still dipping its bucket, at cruise height in between. */
+function airHeight(a: Sample, b: Sample, f: number): number {
+  const at = (x: Sample, other: Sample): number =>
+    x.status === 'working' || x.status === 'on_scene' ? AIR_WORK_M : dipping(x, other) || (x.status === 'refilling' && other.status === 'refilling' && (x.waterLevelL ?? 0) < (other.waterLevelL ?? 0)) ? AIR_FILL_M : x.status === 'grounded' ? 0 : AIR_CRUISE_M;
+  return at(a, b) + (at(b, a) - at(a, b)) * f; // eased between the two, so it climbs and descends instead of jumping
+}
 /** Reach (m) of a hose/monitor jet at real scale. */
 const JET_REACH_M = 30;
 const RESPONDING: ReadonlySet<DispatchStatus> = new Set(['ordered', 'en_route', 'on_scene', 'working']);
@@ -183,7 +195,7 @@ export class UnitLayer {
 
     const pos = new THREE.Vector3(...geo.world(here.lat, here.lon, 0));
     if (actor.air) {
-      const alt = status === 'working' || status === 'on_scene' ? AIR_WORK_M : status === 'refilling' ? AIR_FILL_M : status === 'grounded' ? 0 : AIR_CRUISE_M;
+      const alt = airHeight(a, b, f);
       pos.y += (alt + (alt ? 20 * actor.enlarge : 0)) / geo.unit;
     }
     // heading: where it is going (on scene it turns towards its target once spread out, in `draw`)
@@ -214,7 +226,7 @@ export class UnitLayer {
 
     actor.flash(timeS, RESPONDING.has(status) && !actor.air);
     actor.spin(timeS);
-    actor.showBucket(actor.air && (status === 'working' || status === 'on_scene' || status === 'refilling'));
+    actor.showBucket(actor.air && (status === 'working' || status === 'on_scene' || dipping(a, b)));  // the bucket hangs while it dips and drops, not on every flight
 
     const water = a.waterLevelL != null && b.waterLevelL != null ? lerp(a.waterLevelL, b.waterLevelL, f) : (a.waterLevelL ?? b.waterLevelL);
     const capacity = unit.state.water?.capacityL;
@@ -224,6 +236,7 @@ export class UnitLayer {
     const trip = status === 'refilling' ? tripKind(unit.track.events, a.tMin + f) : null;
     const activity: Activity =
       trip === 'fuel' ? 'refueling' : trip === 'water' ? ((b.waterLevelL ?? 0) > (a.waterLevelL ?? 0) ? 'filling' : 'to_water') : activityOf(status, e.role);
+    actor.marker.setActivityColor(activityColor(activity)); // the badge's dot shows what it is doing
 
     // water: trucks spray at the fire while they have water; aircraft drop over it, in passes
     if (status === 'working' && (water ?? 1) > 0 && (e.role === 'attack' || e.role === 'air')) {
@@ -266,6 +279,22 @@ export class UnitLayer {
   /** The vehicles, plus the tag of a hovered one so the cursor can rest on the tag without it disappearing. */
   get pickables(): Pickable[] {
     return this.entries.flatMap((e) => (e.actor.tag.sprite.visible ? [e.actor.group, e.actor.tag.sprite] : [e.actor.group]) as Pickable[]);
+  }
+
+  /** Where every vehicle on the map is now, for the minimap. */
+  snapshot(): { id: string; lat: number; lon: number; color: string; air: boolean }[] {
+    return this.entries
+      .filter((e) => e.actor.group.visible)
+      .map((e) => {
+        const p = e.actor.group.position;
+        const [lat, lon] = this.geo.toLatLon(p.x, p.z);
+        return { id: e.unit.state.unitId, lat, lon, color: e.orgColor, air: e.actor.air };
+      });
+  }
+
+  /** The unit a vehicle on the map is (a click on it selects it). */
+  unitIdOf(actor: VehicleActor): string | null {
+    return this.entries.find((x) => x.actor === actor)?.unit.state.unitId ?? null;
   }
 
   /** Current world position of a unit (for focusing the camera on it), or null if it is not on the map. */

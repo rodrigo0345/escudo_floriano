@@ -217,7 +217,7 @@ def vectors(*stretches: tuple[float, float, float, float]) -> dict[str, Any]:
 def test_crews_are_not_piled_onto_ground_they_cannot_work_while_an_easier_stretch_burns_as_hard() -> None:
     from firetrace_agents.sectors import plan_sectors
 
-    front = vectors((41.430, -8.270, 10.0, 2000.0), (41.440, -8.270, 9.0, 1900.0))  # about the same fire, a kilometre apart
+    front = vectors((41.430, -8.270, 10.0, 1600.0), (41.440, -8.270, 9.0, 1500.0))  # about the same fire, a kilometre apart
     plain = plan_sectors(front)
     assert (plain[0].lat, plain[1].lat) == (41.430, 41.440)  # the faster stretch first, as before
     steep_first = plan_sectors(front, workability_of=lambda s: 0.2 if s.lat < 41.435 else 1.0)  # the first stretch is steep wooded ground
@@ -227,9 +227,9 @@ def test_crews_are_not_piled_onto_ground_they_cannot_work_while_an_easier_stretc
 def test_workability_only_discounts_it_never_hides_a_stretch() -> None:
     from firetrace_agents.sectors import WORKABILITY_FLOOR, plan_sectors
 
-    front = vectors((41.430, -8.270, 10.0, 2000.0))
+    front = vectors((41.430, -8.270, 10.0, 1600.0))
     (sector,) = plan_sectors(front, workability_of=lambda s: 0.0)
-    assert sector.danger == pytest.approx(10.0 * 2000.0 * WORKABILITY_FLOOR)  # a fast fire on bad ground still counts
+    assert sector.danger == pytest.approx(10.0 * 1600.0 * WORKABILITY_FLOOR)  # a fast fire on bad ground still counts
 
 
 def test_without_terrain_the_ranking_is_the_old_one() -> None:

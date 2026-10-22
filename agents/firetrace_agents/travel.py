@@ -171,7 +171,10 @@ class TravelPlanner:
             return Travel(False, None, f"a estrada mais próxima fica a {gap:.0f} m do alvo", station, drive, gap)
         speed = self.off_road_kmh if agent.observation.off_road else WALK_SPEED_KMH
         walk = gap / 1000.0 / speed * 60.0
-        return Travel(True, drive + walk, "estrada", station, drive, gap, walk, geometry=route.get("geometry"))
+        geometry = route.get("geometry")
+        if len((geometry or {}).get("coordinates") or []) < 2:
+            geometry = None  # a unit already at the spot has a one-point "route": the contract wants a line of at least two points, so the plan carries none
+        return Travel(True, drive + walk, "estrada", station, drive, gap, walk, geometry=geometry)
 
     def _fly(self, station: str | None, target: dict[str, Any], origin: dict[str, float] | None = None, speed_kmh: float | None = None) -> Travel:
         """A straight flight at the aircraft's own cruise speed (an airtanker flies faster than a light helicopter)."""

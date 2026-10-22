@@ -344,8 +344,11 @@ class FiretraceClient:
             simulation = self.wait_for_simulation(simulation["id"], timeout_seconds=timeout_seconds)
         return simulation
 
-    def list_simulations(self, *, kind: str | None = None, status: str | None = None, updated_after: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        """``GET /simulations`` (all pages): filter by ``kind``, ``status`` (comma list) and ``updatedAfter`` (RFC 3339)."""
+    def list_simulations(
+        self, *, kind: str | None = None, status: str | None = None, updated_after: str | None = None, scenario_id: str | None = None, plan_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """``GET /simulations`` (all pages): filter by ``kind``, ``status`` (comma list), ``updatedAfter`` (RFC 3339), ``scenarioId`` and ``planId``."""
         params: dict[str, Any] = {"limit": limit}
         if kind:
             params["kind"] = kind
@@ -353,6 +356,10 @@ class FiretraceClient:
             params["status"] = status
         if updated_after:
             params["updatedAfter"] = updated_after
+        if scenario_id:
+            params["scenarioId"] = scenario_id
+        if plan_id:
+            params["planId"] = plan_id
         page = self._request("GET", "/simulations", params=params)
         items: list[dict[str, Any]] = list(page.get("items", []))
         cursor = page.get("nextCursor")
@@ -414,6 +421,13 @@ class FiretraceClient:
             items.extend(page.get("items", []))
             cursor = page.get("nextCursor")
         return items
+
+    def delete_simulation(self, simulation_id: str) -> None:
+        """``DELETE /simulations/{id}``: a what-if run nobody needs any more (a missing one is fine)."""
+        response = self._http.delete(self._fill("/simulations/{simulationId}", simulationId=simulation_id))
+        if response.status_code >= 400 and response.status_code != 404:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "json" in content_type else {"title": response.text})
 
     # -- the operator's requests for plans ------------------------------------------
     def list_plan_requests(self, *, status: str | None = None, simulation_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
