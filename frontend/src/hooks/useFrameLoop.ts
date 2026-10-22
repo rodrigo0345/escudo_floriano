@@ -172,6 +172,7 @@ export function useFrameLoop(): void {
       world.updateCity();
       const viewportPx = engine.renderer.domElement.height / engine.renderer.getPixelRatio();
       world.units.update(tf, engine.camera, ts / 1000, viewportPx);
+      world.people.update(tf, ts / 1000);
       world.fleet.update(engine.camera, ts / 1000);
     });
   }, [engine, world]);

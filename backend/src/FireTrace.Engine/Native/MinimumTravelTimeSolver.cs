@@ -104,7 +104,16 @@ public sealed class MinimumTravelTimeSolver(FireBehaviorModel model)
                 // Byram's intensity is proportional to the spread rate, so the fire coming this way is the source's head intensity scaled by its ellipse:
                 // crews on a flank face a fraction of what the head burns at (the head of a crown run cannot be fought, its flanks can).
                 double facing = here.IntensityKwm * FireBehaviorModel.EllipseFactor(bearing, here.DirectionDeg, here.LengthToWidth);
-                ros *= suppression.Factor(nc, t, facing);
+                // The fire takes its time to cross a cell, so the crews that are there while it crosses count, not only those there when its source ignited:
+                // the strongest hold at the start, middle and end of the crossing wins.
+                double crossing = distCells * grid.CellM / ros;
+                double factor = suppression.Factor(nc, t, facing);
+                if (factor > 0 && crossing > 1)
+                {
+                    factor = Math.Min(factor, suppression.Factor(nc, t + (float)(crossing / 2), facing));
+                    if (factor > 0) factor = Math.Min(factor, suppression.Factor(nc, t + (float)crossing, facing));
+                }
+                ros *= factor;
                 if (ros <= 1e-9) continue;
                 float arrive = t + (float)(distCells * grid.CellM / ros);
                 if (arrive <= job.Minutes && arrive < arrival[nc]) { arrival[nc] = arrive; frontier.Enqueue(nc, arrive); }

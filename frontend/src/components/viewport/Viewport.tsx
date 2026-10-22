@@ -9,6 +9,7 @@ import { Compass } from './Compass';
 import { LayersPanel } from './LayersPanel';
 import { Banner, Hint, LoadingOverlay } from './Overlays';
 import { ScaleBar } from './ScaleBar';
+import { MiniMap } from './MiniMap';
 import { WeatherHud } from './WeatherHud';
 import styles from './viewport.module.css';
 
@@ -43,6 +44,7 @@ export function Viewport() {
       <LayersPanel />
       <Compass />
       <WeatherHud />
+      <MiniMap />
       <ScaleBar />
       <Hint />
       <Banner />

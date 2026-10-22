@@ -30,14 +30,14 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .contracts import OBJECTIVES, INTERVENTION_TYPES
-from .sectors import Assignment, Sector, line_across, line_segment, zone_around
+from .sectors import Assignment, Sector, bearing_to, line_across, line_segment, zone_around
 from .tiers import FirefighterTier, tier_for_vehicle
 
 # Spec ``Responsibility`` -> vehicle capabilities that let a vehicle take it (the backend warns
 # ``responsibility_not_supported`` otherwise). Only what the agents assign is listed.
 EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", "perimeter_security"})
 
-LINE_FACTOR = {FirefighterTier.HELICOPTER: 1.5, FirefighterTier.TRUCK: 1.0, FirefighterTier.SQUAD: 0.8}
+LINE_FACTOR = {FirefighterTier.HELICOPTER: 0.5, FirefighterTier.TRUCK: 0.5, FirefighterTier.SQUAD: 0.4}  # half a zone each side of the unit: an operation the size of one work zone, not a 1 km curtain (was 1.5 / 1.0 / 0.8)
 # Aircraft: how hard one drop hits by what it carries (a light helicopter's ~1 000 L, a Fire Boss' ~3 000 L, a heavy helicopter's or a Canadair's 4 500–6 000 L),
 # how long a sortie lasts before the next re-plan sends it elsewhere, and how long a water drop keeps the ground wet (the rotation is weighed against it).
 AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.5, 0.6, 0.7
@@ -83,7 +83,7 @@ class Situation:
     @property
     def zone_radius_m(self) -> float:
         """Radius of the ground one crew works (``Rules.suppression.zoneRadiusM``)."""
-        return float(((self.rules or {}).get("suppression") or {}).get("zoneRadiusM") or 180.0)
+        return float(((self.rules or {}).get("suppression") or {}).get("zoneRadiusM") or 100.0)
 
     @property
     def anchor(self) -> dict[str, Any]:
@@ -467,19 +467,28 @@ class FirefighterAgent:
 
         if self.tier is FirefighterTier.HELICOPTER:
             place = in_danger[0]
-            agent = "retardant" if situation.max_intensity_kwm < 3000 else "water"
+            agent = "retardant"
             effectiveness = 0.45 if situation.max_intensity_kwm < 3000 else 0.3
             confidence = 0.55
+            front = situation.anchor
+            front_lat, front_lon = float(front["lat"]), float(front["lon"])
+            place_pos = place.get("position")
+            if place_pos:
+                b = bearing_to(front_lat, front_lon, float(place_pos["lat"]), float(place_pos["lon"]))
+            else:
+                b = situation.head_bearing_deg
+            drop_geom = line_across(front_lat, front_lon, b, situation.zone_radius_m, self._assignment.slot)
             proposals = [
                 ActionProposal(
                     action_type="fire_attack",
                     title=f"Travar a frente rumo a {names} (largada {agent})",
                     proposal_id=f"drop-{self.agent_id}",
+                    target={"lat": front_lat, "lon": front_lon},
                     intervention={
                         "type": "aerial_drop",
                         "label": f"Cortina {names}",
                         "start": {"offsetMinutes": 0},
-                        "geometry": self._line(situation, place.get("position")),
+                        "geometry": drop_geom,
                         "agent": agent,
                         "effectiveness": effectiveness,
                         "effectDurationMinutes": 45,
@@ -489,7 +498,7 @@ class FirefighterAgent:
                     expected_effect="Atrasa a chegada do fogo às localidades, comprando minutos de margem.",
                     confidence=0.55,
                     safety_notes="Vento forte e faíscas; não sobrevoar a frente ativa.",
-                    extra_action_fields={"tactic": "indirect"},  # ponto à frente da frente, nunca sobre ela
+                    extra_action_fields={"tactic": "direct"},
                 )
             ]
             reason = (
@@ -601,7 +610,7 @@ class FirefighterAgent:
         # a facility (a camp site, a scout centre) is not a place: the backend finds neither its position nor its effect by ``placeId``, so it would route nobody and
         # check nothing. The target carries the id the right way round *and* the point, and the effect of a facility is the ground around it.
         shield = (
-            {"geometry": zone_around(float(spot["lat"]), float(spot["lon"]), 0.0, 250.0, 0, 12)}
+            {"geometry": zone_around(float(spot["lat"]), float(spot["lon"]), 0.0, 120.0, 0, 12)}  # the houses of one place, not a 500 m disc
             if first.get("assetType") == "facility" and spot else {"placeId": first["id"]}
         )
         protection = ActionProposal(
@@ -703,27 +712,31 @@ class FirefighterAgent:
     def _helicopter_suppression(self, situation: Situation) -> list[ActionProposal]:
         load = float((self.observation.aerial or {}).get("bucketCapacityL") or self.observation.water_capacity_l or 1000.0)
         strength = AIR_STRENGTH_LIGHT if load <= 1500 else AIR_STRENGTH_MEDIUM if load <= 3500 else AIR_STRENGTH_HEAVY  # a bigger load covers more front per drop
-        if self._assignment.air_corridor is not None and self._assignment.air_until:
+        target_pos = self._assignment.site or (self._assignment.sector.position if self._assignment.sector else situation.anchor)
+        callsign = getattr(self.observation, "callsign", None) or self.agent_id
+        if (self._assignment.air_corridor is not None or self._assignment.air_line is not None) and self._assignment.air_until:
             # the fire will be past direct attack before the crews arrive: this aircraft is the only one in time, and keeps dropping on its head until then
             until = int(round(self._assignment.air_until))
+            geom = self._assignment.air_line or self._assignment.air_corridor or self._line(situation, target_pos)
             return [
                 ActionProposal(
                     action_type="fire_attack",
-                    title=f"Ataque aéreo inicial: largadas na cabeça até as equipas chegarem (T+{until})",
+                    title=f"Ataque aéreo inicial: largadas na frente ativa ({callsign}) (T+{until})",
+                    target=target_pos,
                     intervention={
                         "type": "aerial_drop",
-                        "label": "Ataque aéreo inicial",
+                        "label": f"Ataque aéreo {callsign}",
                         "start": {"offsetMinutes": 0},
-                        "geometry": self._assignment.air_corridor,
+                        "geometry": geom,
                         "agent": "water",
                         "effectiveness": strength,
                         "effectDurationMinutes": until,
                     },
                     priority="critical",
                     resources=self._air_resources(),
-                    expected_effect="Rotações de poucos minutos sobre a cabeça mantêm o fogo de superfície baixo e fora das copas até os autotanques chegarem.",
+                    expected_effect="Rotações de poucos minutos sobre a frente ativa mantêm o fogo de superfície baixo e fora das copas até os autotanques chegarem.",
                     confidence=0.6,
-                    safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral; só de dia e com vento dentro do limite do meio.",
+                    safety_notes="Corrente de convecção junto à frente; aproximar pela lateral; só de dia e com vento dentro do limite do meio.",
                     extra_action_fields={"tactic": "direct"},
                 )
             ]
@@ -731,24 +744,26 @@ class FirefighterAgent:
         # weighs the effect by how much of that time a drop is still wet on the ground (its rotation, see ``_air_rotation``) and ends it at nightfall.
         if situation.max_intensity_kwm >= 1500:
             strength = round(strength * 0.75, 2)
+        geom = self._assignment.air_line or self._line(situation, target_pos)
         return [
             ActionProposal(
                 action_type="fire_attack",
-                title="Largadas aéreas na cabeça do fogo (vai reabastecer e volta)",
+                title=f"Largadas aéreas na frente ativa ({callsign})",
+                target=target_pos,
                 intervention={
                     "type": "aerial_drop",
-                    "label": "Largadas cabeça",
+                    "label": f"Largadas {callsign}",
                     "start": {"offsetMinutes": 0},
-                    "geometry": self._line(situation),
+                    "geometry": geom,
                     "agent": "water",
                     "effectiveness": strength,
                     "effectDurationMinutes": AIR_SORTIE_MIN,
                 },
                 priority="high",
                 resources=self._air_resources(),
-                expected_effect=f"Freia a cabeça com largadas sucessivas durante ~{AIR_SORTIE_MIN} min (cada largada molha ~{AIR_DROP_WET_MIN} min; entre largadas vai reabastecer).",
+                expected_effect=f"Freia a frente com largadas sucessivas durante ~{AIR_SORTIE_MIN} min (cada largada molha ~{AIR_DROP_WET_MIN} min; entre largadas vai reabastecer).",
                 confidence=0.6,
-                safety_notes="Corrente de convecção junto à cabeça; aproximar pela lateral.",
+                safety_notes="Corrente de convecção junto à frente; aproximar pela lateral.",
                 extra_action_fields={"tactic": "direct"},
             )
         ]

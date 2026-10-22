@@ -33,14 +33,16 @@ export const PLAN_KINDS: Record<PlanKind, { label: string; color: string }> = {
 };
 const KIND_ORDER = Object.keys(PLAN_KINDS) as PlanKind[];
 
-// Half-widths in world units (1 unit = 10 m): a fire line is ~50 m wide on screen so it reads from the whole-map view.
-const LINE_HALF_WIDTH = 2.5;
-const DROP_HALF_WIDTH = 4;
-const OUTLINE_HALF_WIDTH = 1.1;
-const ROUTE_HALF_WIDTH = 1;
-const CLOSURE_HALF_WIDTH = 1.7; // a little wider than the road it covers
+// Half-widths in world units (1 unit = 10 m), close to the real thing: a hand/wet line ~12 m across, a drop curtain ~30 m, a road ~6 m.
+const LINE_HALF_WIDTH = 0.6;
+const DROP_HALF_WIDTH = 1.5;
+const OUTLINE_HALF_WIDTH = 0.35;
+const ROUTE_HALF_WIDTH = 0.35;
+const CLOSURE_HALF_WIDTH = 0.5; // a little wider than the road it covers
+const CLOSURE_CAP_M = 80; // a closure is drawn as a short cap at its access, not along the whole road (the roads it covers can be kilometres of ribbon)
+const FILL_ALPHA = 0.14; // zones are outlines with a light tint: overlapping tactics stay readable
 const EMERGENCY_PASSES = '#ff9f1a';
-const PLACE_RING_M = 160;
+const PLACE_RING_M = 100;
 const LIFT = 2.2;
 const FOCUS_ROUTE = '#00e5ff';
 
@@ -197,7 +199,7 @@ class PointAcc {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 4));
-    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, transparent: true, depthTest: false }));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 6, sizeAttenuation: false, vertexColors: true, transparent: true, depthTest: false }));
     points.renderOrder = 8;
     points.userData.tipFor = (i: number) => this.tips[i] ?? '';
     this.geometry = geometry;
@@ -241,6 +243,19 @@ function effectFacts(effect: Effect): string {
   const effectiveness = finite(e.effectiveness);
   if (effectiveness !== undefined) parts.push(`eficácia ${Math.round(effectiveness * 100)}%`);
   return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
+
+/** The stretch of `points` (a road, `[lon, lat]`) within `maxM` of the end nearest to `near` (the checkpoint; else the first end): where the closure is drawn. */
+function capAt(points: LonLat[], near: { lat: number; lon: number } | undefined, maxM: number): LonLat[] {
+  const dist = (a: LonLat, b: LonLat) => Math.hypot((a[0] - b[0]) * 111_320 * Math.cos((a[1] * Math.PI) / 180), (a[1] - b[1]) * 111_320);
+  const start = near && dist(points[points.length - 1], [near.lon, near.lat]) < dist(points[0], [near.lon, near.lat]) ? [...points].reverse() : points;
+  const cap: LonLat[] = [start[0]];
+  let length = 0;
+  for (let i = 1; i < start.length && length < maxM; i++) {
+    length += dist(start[i - 1], start[i]);
+    cap.push(start[i]);
+  }
+  return cap;
 }
 
 /** A circle of `radiusM` around a point, as `[lon, lat]` (closed ring). */
@@ -320,7 +335,7 @@ export class PlanLayer {
       } else {
         const rings = polygonRings(geometry);
         rings.forEach((ring) => {
-          b.fills.fan(world(ring), color, 0.3, tip, win);
+          b.fills.fan(world(ring), color, FILL_ALPHA, tip, win);
           b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true, win);
         });
         if (rings.length) this.counts[kind]++;
@@ -360,7 +375,7 @@ export class PlanLayer {
             if (effect.geometry) shape('structure_protection', effect.geometry, color, effectTip, LINE_HALF_WIDTH, win);
             else if (ring) {
               const b = buckets.get('structure_protection')!;
-              b.fills.fan(world(ring), color, 0.3, effectTip, win);
+              b.fills.fan(world(ring), color, FILL_ALPHA, effectTip, win);
               b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, effectTip, true, win);
               this.counts.structure_protection++;
             }
@@ -374,7 +389,7 @@ export class PlanLayer {
                 const ring = placeRing(id);
                 if (!ring) continue;
                 const b = buckets.get('evacuation')!;
-                b.fills.fan(world(ring), color, 0.3, tip, when);
+                b.fills.fan(world(ring), color, FILL_ALPHA, tip, when);
                 b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, 0.95, tip, true, when);
                 this.counts.evacuation++;
               }
@@ -391,7 +406,8 @@ export class PlanLayer {
         for (const id of action.roadIds ?? []) {
           const points = roadGeometry?.(id) ?? [];
           if (points.length < 2) continue;
-          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, 0.95, tip, false, when);
+          const cap = capAt(points, action.checkpoints?.[0]?.position, CLOSURE_CAP_M);
+          buckets.get('road_closure')!.ribbons.ribbon(world(cap), CLOSURE_HALF_WIDTH, color, 0.95, tip, false, when);
           drawn = true;
         }
         if (drawn) this.counts.road_closure++;

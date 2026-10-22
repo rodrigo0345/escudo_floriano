@@ -176,7 +176,7 @@ public sealed class SimulationService(IDocumentStore<Simulation> sims, IDocument
         var report = Progress(sim.Id, members.Count, ct);
         var results = await engine.RunAsync(new FireJob(spec.ToEngineGrid(), landscapeBuilder.Treat(landscape.Bands, spec.CellCount, effect.Treatments, settings.Interventions.FuelRemoval), effect.Adjustment, ignitions, sc.DurationMinutes, members, weather.SpinUpHours(wspec) * 60, sc.Engine?.Spotting ?? settings.Defaults.Spotting, burned, wspec.FuelMoisture, report.Report,
             effect.Windows is { Count: > 0 } w ? new SuppressionPlan(w, settings.Rules.Suppression.FullEffectUpToKwm, settings.Rules.Suppression.NoEffectFromKwm, settings.Interventions.MinSpreadFactor,
-                settings.Interventions.LineHoldFullKwm, settings.Interventions.LineBreachKwm) : null), ct);
+                settings.Interventions.LineHoldFullKwm, settings.Interventions.LineBreachKwm, settings.Interventions.ExtinguishAtEffectiveness) : null), ct);
         await report.Idle(); // sem gravações de progresso atrasadas por cima do estado seguinte
         await Save(await GetAsync(sim.Id, ct) with { Progress = new("post_processing", settings.Simulation.ProgressPercent.PostProcessing, members.Count, members.Count) });
 

@@ -49,12 +49,13 @@ from .daylight import minutes_to_sunset
 from .duty import duty_factor, fuel_of, refill_setup_minutes
 from .fuelbreak import plan_strip, plan_wet_line, strip_polygon
 from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, GnrPlan, closure_action, control_point_action, intensity_lookup, nearest_units, plan_cordon, unit_stub
-from .capacity import line_budget_m
+from .capacity import front_need_m, line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
-from .placement import FireClock, black_site, stay_ahead
+from .joint import link_organizations
+from .placement import FireClock, black_site, stay_ahead, route_in_fire
 from .support import STANDBY_AMBULANCES, SupportAgents, SupportPlan
 from .terrain import TerrainReader, apply_to_effect as apply_terrain_effect
-from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, plan_sectors, slot_shift, with_preferences, zone_around
+from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, line_across, plan_sectors, slot_shift, with_preferences, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 from .travel import TravelPlanner, centroid
 
@@ -64,6 +65,13 @@ log = logging.getLogger("firetrace.orchestrator")
 STAGING_DISTANCES_M = (800.0, 1600.0, 3200.0, 6400.0)  # how far from the fire a unit that cannot reach it waits, nearest first
 ARRIVAL_STEP_MIN = 15  # units arriving within this of each other are placed on the same picture of the fire
 AHEAD_STAY_MIN = 60  # how long a crew working ahead of the fire stays, at most (it leaves sooner if the fire comes sooner)
+HOUSE_ZONE_RADIUS_M = 80.0  # a patch of houses the engines defend: about a street of houses across
+FRONT_LOOKAHEAD_MIN = 30  # crews are placed on the front the fire will have this many minutes after the decision (a unit is there within about that): 60 put them kilometres ahead of a fast fire
+FORCE_RADIUS_M = 900.0  # crews within this of each other are one group (a "grupo de combate")
+FORCE_MIN_CREWS = 3  # a group this big gets an ambulance post of its own
+FORWARD_POSTS = 2
+SPOT_SPACING_M = 220.0  # crews closer than this are "in the same place"
+MAX_CREWS_PER_SPOT = 3  # a task force: a real commander does not put a dozen engines on one spot while the rest of the edge burns; the others wait for the next wave
 AIR_LEAD_MIN = 10  # an aircraft drops this long before the crews it supports arrive
 AIR_SPACING_M = 180.0  # two aircraft do not prepare the same stretch (about one work zone apart)
 MIN_USEFUL_WORK_MIN = 20  # a unit that would work less than this before the run ends is not sent (it stays free)
@@ -163,6 +171,7 @@ class OrchestratorAgent:
         self._arrival: dict[str, float] = {}  # unit → minutes it needs to reach the fire (last `_initial_attack`)
         self._grids: dict[str, dict[str, Any]] = {}  # location → simulation grid (static, fetched once)
         self.origins: dict[str, dict[str, float]] = {}  # unit → where it is when it is not at its station (set by the re-plans: a crew leaves from its last job)
+        self.unit_routes: dict[str, dict[str, Any]] = {}  # unit id → the road it was last routed along (station → job)
         self._clocks: dict[str, FireClock | None] = {}  # simulation → when its fire reaches each cell
         self._run_minutes = 0  # length of the run being planned (last `run_cycle`)
         self._sunset: float | None = None  # minutes from the scenario start until sunset there (last `run_cycle`): aircraft fly by day only
@@ -311,6 +320,11 @@ class OrchestratorAgent:
         # (B too; on Penha, holding back two engines meant for the head let the fire escape: 9 ha with them, 612 ha without).
         holding = not result.initial_attack
         result.held = self._hold_reserve(result, reserve_share) if reserve_share > 0 and holding else []
+        if travel:
+            crowded = [i for i in self._space_crews(situation, result) if i not in result.held]
+            if crowded:
+                result.held = [*result.held, *crowded]  # no room for them on the edge yet: forward reserve, drawn on by the next waves (adaptation.py)
+                result.issues.append(AgentIssue("orchestrator", "equipas", f"{len(crowded)} meios ficam em reserva avançada: já há {MAX_CREWS_PER_SPOT} equipas em cada ponto do perímetro (entram nas próximas reavaliações)."))
         for agent in self.agents:
             assignment = result.assignments.get(agent.agent_id)
             if lean and holding and assignment is not None and assignment.reserve:
@@ -352,6 +366,7 @@ class OrchestratorAgent:
                     for message in agents.enrich_evacuations(plan, people, support.ambulances_left, shelters):
                         result.issues.append(AgentIssue("proteção civil", "evacuação", message))
             result.support = support
+            self._joint_operations(plan_a, plan_b, result, support, agents, situation)
         self._advised_review(result, plan_a, situation)
 
         if validate or publish:  # the callers that judge the plans themselves (alternatives, re-plans) validate later, once
@@ -454,7 +469,11 @@ class OrchestratorAgent:
                     continue
                 strip = plan_strip(assignment.sector, agent.observation.crew_onboard, decided_at, travel=travel, perimeters_at=perimeters_at)
             elif too_strong:
-                strip = plan_wet_line(assignment.sector, decided_at, travel=travel, perimeters_at=perimeters_at)
+                # each engine lays its own line: moved along the front by its slot, so engines on one sector do not stack the same line
+                along = (assignment.sector.bearing_deg + 90.0) % 360.0
+                lat, lon = destination(assignment.sector.lat, assignment.sector.lon, along, slot_shift(assignment.slot, 2.0 * situation.zone_radius_m))
+                shifted = replace(assignment.sector, lat=lat, lon=lon)
+                strip = plan_wet_line(shifted, decided_at, travel=travel, perimeters_at=perimeters_at)
             else:
                 continue  # an engine that can still attack head-on does so
             if strip is not None:
@@ -528,21 +547,95 @@ class OrchestratorAgent:
                 unsafe.append(agent.agent_id)
         return unsafe
 
+    def _joint_operations(self, plan_a: dict[str, Any], plan_b: dict[str, Any], result: CycleResult, support: SupportPlan, agents: SupportAgents | None, situation: Situation) -> None:
+        """The corporations work together (``joint.py``): an ambulance post beside each big group of crews, then every action that belongs with another's is linked to it."""
+        decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
+        spots = [spot for agent in self.agents if (a := result.assignments.get(agent.agent_id)) is not None and a.place is None and agent.agent_id not in result.held
+                 and agent.tier is not FirefighterTier.HELICOPTER and (spot := self._crew_spot(situation, a)) is not None]
+        groups: list[list[dict[str, float]]] = []
+        for spot in spots:
+            home = next((g for g in groups if distance_m(spot["lat"], spot["lon"], g[0]["lat"], g[0]["lon"]) <= FORCE_RADIUS_M), None)
+            if home is None:
+                groups.append([spot])
+            else:
+                home.append(spot)
+        extra: list[dict[str, Any]] = []
+        if agents is not None and support.ambulances_left:
+            for index, group in enumerate(sorted((g for g in groups if len(g) >= FORCE_MIN_CREWS), key=len, reverse=True)[:FORWARD_POSTS], start=1):
+                agents.ambulances = list(support.ambulances_left)
+                post = agents.medical_standby(group, situation.head_bearing_deg, decided_at)
+                support.ambulances_left = post.ambulances_left
+                for action in post.actions:
+                    action["id"] = f"inem-forward-{index}"
+                    action["title"] = f"INEM junto do grupo de combate {index} ({len(group)} equipas, {len(action.get('resources') or [])} ambulâncias)"
+                    extra.append(action)
+        gnr_org, civil_org = self._gnr_organization(), self._command_organization()
+        medical_org = agents.medical_org if agents is not None else ""
+        made = 0
+        for plan in (plan_a, plan_b):
+            plan["actions"].extend(copy.deepcopy(extra))
+            made = link_organizations(plan["actions"], gnr_org=gnr_org, civil_org=civil_org, medical_org=medical_org)
+        if extra or made:
+            result.issues.append(AgentIssue("orchestrator", "operações conjuntas", f"{made} operações conjuntas (GNR, INEM, Proteção Civil e Bombeiros ligados); {len(extra)} postos do INEM junto dos grupos de combate."))
+
+    def _safe_planner(self, planner: TravelPlanner, location_id: str, situation: Situation) -> TravelPlanner:
+        """The same routing, but around the predicted fire (an initial attack routes straight at it, because its target is the fire)."""
+        if planner.avoid_fire:
+            return planner
+        return TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules, cache=self._routes, avoid_fire=True, origins=self.origins)
+
+    def _crew_spot(self, situation: Situation, assignment: Assignment) -> dict[str, float] | None:
+        """Where a ground crew works, as the agents place it: its safe spot, else its sector's front moved along the edge by its slot (``firefighter._zone``)."""
+        if assignment.site is not None:
+            return {"lat": float(assignment.site["lat"]), "lon": float(assignment.site["lon"])}
+        if assignment.sector is None:
+            return None
+        along = (assignment.sector.bearing_deg + 90.0) % 360.0
+        lat, lon = destination(assignment.sector.lat, assignment.sector.lon, along, slot_shift(assignment.slot, 2.0 * situation.zone_radius_m))
+        return {"lat": lat, "lon": lon}
+
+    def _space_crews(self, situation: Situation, result: CycleResult) -> list[str]:
+        """The units that would stand on a spot that already has ``MAX_CREWS_PER_SPOT`` crews within ``SPOT_SPACING_M`` (the ones that arrive first keep the spot).
+
+        Crews working a fuel strip or a wet line have a line of their own, units that look after a place go to it, and aircraft do not stand anywhere: none of them counts.
+        """
+        placed: list[dict[str, float]] = []
+        crowded: list[str] = []
+        for agent in sorted((a for a in self.agents if a.agent_id in result.assignments), key=lambda a: (self._arrival.get(a.agent_id, 1e9), a.agent_id)):
+            assignment = result.assignments[agent.agent_id]
+            if agent.tier is FirefighterTier.HELICOPTER or assignment.place is not None or assignment.fuel_strip is not None or assignment.stay_minutes == 0:
+                continue
+            spot = self._crew_spot(situation, assignment)
+            if spot is None:
+                continue
+            if sum(distance_m(spot["lat"], spot["lon"], q["lat"], q["lon"]) <= SPOT_SPACING_M for q in placed) >= MAX_CREWS_PER_SPOT:
+                crowded.append(agent.agent_id)
+                continue
+            placed.append(spot)
+        return crowded
+
     def _fire_clock(self, situation: Situation, location_id: str, result: CycleResult) -> FireClock | None:
         """When the forecast fire reaches each cell (the simulation's ignition grid), cached per simulation; ``None`` (and an issue) if the server has no grid."""
-        if situation.simulation_id in self._clocks:
-            return self._clocks[situation.simulation_id]
+        clock, error = self.fire_clock(situation.simulation_id, location_id)
+        if error is not None:
+            result.issues.append(AgentIssue("orchestrator", "safe placement", f"not checked [{getattr(error, 'code', 'no_grid')}]: {error}"))
+        return clock
+
+    def fire_clock(self, simulation_id: str, location_id: str) -> tuple[FireClock | None, Exception | None]:
+        """``_fire_clock`` without a cycle: the clock (``None`` when the server has no grid) and what went wrong, if anything."""
+        if simulation_id in self._clocks:
+            return self._clocks[simulation_id], None
+        error: Exception | None = None
         try:
             if location_id not in self._grids:
                 self._grids[location_id] = self.client.get_location(location_id)["grid"]
-            clock: FireClock | None = FireClock(self._grids[location_id], ignition_minutes(self.client.get_ignition_grid(situation.simulation_id)))
-        except (ApiProblem, KeyError) as error:
-            result.issues.append(AgentIssue("orchestrator", "safe placement", f"not checked [{getattr(error, 'code', 'no_grid')}]: {error}"))
-            clock = None
+            clock: FireClock | None = FireClock(self._grids[location_id], ignition_minutes(self.client.get_ignition_grid(simulation_id)))
+        except (ApiProblem, KeyError) as caught:
+            error, clock = caught, None
         if len(self._clocks) > 8:
             self._clocks.clear()
-        self._clocks[situation.simulation_id] = clock
-        return clock
+        self._clocks[simulation_id] = clock
+        return clock, error
 
     def _support(self, situation: Situation, location_id: str, result: CycleResult, run_minutes: int) -> tuple[SupportPlan, SupportAgents | None]:
         """Proteção Civil and INEM (``support.py``): medical standby behind the crews, the command post and the public alerts; the evacuations are completed later."""
@@ -599,8 +692,27 @@ class OrchestratorAgent:
         for eta, assignment in crews:  # one stretch per aircraft, in the order the crews arrive
             if all(distance_m(assignment.sector.lat, assignment.sector.lon, s.lat, s.lon) > 2 * AIR_SPACING_M for _e, s in targets):
                 targets.append((eta, assignment.sector))
-        for agent, (eta, sector) in zip(aircraft, targets):
-            result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], sector=sector, start_after=max(eta - AIR_LEAD_MIN, 0.0))
+        if not targets and result.assignments:
+            active = [a.sector for a in result.assignments.values() if a.sector is not None]
+            for s in active:
+                if all(distance_m(s.lat, s.lon, other.lat, other.lon) > 2 * AIR_SPACING_M for _e, other in targets):
+                    targets.append((0.0, s))
+        for idx, agent in enumerate(aircraft):
+            if targets:
+                eta, sector = targets[idx % len(targets)]
+                slot = idx % 2
+                stagger = (idx // len(targets)) * 3.0
+                site = {"lat": sector.lat, "lon": sector.lon}
+                line = line_across(sector.lat, sector.lon, sector.bearing_deg, situation.zone_radius_m, slot)
+                result.assignments[agent.agent_id] = replace(
+                    result.assignments[agent.agent_id],
+                    sector=sector,
+                    site=site,
+                    air_line=line,
+                    air_corridor=None,
+                    start_after=max(eta - AIR_LEAD_MIN + stagger, 0.0),
+                    slot=slot,
+                )
 
     def _air_rotation(self, unit: FirefighterAgent, target: dict[str, Any] | None, situation: Situation) -> tuple[float, float]:
         """An aircraft's rotation, as the rules count it (``Rules.aerial.cycleTime``: 2 × distance(water → target) / speed + load + drop), and that distance in km.
@@ -645,29 +757,45 @@ class OrchestratorAgent:
             start = situation.anchor
         except ValueError:
             return False
-        # Every aircraft works the head's corridor, the ones that come after the fire outgrew direct attack too: tried spreading those over the stretches of the
-        # edge that can still be held instead, and it did worse (Falperra 199 → 268 ha; Penha the same, no such stretch was found)
+        # Get active sectors at the current decision time directly on the active fire front
+        current_sectors: list[Sector] = []
+        try:
+            vectors = self.client.get_vectors(situation.simulation_id, t_min=int(round(decided_at)))
+            current_sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, all_around=True)
+        except ApiProblem:
+            current_sectors = []
+
+        if not current_sectors:
+            head_lat, head_lon = float(start["lat"]), float(start["lon"])
+            current_sectors = [Sector(head_lat, head_lon, situation.head_bearing_deg, situation.head_speed_mmin, situation.max_intensity_kwm)]
+
         planner = TravelPlanner(self.client, location_id=str(self._location_id), simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules,
                                 cache=self._routes, avoid_fire=False, origins=self.origins)
         early = sum(1 for a in aircraft if (planner.eta(a, start).arrival_minutes or math.inf) <= crown_at)
-        head: Sector | None = None
-        try:
-            heads = plan_sectors(self.client.get_vectors(situation.simulation_id, t_min=int(round(decided_at + until))), zone_radius_m=situation.zone_radius_m)
-            head = heads[0] if heads else None
-        except ApiProblem:
-            head = None
-        if head is None:  # no vectors yet: the head goes on along its bearing at its speed
-            lat, lon = destination(float(start["lat"]), float(start["lon"]), situation.head_bearing_deg, situation.head_speed_mmin * until)
-            head = Sector(lat, lon, situation.head_bearing_deg, situation.head_speed_mmin, situation.max_intensity_kwm)
-        bearing = bearing_to(float(start["lat"]), float(start["lon"]), head.lat, head.lon)
-        length = max(distance_m(float(start["lat"]), float(start["lon"]), head.lat, head.lon) + 2 * situation.zone_radius_m, 2 * situation.zone_radius_m)
-        mid_lat, mid_lon = destination(float(start["lat"]), float(start["lon"]), bearing, length / 2 - situation.zone_radius_m)
-        corridor = strip_polygon(mid_lat, mid_lon, bearing, 2 * situation.zone_radius_m, length)  # across: two work zones wide; along: the head's run
-        for agent in aircraft:
-            result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], air_corridor=corridor, air_until=float(until), start_after=None)
+
+        # Distribute aircraft across active fire sectors (max 2 per sector, with staggered rotation timing)
+        num_sectors = len(current_sectors)
+        for idx, agent in enumerate(aircraft):
+            sector_idx = (idx // 2) % num_sectors if num_sectors > 1 else 0
+            sector = current_sectors[sector_idx]
+            slot = idx % 2
+            stagger = (idx % 2) * 3.0 + (idx // (2 * num_sectors)) * 6.0
+            site = {"lat": sector.lat, "lon": sector.lon}
+            line = line_across(sector.lat, sector.lon, sector.bearing_deg, situation.zone_radius_m, slot)
+            result.assignments[agent.agent_id] = replace(
+                result.assignments[agent.agent_id],
+                sector=sector,
+                site=site,
+                air_line=line,
+                air_corridor=None,
+                air_until=float(until),
+                start_after=stagger if stagger > 0 else None,
+                slot=slot,
+            )
+
         result.issues.append(AgentIssue("orchestrator", "ataque aéreo inicial", (
             f"the fire passes {full:.0f} kW/m at T+{crown_at:.0f}, before the bulk of the crews (T+{until:.0f}): {len(aircraft)} aircraft ({early} overhead before T+{crown_at:.0f}) "
-            f"drop on its head until then.")))
+            f"distributed across {min(len(aircraft), num_sectors)} sectors on the active fire perimeter.")))
         return True
 
     def _hold_reserve(self, result: CycleResult, share: float) -> list[str]:
@@ -704,7 +832,7 @@ class OrchestratorAgent:
         for ids, lead in groups or [(None, result.attack_lead or 0.0)]:
             crews = [
                 a for a in self.agents
-                if a.tier is not FirefighterTier.HELICOPTER and a.agent_id in result.assignments and result.assignments[a.agent_id].place is None and (ids is None or a.agent_id in ids)
+                if a.tier is not FirefighterTier.HELICOPTER and a.agent_id in result.assignments and result.assignments[a.agent_id].place is None and result.assignments[a.agent_id].stay_minutes != 0 and (ids is None or a.agent_id in ids)
             ]
             for agent in [a for a in crews if (s := result.assignments[a.agent_id].sector) is not None and s.intensity_kwm >= limit]:
                 result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], reserve=True)  # too intense to attack head-on: it works ahead
@@ -715,8 +843,10 @@ class OrchestratorAgent:
             for agent in sorted(crews, key=lambda a: (a.tier is not FirefighterTier.TRUCK, a.agent_id)):  # engines first: they bring the water
                 by_sector.setdefault(result.assignments[agent.agent_id].sector, []).append(agent)
             per_sector = max(1, math.ceil(zones / max(len(by_sector), 1)))
+            # the zone index runs along the whole outline, not per sector: otherwise the first zone of every sector is "slot 0" and all of them stack on one point
+            next_zone = 0
             for sector_crews in by_sector.values():
-                zone, survive = 0, 1.0
+                zone, survive, first = 0, 1.0, next_zone
                 for agent in sector_crews:
                     if 1.0 - survive >= cap:  # this zone is as strong as the rules allow: next one along the outline
                         zone, survive = zone + 1, 1.0
@@ -724,8 +854,9 @@ class OrchestratorAgent:
                         result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], reserve=True)
                         continue
                     survive *= 1.0 - situation.suppression_effectiveness(agent.observation.crew_onboard, agent.observation.water_capacity_l)
-                    result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], slot=zone, reserve=False)
+                    result.assignments[agent.agent_id] = replace(result.assignments[agent.agent_id], slot=first + zone, reserve=False)
                     on_outline += 1
+                next_zone = first + zone + 1
         return total_zones, on_outline
 
     def _outline_zones(self, situation: Situation, minute: int) -> int:
@@ -758,7 +889,7 @@ class OrchestratorAgent:
         if decided_at is None:
             decided_at = int(situation.latest_milestone.get("tMin") or 0)
         duration = ((simulation or {}).get("scenarioSnapshot") or {}).get("durationMinutes")
-        ahead = decided_at + (round(lead) if lead is not None else situation.horizon_minutes)
+        ahead = decided_at + (round(lead) if lead is not None else min(situation.horizon_minutes, FRONT_LOOKAHEAD_MIN))  # where the fire will be when the crews are there, not an hour on
         instants = [min(ahead, duration) if duration else ahead, decided_at]
         sectors: list[Sector] = []
         for t_min in dict.fromkeys(instants):
@@ -777,7 +908,8 @@ class OrchestratorAgent:
             else None
         )
         # places are not dealt out here: the life planner decides who looks after whom (see `_plan_life`)
-        assigned = assign_units(units, sectors, [], budgets=budgets, concentration=concentration)
+        no_effect = float(((situation.rules or {}).get("suppression") or {}).get("noEffectFromKwm") or DEFAULT_NO_EFFECT_KWM)
+        assigned = assign_units(units, sectors, [], budgets=budgets, concentration=concentration, need_m_of=lambda s: front_need_m(situation.zone_radius_m, s.intensity_kwm, no_effect))
         return self._advised_sectors(assigned, fighters, units, sectors, situation, budgets, concentration)
 
     def _sector_workability(self, situation: Situation) -> Callable[[Sector], float] | None:
@@ -892,7 +1024,7 @@ class OrchestratorAgent:
         if whole_run and self._run_minutes:  # plan B: every patch of houses the forecast fire reaches in the whole run, whether the fire can be attacked or not
             window = max(window, self._run_minutes - int(decided_at))
         zones = zones_to_defend(
-            cells, ignition, after_min=decided_at, until_min=decided_at + window, radius_m=situation.zone_radius_m,
+            cells, ignition, after_min=decided_at, until_min=decided_at + window, radius_m=HOUSE_ZONE_RADIUS_M,  # the houses of one patch: a house-sized disc, not a work zone
             max_zones=min(max_zones, max(1, len(engines) // per_zone)),
         )
         reserved: dict[str, dict[str, Any]] = {}
@@ -924,7 +1056,7 @@ class OrchestratorAgent:
             actions.append({
                 "id": f"shelter-{item.id}", "type": "shelter_in_place", "title": f"Abrigar no local: {item.name}",
                 "organizationId": self._command_organization(), "priority": "critical", "rationale": decision.reason,
-                "area": zone_around(float(item.position["lat"]), float(item.position["lon"]), 0.0, 250.0, 0, 16),
+                "area": zone_around(float(item.position["lat"]), float(item.position["lon"]), 0.0, 150.0, 0, 16),  # the place's houses, not a 500 m disc
                 "placeIds": [item.id], "guidance": "Ficar em casa, janelas e portas fechadas, afastado das fachadas viradas ao fogo; seguir as indicações da Proteção Civil.",
                 "durationMinutes": 90,
             })
@@ -1196,7 +1328,21 @@ class OrchestratorAgent:
                     dropped.add(proposal.proposal_id)
                     lost.setdefault(agent_id, (agent, route.reason, target))
                     continue
+                if (clock := self._clocks.get(situation.simulation_id)) is not None and route.geometry:
+                    # the drive must not cross ground that is burning when the unit passes: look for a road that does not, else the unit waits for the next decision
+                    hit = route_in_fire(clock, route.geometry, decided_at + route.delay_minutes, route.eta_minutes or 0.0)
+                    if hit is not None:
+                        safer = self._safe_planner(planner, location_id, situation).eta(agent, target)
+                        if safer.reachable and safer.geometry and route_in_fire(clock, safer.geometry, decided_at + safer.delay_minutes, safer.eta_minutes or 0.0) is None:
+                            route = safer
+                        else:
+                            result.issues.append(AgentIssue(agent_id, proposal.title, f"dropped: its road crosses ground that is burning when it passes (T+{hit:.0f} min) and there is no other way."))
+                            dropped.add(proposal.proposal_id)
+                            lost.setdefault(agent_id, (agent, "a estrada atravessa o fogo", target))
+                            continue
                 proposal.eta_minutes, proposal.from_station, proposal.route = route.eta_minutes, route.from_station, route.geometry
+                if route.geometry:
+                    self.unit_routes[str(agent.observation.vehicle_id or agent_id)] = route.geometry  # the road each unit takes to its job: where it can wait afterwards (holding.py)
                 proposal.delay_minutes = route.delay_minutes
                 arrives = decided_at + route.delay_minutes + (route.eta_minutes or 0.0)
                 if self._run_minutes and proposal.intervention.get("type") in COMBAT_EFFECTS and arrives > self._run_minutes - MIN_USEFUL_WORK_MIN:

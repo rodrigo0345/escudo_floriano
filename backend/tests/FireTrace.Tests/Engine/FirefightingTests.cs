@@ -42,6 +42,26 @@ public class FirefightingTests
         Assert.True(held < 0 || held > free + 10, $"free {free} held {held}");
     }
 
+    static SuppressionPlan Crews(int count, double effectiveness, double extinguishAt, double fullKwm = 1_000_000, double noneKwm = 2_000_000) =>
+        new(Enumerable.Range(0, count).Select(_ => new SuppressionWindow(LineAtColumn(), 0, float.MaxValue, (float)effectiveness)).ToArray(), fullKwm, noneKwm, 0.02, ExtinguishAt: extinguishAt);
+
+    [Fact]
+    public async Task Enough_crews_on_flames_they_can_fight_put_the_fire_out_where_fewer_only_slow_it()
+    {
+        int free = await ArrivalBeyond(null);
+        Assert.True(free > 0);
+        Assert.True(await ArrivalBeyond(Crews(1, 0.4, 0.65)) > free);   // one vehicle (~40%) only slows it
+        Assert.Equal(-1, await ArrivalBeyond(Crews(3, 0.4, 0.65)));     // three together (78%) stop it
+        Assert.True(await ArrivalBeyond(Crews(3, 0.4, 2)) is > 0);      // with the rule off they only slow it
+    }
+
+    [Fact]
+    public async Task Flames_too_intense_to_fight_are_not_put_out_however_many_crews_there_are()
+    {
+        int free = await ArrivalBeyond(null);
+        Assert.Equal(free, await ArrivalBeyond(Crews(6, 0.4, 0.65, fullKwm: 0, noneKwm: 1)));
+    }
+
     [Fact]
     public async Task A_crew_that_has_left_or_not_yet_arrived_does_nothing()
     {

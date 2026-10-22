@@ -36,17 +36,34 @@ NOTE = "reforço de exemplo (números a confirmar com o CDOS)"
 MAIN_ROADS = {"motorway", "trunk", "primary", "motorway_link", "trunk_link", "primary_link"}
 INSIDE_M = 400.0  # how far inside the map the entry point is (the routing works on the municipality's own network)
 
-VFCI = {"type": "forest_firefighting_vehicle", "typeCode": "VFCI", "crewCapacity": 5, "minimumCrew": 3, "waterCapacityL": 3000, "pumpFlowLpm": 1000,
-        "offRoad": True, "maxSlopePercent": 35, "cruiseSpeedKmh": 60, "capabilities": ["wildfire_attack", "structure_protection"]}
+VFCI = {"type": "forest_firefighting_vehicle", "typeCode": "VFCI", "crewCapacity": 5, "minimumCrew": 3, "waterCapacityL": 3500, "pumpFlowLpm": 1000,
+        "passengerCapacity": 0, "offRoad": True, "maxSlopePercent": 35, "cruiseSpeedKmh": 60, "capabilities": ["wildfire_attack", "structure_protection"]}
 VTTF = {"type": "tanker_forest", "typeCode": "VTTF", "crewCapacity": 3, "minimumCrew": 2, "waterCapacityL": 10000, "pumpFlowLpm": 1000,
-        "offRoad": False, "maxSlopePercent": 20, "cruiseSpeedKmh": 55, "capabilities": ["wildfire_attack", "water_supply"]}
+        "passengerCapacity": 0, "offRoad": False, "maxSlopePercent": 20, "cruiseSpeedKmh": 55, "capabilities": ["wildfire_attack", "water_supply"]}
+ABSC = {"type": "ambulance", "typeCode": "ABSC", "crewCapacity": 2, "minimumCrew": 2, "waterCapacityL": 0, "pumpFlowLpm": 0,
+        "passengerCapacity": 1, "offRoad": False, "maxSlopePercent": 25, "cruiseSpeedKmh": 80, "capabilities": ["evacuation_transport", "medical_transport"]}
+VMER = {"type": "advanced_medical_vehicle", "typeCode": "VMER", "crewCapacity": 2, "minimumCrew": 2, "waterCapacityL": 0, "pumpFlowLpm": 0,
+        "passengerCapacity": 0, "offRoad": False, "maxSlopePercent": 25, "cruiseSpeedKmh": 90, "capabilities": ["advanced_life_support"]}
+PMA = {"type": "command_vehicle", "typeCode": "PMA", "crewCapacity": 6, "minimumCrew": 3, "waterCapacityL": 0, "pumpFlowLpm": 0,
+       "passengerCapacity": 0, "offRoad": False, "maxSlopePercent": 20, "cruiseSpeedKmh": 60, "capabilities": ["command_and_control", "medical_transport"]}
+BUS = {"type": "bus", "typeCode": "BUS", "crewCapacity": 2, "minimumCrew": 1, "waterCapacityL": 0, "pumpFlowLpm": 0,
+       "passengerCapacity": 55, "offRoad": False, "maxSlopePercent": 20, "cruiseSpeedKmh": 65, "capabilities": ["evacuation_transport"]}
+VTTP = {"type": "personnel_transport", "typeCode": "VTTP", "crewCapacity": 9, "minimumCrew": 2, "waterCapacityL": 0, "pumpFlowLpm": 0,
+        "passengerCapacity": 9, "offRoad": True, "maxSlopePercent": 30, "cruiseSpeedKmh": 70, "capabilities": ["evacuation_transport"]}
+ABEV = {"type": "ambulance", "typeCode": "ABEV", "crewCapacity": 3, "minimumCrew": 2, "waterCapacityL": 0, "pumpFlowLpm": 0,
+        "passengerCapacity": 4, "offRoad": False, "maxSlopePercent": 25, "cruiseSpeedKmh": 75, "capabilities": ["evacuation_transport", "medical_transport"]}
+UEPS_VEH = {"type": "all_terrain_patrol", "typeCode": "UEPS", "crewCapacity": 5, "minimumCrew": 3, "waterCapacityL": 500, "pumpFlowLpm": 500,
+            "passengerCapacity": 0, "offRoad": True, "maxSlopePercent": 40, "cruiseSpeedKmh": 70, "capabilities": ["wildfire_attack", "structure_protection", "perimeter_security"]}
 
 # where the group comes from, the side of the municipality its road enters by (a compass bearing from the centre), minutes until it is there, vehicles
 GROUPS: list[dict[str, Any]] = [
-    {"name": "Grupo de Reforço do Distrito do Porto", "short": "GRIF Porto", "prefix": "GRIF-PRT", "side": 225, "mobilization": 60, "vehicles": [VFCI] * 4 + [VTTF]},
-    {"name": "Grupo de Reforço do Distrito de Viana do Castelo", "short": "GRIF Viana", "prefix": "GRIF-VCT", "side": 315, "mobilization": 75, "vehicles": [VFCI] * 4 + [VTTF]},
-    {"name": "Grupo de Reforço do Distrito de Vila Real", "short": "GRIF Vila Real", "prefix": "GRIF-VRL", "side": 90, "mobilization": 90, "vehicles": [VFCI] * 4 + [VTTF]},
-    {"name": "Bombeiros do Distrito de Braga (reforço)", "short": "Reforço Braga", "prefix": "RF-BRG", "side": 330, "mobilization": 30, "vehicles": [VFCI] * 3},
+    {"name": "Grupo de Reforço do Distrito do Porto", "short": "GRIF Porto", "type": "fire_brigade", "prefix": "GRIF-PRT", "side": 225, "mobilization": 60, "vehicles": [VFCI] * 5 + [VTTF] * 2 + [ABSC]},
+    {"name": "Grupo de Reforço do Distrito de Viana do Castelo", "short": "GRIF Viana", "type": "fire_brigade", "prefix": "GRIF-VCT", "side": 315, "mobilization": 75, "vehicles": [VFCI] * 5 + [VTTF] * 2 + [ABSC]},
+    {"name": "Grupo de Reforço do Distrito de Vila Real", "short": "GRIF Vila Real", "type": "fire_brigade", "prefix": "GRIF-VRL", "side": 90, "mobilization": 90, "vehicles": [VFCI] * 5 + [VTTF] * 2 + [ABSC]},
+    {"name": "Bombeiros do Distrito de Braga (reforço)", "short": "Reforço Braga", "type": "fire_brigade", "prefix": "RF-BRG", "side": 330, "mobilization": 30, "vehicles": [VFCI] * 4 + [VTTF] + [ABSC]},
+    {"name": "Coluna Médica INEM Norte", "short": "CM-INEM Norte", "type": "inem", "prefix": "INEM-CM", "side": 220, "mobilization": 45, "vehicles": [VMER, PMA] + [ABSC] * 4},
+    {"name": "Módulo de Apoio e Evacuação ANEPC Norte", "short": "MAE-PC Norte", "type": "civil_protection", "prefix": "PC-MAE", "side": 230, "mobilization": 50, "vehicles": [BUS] * 3 + [VTTP] * 2 + [ABEV] * 2},
+    {"name": "Pelotão UEPS GNR Norte", "short": "Pelotão UEPS", "type": "gnr", "prefix": "GNR-UEPS", "side": 340, "mobilization": 40, "vehicles": [UEPS_VEH] * 4},
 ]
 
 
@@ -143,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{group['short']} (chega em ~{group['mobilization']} min):")
         metadata = {"note": NOTE, "agents.mobilizationMinutes": group["mobilization"]}
         org = orgs.get(group["name"]) or api.create("/organizations", "OrganizationInput", {
-            "name": group["name"], "shortName": group["short"], "type": "fire_brigade", "jurisdiction": jurisdiction, "active": True, "tags": TAGS, "metadata": metadata,
+            "name": group["name"], "shortName": group["short"], "type": group.get("type", "fire_brigade"), "jurisdiction": jurisdiction, "active": True, "tags": TAGS, "metadata": metadata,
         }, f"organization {group['short']}")
         station_name = f"Entrada de reforços — {group['short']}"
         station = stations.get(station_name)

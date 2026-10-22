@@ -35,8 +35,8 @@ LEE_TAGS = ["demo-seed", "prepositioned"]
 NOTE = "meio de exemplo de um dia de alerta máximo (números a confirmar com o CDOS / DECIR)"
 EDGE_M = 300.0  # how far inside the map an aircraft's helipad is
 FOREST = {4, 5, 8, 9, 10}  # vegetation classes: mato, floresta mista, eucalipto, pinheiro, folhosas
-LEE_COUNT = 6
-LEE_SPACING_M = 3500.0
+LEE_COUNT = 10
+LEE_SPACING_M = 3000.0
 LEE_RADIUS_M = 1500.0  # the forest share is measured within this distance of the point
 
 AERIAL = {"maxWindKmh": 55, "minVisibilityM": 3000, "dayOnly": True}
@@ -48,14 +48,17 @@ MEDIUM_AMPHIBIOUS = {"type": "airtanker", "typeCode": "AVBM", "crewCapacity": 1,
                      "aerial": {**AERIAL, "bucketCapacityL": 3000, "loadMinutes": 1, "dropMinutes": 1, "cruiseSpeedKmh": 300}}
 HEAVY_AMPHIBIOUS = {"type": "airtanker", "typeCode": "AVBP", "crewCapacity": 2, "minimumCrew": 2, "waterCapacityL": 6000, "cruiseSpeedKmh": 330, "capabilities": ["aerial_water_drop"],
                     "aerial": {**AERIAL, "bucketCapacityL": 6000, "loadMinutes": 1, "dropMinutes": 1, "cruiseSpeedKmh": 330}}
+COORDINATION_HELI = {"type": "helicopter", "typeCode": "HECO", "crewCapacity": 3, "minimumCrew": 2, "waterCapacityL": 0, "cruiseSpeedKmh": 220, "capabilities": ["aerial_recon"],
+                     "aerial": {**AERIAL, "bucketCapacityL": 0, "loadMinutes": 0, "dropMinutes": 0, "cruiseSpeedKmh": 220}}
 SCOOP_KM = 25  # the nearest water body an amphibious airtanker can scoop from (a large reservoir up the valley)
 
 # where the aircraft come from (the side of the map their base is), minutes until they are overhead on that edge, the aircraft
 AIR_GROUPS: list[dict[str, Any]] = [
-    {"name": "Helicóptero ligeiro de ataque inicial (centro de meios aéreos a nascente)", "short": "HEBL nascente", "prefix": "HEBL", "side": 80, "mobilization": 8, "aircraft": [LIGHT_HELI]},
-    {"name": "Helicóptero pesado (base regional a sul)", "short": "HEBP sul", "prefix": "HEBP", "side": 180, "mobilization": 30, "aircraft": [HEAVY_HELI]},
+    {"name": "Helicópteros ligeiros de ataque inicial (centro de meios aéreos a nascente)", "short": "HEBL nascente", "prefix": "HEBL", "side": 80, "mobilization": 8, "aircraft": [LIGHT_HELI] * 2},
+    {"name": "Helicópteros pesados (base regional a sul)", "short": "HEBP sul", "prefix": "HEBP", "side": 180, "mobilization": 30, "aircraft": [HEAVY_HELI] * 2},
     {"name": "Aviões anfíbios médios (base regional a sul)", "short": "Anfíbios médios", "prefix": "AVBM", "side": 200, "mobilization": 25, "aircraft": [MEDIUM_AMPHIBIOUS] * 2},
     {"name": "Aviões anfíbios pesados (dispositivo nacional)", "short": "Anfíbios pesados", "prefix": "AVBP", "side": 190, "mobilization": 55, "aircraft": [HEAVY_AMPHIBIOUS] * 2},
+    {"name": "Helicóptero de coordenação aérea (dispositivo nacional)", "short": "HECO coordenação", "prefix": "HECO", "side": 210, "mobilization": 20, "aircraft": [COORDINATION_HELI]},
 ]
 
 ECIN = {"type": "forest_firefighting_vehicle", "typeCode": "VFCI", "crewCapacity": 5, "minimumCrew": 3, "waterCapacityL": 3000, "pumpFlowLpm": 1000,

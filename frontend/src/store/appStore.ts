@@ -43,6 +43,8 @@ export interface AppState {
   activePlan: Plan | null;
   /** The plan action picked in the combat timeline: outlined on the map with its unit's road. */
   focusedActionId: string | null;
+  /** A vehicle the operator clicked on the map: the plans panel shows the action it is doing (and clears this). */
+  selectedUnitId: string | null;
   /** The baseline (no-response) simulation the plans panel lists plans for: the last baseline shown, kept while a plan's what-if is on screen. */
   baseSimulationId: string | null;
   job: Job | null;
@@ -96,6 +98,7 @@ export interface AppState {
   setBaseSimulationId: (simulationId: string | null) => void;
   setActivePlan: (plan: Plan | null) => void;
   setFocusedAction: (actionId: string | null) => void;
+  selectUnit: (unitId: string | null) => void;
   setImpact: (impact: RunData['impact']) => void;
   setJob: (job: Job | null) => void;
   setProgress: (progress: Progress | null) => void;
@@ -137,6 +140,7 @@ export const useAppStore = create<AppState>((set) => ({
   baseSimulationId: null,
   activePlan: null,
   focusedActionId: null,
+  selectedUnitId: null,
   job: null,
   progress: null,
   smokeInfo: null,
@@ -200,6 +204,7 @@ export const useAppStore = create<AppState>((set) => ({
   setBaseSimulationId: (baseSimulationId) => set({ baseSimulationId }),
   setActivePlan: (activePlan) => set({ activePlan }),
   setFocusedAction: (focusedActionId) => set({ focusedActionId }),
+  selectUnit: (selectedUnitId) => set(selectedUnitId ? { selectedUnitId, tab: 'plans' } : { selectedUnitId: null }),
   setImpact: (impact) => set((s) => (s.run ? { run: { ...s.run, impact } } : {})),
   setJob: (job) => set({ job }),
   setProgress: (progress) => set({ progress }),

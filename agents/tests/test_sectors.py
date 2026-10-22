@@ -33,8 +33,8 @@ class TestPlanSectors:
     def test_ranks_by_danger_and_drops_neighbours_closer_than_two_work_zones(self):
         vectors = _vectors(
             (41.40, -8.30, 90, 5, 500),      # slow
-            (41.41, -8.30, 90, 30, 4000),    # fastest, most intense
-            (41.4101, -8.30, 90, 25, 3500),  # ~11 m from the fastest: dropped
+            (41.41, -8.30, 90, 30, 1600),    # fastest, most intense (within what crews can fight)
+            (41.4101, -8.30, 90, 25, 1500),  # ~11 m from the fastest: dropped
         )
         sectors = plan_sectors(vectors, zone_radius_m=180)
         assert [round(s.speed_mmin) for s in sectors] == [30, 5]
@@ -121,3 +121,13 @@ class TestAgentsUseTheirSector:
         geometry = unit.decide(situation).proposals[0].intervention["geometry"]
         lon, lat = geometry["coordinates"][0]
         assert distance_m(41.51, -8.39, lat, lon) < 500
+
+
+def test_crews_go_where_flames_can_be_fought_not_to_a_head_nobody_can_hold():
+    vectors = _vectors(
+        (41.40, -8.30, 90, 30, 26000),   # crown head: past the 4,000 kW/m limit
+        (41.42, -8.30, 270, 6, 5200),    # a flank: its share of the head's intensity is 1,200 kW/m
+    )
+    sectors = plan_sectors(vectors, zone_radius_m=100)
+    assert sectors[0].fightability == 1.0 and sectors[0].speed_mmin == 6
+    assert sectors[1].fightability == 0.0

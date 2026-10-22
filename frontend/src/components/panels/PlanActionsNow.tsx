@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { Plan, PlanAction, Vehicle } from '@/api';
 import { Tag } from '@/components/common/StatCard';
@@ -65,6 +65,8 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
   const vehicles = useResourcesStore((s) => s.vehicles);
   const [all, setAll] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const selectedUnitId = useAppStore((s) => s.selectedUnitId);
+  const selectUnit = useAppStore((s) => s.selectUnit);
 
   const windows = useMemo(() => actionWindows(plan), [plan]);
   const vehicleOf = useMemo(() => new Map(vehicles.map((v) => [v.id as string, v])), [vehicles]);
@@ -86,6 +88,26 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
   }
   const orgOf = (id: string) => organizations.find((o) => o.id === id);
   const active = cursor === null ? 0 : rows.filter((r) => r.phase === 'active').length;
+
+  // a vehicle clicked on the map: focus the action it is doing at this minute (else the next one it has, else the last it had)
+  useEffect(() => {
+    if (!selectedUnitId) return;
+    const mine = (plan.actions as PlanAction[]).filter((a) => (a.resources ?? []).some((r) => r.resourceId === selectedUnitId));
+    const minute = cursor ?? 0;
+    const ranked = mine
+      .map((a) => ({ a, w: windows.get(a.id as string)!, phase: phaseAt(windows.get(a.id as string)!, minute) }))
+      .sort((x, y) => PHASE_ORDER[x.phase] - PHASE_ORDER[y.phase] || (x.phase === 'done' ? y.w.end - x.w.end : x.w.start - y.w.start));
+    const chosen = ranked[0]?.a;
+    selectUnit(null);
+    if (!chosen) return;
+    const id = chosen.id as string;
+    setFocused(id);
+    setOpenRow(id);
+    setAll(true);
+    setTimeout(() => document.getElementById(`action-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+    const where = whereOf(chosen);
+    if (where && world) world.focusOnLatLon(where.lat, where.lon);
+  }, [selectedUnitId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = (action: PlanAction) => {
     const id = action.id as string;
@@ -130,7 +152,7 @@ export function PlanActionsNow({ plan, onMap, showOnMap }: { plan: Plan; onMap: 
                 const id = action.id as string;
                 const units = (action.resources ?? []).filter((r) => r.resourceType === 'vehicle' || r.resourceType === 'personnel_pool');
                 return (
-                  <div key={id} className={`${styles.actionCard} ${focused === id ? styles.actionCardOn : ''}`} onClick={() => pick(action)} title="Mostrar no mapa">
+                  <div key={id} id={`action-${id}`} className={`${styles.actionCard} ${focused === id ? styles.actionCardOn : ''}`} onClick={() => pick(action)} title="Mostrar no mapa">
                     <div className={styles.actionCardHead}>
                       <span className={styles.actionKind}>{ACTION_KIND[action.type] ?? action.type}</span>
                       {cursor !== null ? <Tag kind={PHASE_TAG[phase]}>{PHASE_LABEL[phase]}</Tag> : null}

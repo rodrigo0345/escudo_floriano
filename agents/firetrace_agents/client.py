@@ -416,6 +416,34 @@ class FiretraceClient:
             cursor = page.get("nextCursor")
         return items
 
+    def list_all_plans(self) -> list[dict[str, Any]]:
+        """``GET /plans`` (every page): every plan the backend holds, whatever baseline it belongs to."""
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            page = self._request("GET", "/plans", params=params)
+            items.extend(page.get("items", []))
+            cursor = page.get("nextCursor")
+            if not cursor:
+                return items
+
+    def close_plan(self, plan_id: str) -> None:
+        """``PATCH /plans/{id}`` to ``completed``: an active plan has to be closed before it can be deleted."""
+        response = self._http.patch(self._fill("/plans/{planId}", planId=plan_id), content=json.dumps({"status": "completed"}), headers={"Content-Type": "application/merge-patch+json"})
+        if response.status_code >= 400:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
+
+    def delete_simulation(self, simulation_id: str) -> None:
+        """``DELETE /simulations/{id}``: a what-if run nobody needs any more (a missing one is fine)."""
+        response = self._http.delete(self._fill("/simulations/{simulationId}", simulationId=simulation_id))
+        if response.status_code >= 400 and response.status_code != 404:
+            content_type = response.headers.get("content-type", "")
+            raise ApiProblem(response.status_code, response.json() if "json" in content_type else {"title": response.text})
+
     # -- the operator's requests for plans ------------------------------------------
     def list_plan_requests(self, *, status: str | None = None, simulation_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """``GET /plan-requests`` (first page, newest first): filter by ``status`` (comma list) and ``simulationId``."""
