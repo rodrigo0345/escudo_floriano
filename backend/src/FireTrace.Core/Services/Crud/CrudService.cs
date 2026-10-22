@@ -20,6 +20,18 @@ public class CrudService<T>(IDocumentStore<T> store, IEntityPolicy<T> policy, Ti
         return item;
     }
 
+    /// <summary>
+    /// Como <see cref="CreateAsync"/>, para quem já aplicou as regras da política a este mesmo conteúdo e recusou o que tinha erros: não as repete.
+    /// (Validar um plano é caro; criá-lo validava-o duas vezes, uma no serviço e outra aqui.)
+    /// </summary>
+    public async Task<T> CreateValidatedAsync(T input, CancellationToken ct = default)
+    {
+        var now = clock.GetUtcNow();
+        var item = policy.Prepare(input with { Id = ids.New(policy.IdPrefix), CreatedAt = now, UpdatedAt = now });
+        await store.UpsertAsync(item, ct);
+        return item;
+    }
+
     public async Task<T> GetAsync(string id, CancellationToken ct = default) =>
         await store.GetAsync(id, ct) ?? throw new NotFoundException($"{typeof(T).Name} '{id}'");
 

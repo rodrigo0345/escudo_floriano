@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.Collections.Concurrent;
 using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Dispatches;
 using FireTrace.Core.Domain.Errors;
@@ -9,7 +9,10 @@ using FireTrace.Core.Domain.Resources;
 using FireTrace.Core.Domain.Rules;
 using FireTrace.Core.Domain.Simulations;
 using FireTrace.Core.Models.Operations;
+using FireTrace.Core.Models.Routing;
 using FireTrace.Core.Repositories;
+using FireTrace.Core.Services.Map;
+using FireTrace.Core.Services.Routing;
 using FireTrace.ExternalData.Map;
 using FireTrace.ExternalData.Store;
 using NetTopologySuite.Geometries;
@@ -17,9 +20,11 @@ using NetTopologySuite.Geometries;
 namespace FireTrace.Core.Services.Operations;
 
 /// <summary>
-/// Simula a execução de um plano minuto a minuto: cada viatura sai do seu posto, segue a rota por estrada, chega, trabalha
-/// (com água, reabastecimentos e descansos) e regressa. É determinístico e não altera o fogo: o resultado é a base de
-/// `GET /simulations/{id}/units` e `/units/{unitId}/track`.
+/// Simula a execução de um plano minuto a minuto: cada viatura sai do seu posto, segue a rota **por estrada**, pára onde a estrada acaba (a equipa avança a pé com as
+/// mangueiras) e trabalha; quando fica sem água vai por estrada ao ponto de água mais rápido de alcançar e volta, quando o depósito baixa vai abastecer ao posto mais perto,
+/// descansa quando tem de descansar (<see cref="UnitDuty"/>). Um meio com várias ações no plano faz-as **todas, por ordem**: acabada uma, vai por estrada (ou pelo ar) para a
+/// seguinte com a água e o combustível que tem, e só no fim regressa ao posto. Uma viatura terrestre sem estrada até ao alvo não sai (`failed`): nunca atravessa o monte em
+/// linha reta. É determinístico e não altera o fogo: o resultado é a base de `GET /simulations/{id}/units` e `/units/{unitId}/track`.
 /// </summary>
 public sealed class OperationSimulator(
     IDocumentStore<Simulation> simulations,
@@ -31,45 +36,45 @@ public sealed class OperationSimulator(
     IFireRunRepository runs,
     ArrivalEstimator arrival,
     TargetResolver targets,
+    MapQueries map,
+    RoutingService routing,
     FireTraceSettings settings)
 {
-    sealed record Demand(
-        string UnitId,
-        ResourceType ResourceType,
-        string? Callsign,
-        string OrganizationId,
-        Responsibility? Responsibility,
-        int Personnel,
-        Target Target,
-        LatLon Site,
-        Vehicle? Vehicle,
-        PersonnelPool? Pool,
-        LineString? Route,
-        LatLon? Origin,
-        double Start,
-        double Eta,
-        double WorkStart,
-        double WorkEnd,
-        double ReturnEnd,
-        double WaterCapacityL,
-        double WaterPerMinuteL,
-        bool Aerial);
+    /// <summary>Um meio do plano: o que é, para onde vai primeiro, e tudo o que faz minuto a minuto (<see cref="Trace"/>).</summary>
+    sealed record Demand(string UnitId, ResourceType ResourceType, string? Callsign, string OrganizationId, Responsibility? Responsibility, int Personnel, Target Target, Vehicle? Vehicle,
+        double Eta, double WaterCapacityL, double WaterLpm, double FuelCapacityL, bool Aerial, Trace Trace);
 
-    sealed record WorkState(DispatchStatus Status, double WaterL, int WorkedMinutes, double FatiguePct, int? EmptyAtMinute);
+    /// <summary>
+    /// Uma ação de um meio: a partir de quando pode partir, quanto demora a chegar e por onde (do sítio onde estava: o posto na primeira, a ação anterior nas
+    /// seguintes), onde atua, quanto tempo trabalha, e onde vai buscar água e combustível a partir dali.
+    /// </summary>
+    public sealed record Leg(double Start, double Eta, double WorkMinutes, LineString? Route, LatLon Site, UnitDuty.Trip? Water = null, UnitDuty.Trip? Fuel = null, string? Label = null);
+
+    /// <summary>A pista de um meio: um ponto por minuto, os acontecimentos, os troços de trabalho (para saber onde reabastece) e, por ação, a partida e a chegada.</summary>
+    public sealed record Trace(IReadOnlyList<UnitTrackPoint> Points, IReadOnlyList<UnitEvent> Events, IReadOnlyList<UnitDuty.Segment> Segments, IReadOnlyList<(int Depart, int Arrive)> Legs)
+    {
+        public int ArrivesAtMinute => Legs.Count > 0 ? Legs[0].Arrive : 0;
+    }
 
     static readonly GeometryFactory Gf = NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(4326);
+
+    // Os meios de um plano calculam-se uma vez: a interface pede a pista de cada meio (N pedidos) e cada um voltava a encaminhar todos os meios e todas as idas à água.
+    readonly ConcurrentDictionary<string, Lazy<Task<List<Demand>>>> _demands = new();
+    readonly ConcurrentDictionary<string, Lazy<Task<UnitDuty.Trip?>>> _trips = new();
+    const int MaxRememberedPlans = 32, MaxRememberedTrips = 5_000;
+    const double SameSpotM = 500; // a rota que o plano traz para uma ação seguinte só serve se partir de onde o meio está
 
     public async Task<UnitStateList> UnitsAsync(string simulationId, int tMin, string? organizationId, string? responsibility, CancellationToken ct)
     {
         var (run, plan) = await ContextAsync(simulationId, ct);
-        var demands = plan is null ? new List<Demand>() : await DemandsAsync(plan, run, ct);
+        var demands = plan is null ? new List<Demand>() : await DemandsAsync(simulationId, plan, run, ct);
         var wanted = responsibility?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var items = demands
             .Where(d => organizationId is null || d.OrganizationId == organizationId)
             .Where(d => wanted is null || wanted.Length == 0 || (d.Responsibility is { } r && wanted.Contains(EnumText.ToSnake(r))))
             .OrderBy(d => d.UnitId, StringComparer.Ordinal)
-            .Select(d => StateAt(d, tMin, run))
+            .Select(d => StateOf(d, tMin, run))
             .ToList();
         return new UnitStateList(simulationId, tMin, items);
     }
@@ -77,20 +82,20 @@ public sealed class OperationSimulator(
     public async Task<UnitTrack> TrackAsync(string simulationId, string unitId, int stepMin, CancellationToken ct)
     {
         var (run, plan) = await ContextAsync(simulationId, ct);
-        var demands = plan is null ? new List<Demand>() : await DemandsAsync(plan, run, ct);
+        var demands = plan is null ? new List<Demand>() : await DemandsAsync(simulationId, plan, run, ct);
         var demand = demands.FirstOrDefault(d => d.UnitId == unitId) ?? throw new NotFoundException($"Meio '{unitId}' na simulação '{simulationId}'");
         var step = Math.Clamp(stepMin, 1, 60);
+        var all = demand.Trace.Points;
         var points = new List<UnitTrackPoint>();
-        for (int t = 0; t <= run.DurationMinutes; t += step) points.Add(PointAt(demand, t, run));
-        if (points.Count == 0 || points[^1].TMin != run.DurationMinutes) points.Add(PointAt(demand, run.DurationMinutes, run));
-        return new UnitTrack(simulationId, unitId, step, points, Events(demand, run));
+        for (int t = 0; t < all.Count; t += step) points.Add(all[t]);
+        if (points.Count > 0 && points[^1].TMin != all[^1].TMin) points.Add(all[^1]);
+        return new UnitTrack(simulationId, unitId, step, points, demand.Trace.Events);
     }
 
     /// <summary>
-    /// The pure part of the simulator, for callers that have already loaded the plan's resources: what each unit does,
-    /// minute by minute, without touching the database. Kept as the tested entry point for the operation planning
-    /// services; the injected <see cref="UnitsAsync"/> and <see cref="TrackAsync"/> below add the plan/dispatch
-    /// persistence and the HTTP filters around them.
+    /// The pure part of the simulator, for callers that have already loaded the plan's resources: what each unit does in its first action, minute by minute, without
+    /// touching the database (no trips to water or fuel are routed here: a unit that runs dry refills with the rules' generic shuttle where it works). The injected
+    /// <see cref="UnitsAsync"/> and <see cref="TrackAsync"/> add the later actions of each unit, the routing of the trips, the plan/dispatch persistence and the HTTP filters.
     /// </summary>
     public static IReadOnlyList<UnitTimeline> Simulate(Plan plan, DateTimeOffset scenarioStart, int durationMinutes,
         IReadOnlyDictionary<string, Vehicle> vehicles, IReadOnlyDictionary<string, PersonnelPool> pools,
@@ -105,88 +110,23 @@ public sealed class OperationSimulator(
             {
                 Vehicle? v = r.ResourceType == ResourceType.Vehicle && vehicles.TryGetValue(r.ResourceId, out var found) ? found : null;
                 PersonnelPool? p = r.ResourceType == ResourceType.PersonnelPool && pools.TryGetValue(r.ResourceId, out var group) ? group : null;
-                if ((v is null && p is null) || !seen.Add(r.ResourceId)) continue; // um meio só faz uma coisa de cada vez: o que o plano lhe pede primeiro
-                timelines.Add(Timeline(plan, action, r, v, p, site, scenarioStart, durationMinutes, stations, rules, defaultWindowMinutes));
+                if ((v is null && p is null) || !seen.Add(r.ResourceId)) continue; // aqui, só a primeira ação de cada meio
+
+                string? stationId = r.FromStationId ?? v?.StationId ?? p?.StationId;
+                LatLon home = stationId is not null && stations.TryGetValue(stationId, out var s) ? s
+                    : r.Route is { NumPoints: > 1 } first ? new LatLon(first.Coordinates[0].Y, first.Coordinates[0].X) : site;
+                double eta = Math.Max(0, r.EtaMinutes ?? 0);
+                double departAt = PlanTiming.StartAt(plan, action) is { } at ? (at - scenarioStart).TotalMinutes : PlanTiming.StartMinutes(plan, action);
+                var leg = new Leg(Math.Round(Math.Max(0, departAt)), eta, action.ExpectedDurationMinutes ?? defaultWindowMinutes, r.Route is { NumPoints: > 1 } own ? own : null, site);
+                var back = leg.Route is { } route ? (LineString)route.Reverse() : null;
+                var trace = Build(durationMinutes, new[] { leg }, home, back, eta, v, rules);
+                string callsign = v?.Callsign ?? $"Equipa {r.ResourceId}";
+                var (capacity, lpm) = WaterOf(v, rules);
+                timelines.Add(new UnitTimeline(r.ResourceId, r.ResourceType, callsign, v?.OrganizationId ?? p?.OrganizationId ?? "", action.Id, r.Responsibility, new Target(Label: action.Title, Position: site),
+                    r.Personnel ?? v?.CrewCapacity ?? p?.Available ?? 0, capacity > 0 ? capacity : null, capacity > 0 && lpm > 0 ? lpm : null, trace.ArrivesAtMinute, trace.Points, trace.Events));
             }
         }
         return timelines;
-    }
-
-    static UnitTimeline Timeline(Plan plan, PlanAction action, ResourceAssignment r, Vehicle? v, PersonnelPool? p, LatLon site, DateTimeOffset scenarioStart, int duration,
-        IReadOnlyDictionary<string, LatLon> stations, Rules rules, int window)
-    {
-        string? stationId = r.FromStationId ?? v?.StationId ?? p?.StationId;
-        LatLon home = stationId is not null && stations.TryGetValue(stationId, out var s) ? s
-            : r.Route is { NumPoints: > 1 } first ? new LatLon(first.Coordinates[0].Y, first.Coordinates[0].X) : site;
-        double eta = Math.Max(0, r.EtaMinutes ?? 0);
-        bool aerial = v is not null && ArrivalEstimator.IsAerial(v.Type);
-        // a unidade terrestre segue a rota por estrada (obrigatória — J4: sem rota, erro, nunca uma linha reta fora da rede)
-        var route = r.Route is { NumPoints: > 1 } own ? own
-            : aerial ? Gf.CreateLineString(new[] { new Coordinate(home.Lon, home.Lat), new Coordinate(site.Lon, site.Lat) })
-            : throw new ValidationException(new List<ValidationIssue> { new("error", "route_off_network", $"Meio terrestre '{r.ResourceId}' sem rota por estrada (plano '{plan.Id}', ação '{action.Id}').", "/route") });
-        var back = (LineString)route.Reverse();
-
-        double departAt = PlanTiming.StartAt(plan, action) is { } at ? (at - scenarioStart).TotalMinutes : PlanTiming.StartMinutes(plan, action);
-        int depart = (int)Math.Round(Math.Max(0, departAt));
-        double arrive = depart + eta, until = arrive + (action.ExpectedDurationMinutes ?? window), backAt = until + eta;
-
-        double water = aerial ? 0 : v?.WaterCapacityL ?? 0, pump = aerial ? 0 : v?.PumpFlowLpm ?? 0, duty = rules.Water.DutyCycle;
-        var segments = CrewWorkSchedule.Plan(arrive, until, water, pump, rules);
-        double perFill = water > 0 && pump > 0 && duty > 0 ? water / (pump * duty) : double.PositiveInfinity;
-        bool refills = double.IsFinite(perFill);
-        double rest = rules.Crews.MandatoryRestMinutes;
-
-        var points = new List<UnitTrackPoint>();
-        double fatigue = 0;
-        for (int m = 0; m <= duration; m++)
-        {
-            DispatchStatus status; var position = home; double? level = water > 0 ? water : null;
-            if (m < depart) status = DispatchStatus.Ordered;
-            else if (m < arrive) { status = DispatchStatus.EnRoute; position = CrewSafety.PositionAt(route, eta, site, m - depart); }
-            else if (m >= backAt) status = DispatchStatus.Completed;
-            else if (m >= until) { status = DispatchStatus.Returning; position = CrewSafety.PositionAt(back, eta, home, m - until); }
-            else
-            {
-                position = site;
-                var now = segments.FirstOrDefault(sg => m >= sg.FromMinute && m < sg.FromMinute + sg.Minutes);
-                if (now is not null)
-                {
-                    status = DispatchStatus.Working;
-                    fatigue = (1 - now.Fatigue) * 100;
-                    if (refills) level = Math.Max(0, water * (1 - (m - now.FromMinute) / perFill));
-                }
-                else
-                {
-                    var before = segments.LastOrDefault(sg => sg.FromMinute + sg.Minutes <= m);
-                    var after = segments.FirstOrDefault(sg => sg.FromMinute > m);
-                    if (before is null || after is null) status = DispatchStatus.OnScene; // chegou e ainda não começou, ou acabou a última janela e espera pelo fim da ação
-                    else
-                    {
-                        double gap = after.FromMinute - (before.FromMinute + before.Minutes);
-                        status = gap >= rest - 1e-9 ? DispatchStatus.Resting : DispatchStatus.Refilling;
-                        if (status == DispatchStatus.Refilling && water > 0) level = water * (m - (before.FromMinute + before.Minutes)) / gap;
-                    }
-                }
-            }
-            points.Add(new UnitTrackPoint(m, status, position, level, Math.Round(fatigue, 1)));
-        }
-
-        var events = new List<UnitEvent>();
-        void Add(double minute, string type, LatLon? where, string? detail = null) { if (minute <= duration) events.Add(new((int)Math.Round(minute), type, where, detail)); }
-        Add(depart, "departed", home);
-        Add(arrive, "arrived", site);
-        if (segments.Count > 0) Add(segments[0].FromMinute, "started_working", site);
-        for (int i = 0; i + 1 < segments.Count; i++)
-        {
-            double end = segments[i].FromMinute + segments[i].Minutes, next = segments[i + 1].FromMinute;
-            if (next - end >= rest - 1e-9) { Add(end, "rest_started", site); Add(next, "rest_done", site); }
-            else { Add(end, "water_empty", site); Add(end, "refill_started", site, "viatura vai reabastecer"); Add(next, "refill_done", site); }
-        }
-        Add(backAt, "returned", home);
-
-        string callsign = v?.Callsign ?? $"Equipa {r.ResourceId}";
-        return new UnitTimeline(r.ResourceId, r.ResourceType, callsign, v?.OrganizationId ?? p?.OrganizationId ?? "", action.Id, r.Responsibility, new Target(Label: action.Title, Position: site),
-            r.Personnel ?? v?.CrewCapacity ?? p?.Available ?? 0, water > 0 ? water : null, water > 0 && pump > 0 ? pump * duty : null, (int)Math.Round(arrive), points, events.OrderBy(e => e.TMin).ToList());
     }
 
     /// <summary>O estado de um meio ao minuto `t` (o último minuto simulado se `t` passar do fim).</summary>
@@ -201,6 +141,178 @@ public sealed class OperationSimulator(
             new CrewStatus(WorkedMinutes: worked, FatiguePct: point.FatiguePct));
     }
 
+    // ------------------------------------------------------------------------------------------------------------ the trace
+
+    static LineString Line(LatLon a, LatLon b) => Gf.CreateLineString(new[] { new Coordinate(a.Lon, a.Lat), new Coordinate(b.Lon, b.Lat) });
+
+    static LatLon EndOf(LineString route) => new(route.Coordinates[^1].Y, route.Coordinates[^1].X);
+
+    static LatLon StartOf(LineString route) => new(route.Coordinates[0].Y, route.Coordinates[0].X);
+
+    static (double CapacityL, double Lpm) WaterOf(Vehicle? v, Rules rules) =>
+        v is null || ArrivalEstimator.IsAerial(v.Type) ? (0, 0) : (v.WaterCapacityL ?? 0, rules.Water.WorkingLpm(v.PumpFlowLpm ?? 0));
+
+    static (double CapacityL, double PerKm) FuelOf(Vehicle? v, Rules rules)
+    {
+        if (v is null || ArrivalEstimator.IsAerial(v.Type)) return (0, 0);
+        double capacity = v.FuelCapacityL is > 0 ? v.FuelCapacityL.Value : rules.Fuel.DefaultCapacityL;
+        double perKm = v.FuelCapacityL is > 0 && v.RangeKm is > 0 ? v.FuelCapacityL.Value / v.RangeKm.Value : rules.Fuel.DrivingLPer100Km / 100;
+        return (capacity, perKm);
+    }
+
+    enum PieceKind { Travel, Work, Wait, Return }
+
+    /// <summary>Um bocado da vida do meio: a viajar (por um percurso), a trabalhar numa ação (com os troços do <see cref="UnitDuty"/>) ou à espera no local.</summary>
+    sealed record Piece(PieceKind Kind, double From, double To, RoutePath? Path, LatLon Place, LatLon Site, double WaterFrom, double FuelFrom, double FuelTo, double Until,
+        IReadOnlyList<UnitDuty.Segment> Segments);
+
+    /// <summary>
+    /// Tudo o que o meio faz, minuto a minuto, nas suas ações por ordem, e o regresso ao posto pelo percurso `back` (em `backEta` minutos). A rota de cada ação vai de onde
+    /// o meio está até onde pára (o fim da estrada); numa viatura terrestre sem rota a ação não se faz (sem estrada até lá) e, se for a primeira, a viatura não sai.
+    /// Um meio aéreo ou um grupo de pessoal trabalha no próprio sítio da ação, sem água nem combustível contados aqui.
+    /// </summary>
+    static Trace Build(int duration, IReadOnlyList<Leg> legs, LatLon home, LineString? back, double backEta, Vehicle? v, Rules rules)
+    {
+        bool aerial = v is not null && ArrivalEstimator.IsAerial(v.Type), ground = v is not null && !aerial;
+        var points = new List<UnitTrackPoint>(duration + 1);
+        var events = new List<UnitEvent>();
+        void Add(double minute, string type, LatLon? where, string? detail = null)
+        {
+            int m = (int)Math.Round(minute);
+            if (m < 0 || m > duration || events.Any(e => e.TMin == m && e.Type == type)) return;
+            events.Add(new UnitEvent(m, type, where, detail));
+        }
+
+        var doable = legs.Where(l => !ground || l.Route is { NumPoints: > 1 }).ToList();
+        if (doable.Count == 0)
+        {
+            // sem estrada até ao alvo a viatura não vai: nunca anda pelo mato em linha reta
+            double at = legs.Count > 0 ? Math.Round(Math.Max(0, legs[0].Start)) : 0;
+            for (int m = 0; m <= duration; m++) points.Add(new UnitTrackPoint(m, m < at ? DispatchStatus.Ordered : DispatchStatus.Failed, home));
+            Add(at, "withdrawn", home, "sem estrada até ao alvo: a viatura não sai");
+            return new Trace(points, events, Array.Empty<UnitDuty.Segment>(), Array.Empty<(int, int)>());
+        }
+
+        var (waterCap, lpm) = WaterOf(v, rules);
+        var (fuelCap, perKm) = FuelOf(v, rules);
+        double water = waterCap, fuel = fuelCap * Math.Clamp(v?.State.FuelPct ?? 100, 0, 100) / 100;
+        double fuelStart = fuel;
+        var pieces = new List<Piece>();
+        var legTimes = new List<(int Depart, int Arrive)>();
+        var allSegments = new List<UnitDuty.Segment>();
+        LatLon here = home;
+        double free = 0;
+        for (int i = 0; i < doable.Count; i++)
+        {
+            var leg = doable[i];
+            var route = ground ? leg.Route! : i == 0 && leg.Route is { NumPoints: > 1 } own ? own : Line(here, leg.Site);
+            var path = RoutePath.Of(route);
+            var park = ground ? EndOf(route) : leg.Site; // a viatura pára onde a estrada acaba
+            double depart = i == 0 ? Math.Round(Math.Max(0, leg.Start)) : Math.Max(leg.Start, free);
+            if (i > 0 && depart > free) pieces.Add(new Piece(PieceKind.Wait, free, depart, null, here, here, water, fuel, fuel, depart, Array.Empty<UnitDuty.Segment>()));
+            double km = (path?.TotalM ?? 0) / 1000, arrive = depart + Math.Max(0, leg.Eta);
+            pieces.Add(new Piece(PieceKind.Travel, depart, arrive, path, park, leg.Site, water, fuel, Math.Max(0, fuel - km * perKm), arrive, Array.Empty<UnitDuty.Segment>()));
+            fuel = Math.Max(0, fuel - km * perKm);
+            double until = arrive + Math.Max(1, leg.WorkMinutes);
+            var segments = ground
+                ? UnitDuty.Plan(arrive, until, new UnitDuty.Inputs(waterCap, lpm, leg.Water, rules.Water.Refill.ShuttleMinutes + rules.Water.Refill.SetupMinutes, fuelCap,
+                    fuel, perKm, rules.Fuel.WorkingLph / 60, fuelCap * rules.Fuel.RefuelBelowPct / 100, leg.Fuel, water), rules.Crews)
+                : Array.Empty<UnitDuty.Segment>();
+            double end = Math.Max(until, segments.Count > 0 ? segments[^1].To : until);
+            pieces.Add(new Piece(PieceKind.Work, arrive, end, null, park, leg.Site, water, fuel, fuel, until, segments));
+            allSegments.AddRange(segments);
+            if (segments.Count > 0) { water = segments[^1].WaterTo; fuel = segments[^1].FuelTo; }
+            legTimes.Add(((int)Math.Round(depart), (int)Math.Round(arrive)));
+
+            Add(depart, "departed", here, i == 0 ? null : $"segue para: {leg.Label}");
+            Add(arrive, "arrived", park, leg.Label);
+            if (!ground) Add(arrive, "started_working", leg.Site);
+            here = park;
+            free = end;
+        }
+        var backRoute = back is { NumPoints: > 1 } ? back : Line(here, home);
+        var backPath = RoutePath.Of(backRoute);
+        double backKm = (backPath?.TotalM ?? 0) / 1000, backAt = free + Math.Max(0, backEta);
+        pieces.Add(new Piece(PieceKind.Return, free, backAt, backPath, home, home, water, fuel, Math.Max(0, fuel - backKm * perKm), backAt, Array.Empty<UnitDuty.Segment>()));
+        double fuelHome = Math.Max(0, fuel - backKm * perKm);
+
+        double maxFatigue = 100 - rules.Crews.MinimumEffectivenessPct;
+        double? Pct(double litres) => fuelCap > 0 ? Math.Round(Math.Clamp(litres / fuelCap * 100, 0, 100), 1) : null;
+        double? Water(double litres) => waterCap > 0 ? Math.Round(litres, 1) : null;
+        double firstDepart = pieces[0].From;
+        int workedNoDuty = 0, p = 0;
+        double fatigueNow = 0; // a equipa leva o cansaço de uma ação para a seguinte
+        for (int m = 0; m <= duration; m++)
+        {
+            if (m < firstDepart) { points.Add(new UnitTrackPoint(m, DispatchStatus.Ordered, home, Water(waterCap), 0, Pct(fuelStart))); continue; }
+            while (p < pieces.Count - 1 && m >= pieces[p].To) p++;
+            var piece = pieces[p];
+            if (m >= piece.To) { points.Add(new UnitTrackPoint(m, DispatchStatus.Completed, home, null, null, Pct(fuelHome))); continue; } // depois do regresso
+            double f = piece.To - piece.From <= 0 ? 1 : (m - piece.From) / (piece.To - piece.From);
+            double fuelHere = piece.FuelFrom + (piece.FuelTo - piece.FuelFrom) * f;
+            switch (piece.Kind)
+            {
+                case PieceKind.Travel:
+                    points.Add(new UnitTrackPoint(m, DispatchStatus.EnRoute, CrewSafety.PositionOn(piece.Path, piece.To - piece.From, piece.Place, m - piece.From), Water(piece.WaterFrom), Math.Round(fatigueNow, 1), Pct(fuelHere)));
+                    break;
+                case PieceKind.Return:
+                    points.Add(new UnitTrackPoint(m, DispatchStatus.Returning, CrewSafety.PositionOn(piece.Path, piece.To - piece.From, home, m - piece.From), null, null, Pct(fuelHere)));
+                    break;
+                case PieceKind.Wait:
+                    points.Add(new UnitTrackPoint(m, DispatchStatus.OnScene, piece.Place, Water(piece.WaterFrom), Math.Round(fatigueNow, 1), Pct(piece.FuelFrom)));
+                    break;
+                case PieceKind.Work when !ground:
+                    // meios aéreos e grupos de pessoal: no sítio da ação durante a janela, a cansar-se
+                    bool working = m < piece.Until;
+                    if (working) workedNoDuty++;
+                    fatigueNow = Math.Min(maxFatigue, workedNoDuty / 60.0 * rules.Crews.FatiguePctPerHour);
+                    points.Add(new UnitTrackPoint(m, working ? DispatchStatus.Working : DispatchStatus.OnScene, piece.Site, null, Math.Round(fatigueNow, 1)));
+                    break;
+                case PieceKind.Work:
+                    var seg = UnitDuty.At(piece.Segments, m);
+                    if (seg is null)
+                    {
+                        var last = piece.Segments.LastOrDefault(s => s.To <= m);
+                        points.Add(new UnitTrackPoint(m, DispatchStatus.OnScene, piece.Place, Water(last?.WaterTo ?? piece.WaterFrom), Math.Round(fatigueNow, 1), Pct(last?.FuelTo ?? piece.FuelFrom)));
+                        break;
+                    }
+                    var status = seg.Phase switch { UnitDuty.Phase.Working => DispatchStatus.Working, UnitDuty.Phase.Resting => DispatchStatus.Resting, _ => DispatchStatus.Refilling };
+                    fatigueNow = Math.Min(maxFatigue, UnitDuty.WorkedAt(seg, m) / 60.0 * rules.Crews.FatiguePctPerHour);
+                    points.Add(new UnitTrackPoint(m, status, UnitDuty.PositionAt(seg, m, piece.Place), Water(UnitDuty.WaterAt(seg, m)), Math.Round(fatigueNow, 1), Pct(UnitDuty.FuelAt(seg, m))));
+                    break;
+            }
+        }
+
+        foreach (var piece in pieces.Where(x => x.Kind == PieceKind.Work))
+        {
+            bool started = false;
+            foreach (var s in piece.Segments)
+            {
+                switch (s.Phase)
+                {
+                    case UnitDuty.Phase.Working when !started: started = true; Add(s.From, "started_working", piece.Place); break;
+                    case UnitDuty.Phase.ToWater:
+                        Add(s.From, "water_empty", piece.Place);
+                        Add(s.From, "refill_started", piece.Place, $"vai encher a {s.Trip!.PlaceName ?? "ponto de água"} ({s.Trip.Minutes:F0} min por estrada, {s.Trip.StopMinutes:F0} min a encher)");
+                        break;
+                    case UnitDuty.Phase.FromWater: Add(s.To, "refill_done", piece.Place); break;
+                    case UnitDuty.Phase.Filling when s.Trip is null:
+                        Add(s.From, "water_empty", piece.Place);
+                        Add(s.From, "refill_started", piece.Place, "sem ponto de água conhecido por estrada: reabastecimento com o tempo genérico das regras");
+                        Add(s.To, "refill_done", piece.Place);
+                        break;
+                    case UnitDuty.Phase.ToFuel: Add(s.From, "refuel_started", piece.Place, $"vai abastecer a {s.Trip!.PlaceName ?? "posto"} ({s.Trip.Minutes:F0} min por estrada)"); break;
+                    case UnitDuty.Phase.FromFuel: Add(s.To, "refuel_done", piece.Place); break;
+                    case UnitDuty.Phase.Resting: Add(s.From, "rest_started", piece.Place); Add(s.To, "rest_done", piece.Place); break;
+                }
+            }
+        }
+        Add(backAt, "returned", home);
+        return new Trace(points, events.OrderBy(e => e.TMin).ThenBy(e => e.Type, StringComparer.Ordinal).ToList(), allSegments, legTimes);
+    }
+
+    // ------------------------------------------------------------------------------------------------------------ the units of a plan
+
     async Task<(FireRun Run, Plan? Plan)> ContextAsync(string simulationId, CancellationToken ct)
     {
         var simulation = await simulations.GetAsync(simulationId, ct) ?? throw new NotFoundException($"Simulação '{simulationId}'");
@@ -210,9 +322,22 @@ public sealed class OperationSimulator(
         return (run, plan);
     }
 
-    async Task<List<Demand>> DemandsAsync(Plan plan, FireRun run, CancellationToken ct)
+    Task<List<Demand>> DemandsAsync(string simulationId, Plan plan, FireRun run, CancellationToken ct)
     {
-        var demands = new List<Demand>();
+        string key = $"{simulationId}|{plan.Id}|{plan.UpdatedAt.UtcTicks}";
+        if (_demands.Count > MaxRememberedPlans) _demands.Clear();
+        var lazy = _demands.GetOrAdd(key, _ => new Lazy<Task<List<Demand>>>(() => ComputeDemandsAsync(plan, run, CancellationToken.None)));
+        if (lazy.Value.IsFaulted || lazy.Value.IsCanceled) _demands.TryRemove(key, out _);
+        return lazy.Value.WaitAsync(ct);
+    }
+
+    sealed record Job(PlanAction Action, ResourceAssignment Assignment, Target Target, LatLon Site, double Start, double Duration);
+
+    async Task<List<Demand>> ComputeDemandsAsync(Plan plan, FireRun run, CancellationToken ct)
+    {
+        var rules = settings.Rules;
+        var jobs = new Dictionary<string, List<Job>>();
+        var order = new List<string>();
         foreach (var action in plan.Actions)
         {
             if (action.Resources is not { Count: > 0 }) continue;
@@ -220,60 +345,68 @@ public sealed class OperationSimulator(
             if (target.IsEmpty || await targets.PositionAsync(target, plan.LocationId, ct) is not { } site) continue;
             var start = Math.Max(0, PlanTiming.StartMinutes(plan, action));
             var duration = Math.Max(1, action.ExpectedDurationMinutes ?? settings.Limits.DefaultActionWindowMinutes);
-
             foreach (var assignment in action.Resources.Where(r => r.ResourceType != ResourceType.Equipment))
             {
-                if (demands.Any(d => d.UnitId == assignment.ResourceId)) continue; // one track per resource, the first action wins
-                var vehicle = assignment.ResourceType == ResourceType.Vehicle ? await vehicles.GetAsync(assignment.ResourceId, ct) : null;
-                var pool = assignment.ResourceType == ResourceType.PersonnelPool ? await pools.GetAsync(assignment.ResourceId, ct) : null;
-                if (vehicle is null && pool is null) continue;
-
-                LineString? route = assignment.Route;
-                double eta = assignment.EtaMinutes ?? 0;
-                LatLon? origin = null;
-                if (vehicle is not null)
-                {
-                    var estimate = await arrival.ForActionAsync(plan, action, vehicle, assignment, ct);
-                    if (eta <= 0 && estimate?.Minutes is { } minutes) eta = minutes;
-                    route ??= estimate?.Route;
-                    origin = await arrival.OriginAsync(vehicle, assignment.FromStationId, ct);
-                }
-                else if (pool is not null && pool.StationId is { } stationId)
-                {
-                    origin = (await stations.GetAsync(stationId, ct))?.Position;
-                }
-
-                eta = Math.Max(0, eta);
-                var capacity = vehicle?.WaterCapacityL ?? 0;
-                var pump = vehicle?.PumpFlowLpm ?? 0;
-                var ruleConsumption = double.TryParse(settings.Rules.Water.ConsumptionLpm, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
-                var perMinute = vehicle is not null && capacity > 0
-                    ? Math.Max(1, pump > 0 ? pump : ruleConsumption) * settings.Rules.Water.DutyCycle
-                    : 0;
-                var workStart = start + eta;
-
-                demands.Add(new Demand(
-                    assignment.ResourceId,
-                    assignment.ResourceType,
-                    vehicle?.Callsign ?? (pool?.Role.ToString()),
-                    vehicle?.OrganizationId ?? pool?.OrganizationId ?? action.OrganizationId,
-                    assignment.Responsibility,
-                    assignment.Personnel ?? vehicle?.CrewCapacity ?? 1,
-                    target,
-                    site,
-                    vehicle,
-                    pool,
-                    route,
-                    origin,
-                    start,
-                    eta,
-                    workStart,
-                    workStart + duration,
-                    workStart + duration + eta,
-                    capacity,
-                    perMinute,
-                    vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type)));
+                if (!jobs.TryGetValue(assignment.ResourceId, out var list)) { jobs[assignment.ResourceId] = list = new(); order.Add(assignment.ResourceId); }
+                list.Add(new Job(action, assignment, target, site, start, duration));
             }
+        }
+
+        var demands = new List<Demand>();
+        foreach (var unitId in order)
+        {
+            var mine = jobs[unitId].OrderBy(j => j.Start).ToList(); // as ações do meio, pela ordem em que o plano as manda começar
+            var first = mine[0];
+            var vehicle = first.Assignment.ResourceType == ResourceType.Vehicle ? await vehicles.GetAsync(unitId, ct) : null;
+            var pool = first.Assignment.ResourceType == ResourceType.PersonnelPool ? await pools.GetAsync(unitId, ct) : null;
+            if (vehicle is null && pool is null) continue;
+            bool aerial = vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type), ground = vehicle is not null && !aerial;
+
+            LatLon? origin = vehicle is not null ? await arrival.OriginAsync(vehicle, first.Assignment.FromStationId, ct)
+                : pool?.StationId is { } stationId ? (await stations.GetAsync(stationId, ct))?.Position : null;
+            var legs = new List<Leg>();
+            LatLon here = origin ?? first.Site;
+            for (int i = 0; i < mine.Count; i++)
+            {
+                var job = mine[i];
+                LineString? route = job.Assignment.Route;
+                double eta = job.Assignment.EtaMinutes ?? 0;
+                if (ground)
+                {
+                    if (i == 0 && (route is null || eta <= 0))
+                    {
+                        // a estimativa só serve para o que o plano não trouxe (percurso e ETA gravados ao publicar)
+                        var estimate = await arrival.ForActionAsync(plan, job.Action, vehicle!, job.Assignment, ct);
+                        if (eta <= 0 && estimate?.Minutes is { } minutes) eta = minutes;
+                        route ??= estimate?.Route;
+                    }
+                    else if (i > 0 && (route is not { NumPoints: > 1 } || Far(StartOf(route), here)))
+                    {
+                        // a ação seguinte parte de onde a viatura acabou a anterior, não do quartel
+                        var estimate = await arrival.EstimateAsync(vehicle!, here, job.Site, plan.LocationId, PlanTiming.StartAt(plan, job.Action), ct);
+                        route = estimate.Route;
+                        eta = estimate.Minutes ?? eta;
+                    }
+                }
+                else if (route is not { NumPoints: > 1 }) route = null; // pelo ar ou a pé: em linha reta (Build)
+
+                UnitDuty.Trip? water = null, fuel = null;
+                if (ground && route is { NumPoints: > 1 })
+                {
+                    var park = EndOf(route);
+                    var (capacity, lpm) = WaterOf(vehicle, rules);
+                    if (capacity > 0 && lpm > 0) water = await TripAsync("water", plan.LocationId, vehicle!, park, capacity, ct);
+                    fuel = await TripAsync("fuel", plan.LocationId, vehicle!, park, 0, ct);
+                    here = park;
+                }
+                else if (!ground) here = job.Site;
+                legs.Add(new Leg(job.Start, Math.Max(0, eta), job.Duration, route, job.Site, water, fuel, job.Action.Title));
+            }
+
+            var home = origin ?? here;
+            var (back, backEta) = await WayHomeAsync(plan.LocationId, vehicle, legs, here, home, ct);
+            demands.Add(MakeDemand(unitId, first.Assignment.ResourceType, vehicle, pool, vehicle?.OrganizationId ?? pool?.OrganizationId ?? first.Action.OrganizationId, first.Assignment.Responsibility,
+                first.Assignment.Personnel ?? vehicle?.CrewCapacity ?? 1, first.Target, legs, home, back, backEta, run));
         }
 
         // Older plans (and plans activated through the dispatch API) carry their resources on dispatches, not on actions.
@@ -298,219 +431,142 @@ public sealed class OperationSimulator(
             var origin = vehicle is not null
                 ? await arrival.OriginAsync(vehicle, dispatch.FromStationId, ct)
                 : pool?.StationId is { } stationId ? (await stations.GetAsync(stationId, ct))?.Position : null;
-            var estimate = vehicle is not null && origin is not null
-                ? await arrival.EstimateAsync(vehicle, origin, site, plan.LocationId, dispatch.StartAt, ct)
-                : null;
-            var eta = Math.Max(0, dispatch.EtaMinutes ?? estimate?.Minutes ?? 0);
+            var estimate = vehicle is not null && origin is not null ? await arrival.EstimateAsync(vehicle, origin, site, plan.LocationId, dispatch.StartAt, ct) : null;
+            bool ground = vehicle is not null && !ArrivalEstimator.IsAerial(vehicle.Type);
             var route = dispatch.Route ?? estimate?.Route;
-            var capacity = vehicle?.WaterCapacityL ?? 0;
-            var pump = vehicle?.PumpFlowLpm ?? 0;
-            var ruleConsumption = double.TryParse(settings.Rules.Water.ConsumptionLpm, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
-            var perMinute = vehicle is not null && capacity > 0
-                ? Math.Max(1, pump > 0 ? pump : ruleConsumption) * settings.Rules.Water.DutyCycle
-                : 0;
-            var workStart = start + eta;
-
-            demands.Add(new Demand(
-                dispatch.ResourceId,
-                dispatch.ResourceType,
-                vehicle?.Callsign ?? pool?.Role.ToString(),
-                vehicle?.OrganizationId ?? pool?.OrganizationId ?? dispatch.OrganizationId,
-                dispatch.Responsibility,
-                dispatch.Personnel > 0 ? dispatch.Personnel : vehicle?.CrewCapacity ?? 1,
-                dispatch.Target,
-                site,
-                vehicle,
-                pool,
-                route,
-                origin,
-                start,
-                eta,
-                workStart,
-                workStart + duration,
-                workStart + duration + eta,
-                capacity,
-                perMinute,
-                vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type)));
+            UnitDuty.Trip? water = null, fuel = null;
+            if (ground && route is { NumPoints: > 1 })
+            {
+                var (capacity, lpm) = WaterOf(vehicle, settings.Rules);
+                if (capacity > 0 && lpm > 0) water = await TripAsync("water", plan.LocationId, vehicle!, EndOf(route), capacity, ct);
+                fuel = await TripAsync("fuel", plan.LocationId, vehicle!, EndOf(route), 0, ct);
+            }
+            double eta = Math.Max(0, dispatch.EtaMinutes ?? estimate?.Minutes ?? 0);
+            var legs = new List<Leg> { new(start, eta, duration, route is { NumPoints: > 1 } ? route : null, site, water, fuel, action?.Title) };
+            var home = origin ?? site;
+            var here = ground && route is { NumPoints: > 1 } ? EndOf(route) : site;
+            var (back, backEta) = await WayHomeAsync(plan.LocationId, vehicle, legs, here, home, ct);
+            demands.Add(MakeDemand(dispatch.ResourceId, dispatch.ResourceType, vehicle, pool, vehicle?.OrganizationId ?? pool?.OrganizationId ?? dispatch.OrganizationId, dispatch.Responsibility,
+                dispatch.Personnel > 0 ? dispatch.Personnel : vehicle?.CrewCapacity ?? 1, dispatch.Target, legs, home, back, backEta, run));
         }
         return demands;
     }
 
-    UnitState StateAt(Demand d, int minute, FireRun run)
+    static bool Far(LatLon a, LatLon b) => RoadGeometry.DistanceM(a.Lat, a.Lon, b.Lat, b.Lon) > SameSpotM;
+
+    /// <summary>
+    /// Por onde volta ao posto no fim e quanto demora: pelo caminho por onde veio se só fez uma ação e partiu do posto; senão, uma rota por estrada de onde acabou (pelo ar ou a pé,
+    /// em linha reta, ao mesmo ritmo da ida).
+    /// </summary>
+    async Task<(LineString? Route, double Eta)> WayHomeAsync(string locationId, Vehicle? vehicle, IReadOnlyList<Leg> legs, LatLon here, LatLon home, CancellationToken ct)
     {
-        var status = StatusAt(d, minute);
-        var working = status is DispatchStatus.Working or DispatchStatus.Refilling or DispatchStatus.Resting;
-        var work = working ? WorkAt(d, minute) : null;
-        var water = d.WaterCapacityL > 0 && d.Vehicle is not null
-            ? new WaterStatus(
-                work?.WaterL ?? d.WaterCapacityL,
-                d.WaterCapacityL,
-                d.WaterPerMinuteL,
-                EmptyAtMinute: work?.EmptyAtMinute)
+        var first = legs[0];
+        bool ground = vehicle is not null && !ArrivalEstimator.IsAerial(vehicle.Type);
+        if (!ground)
+        {
+            double outM = RoadGeometry.DistanceM(home.Lat, home.Lon, first.Site.Lat, first.Site.Lon), backM = RoadGeometry.DistanceM(here.Lat, here.Lon, home.Lat, home.Lon);
+            return (Line(here, home), outM > 1 ? first.Eta * backM / outM : first.Eta);
+        }
+        var routed = legs.Where(l => l.Route is { NumPoints: > 1 }).ToList();
+        if (routed.Count == 0) return (null, first.Eta);
+        if (routed.Count == 1 && !Far(StartOf(routed[0].Route!), home)) return ((LineString)routed[0].Route!.Reverse(), routed[0].Eta);
+        var estimate = await arrival.EstimateAsync(vehicle, here, home, locationId, null, ct);
+        return estimate.Route is { NumPoints: > 1 } r && estimate.Minutes is { } minutes ? (r, minutes) : ((LineString)routed[^1].Route!.Reverse(), routed[^1].Eta);
+    }
+
+    Demand MakeDemand(string unitId, ResourceType type, Vehicle? vehicle, PersonnelPool? pool, string organizationId, Responsibility? responsibility, int personnel, Target target,
+        IReadOnlyList<Leg> legs, LatLon home, LineString? back, double backEta, FireRun run)
+    {
+        var rules = settings.Rules;
+        var trace = Build(run.DurationMinutes, legs, home, back, backEta, vehicle, rules);
+        var (waterCap, waterLpm) = WaterOf(vehicle, rules);
+        return new Demand(unitId, type, vehicle?.Callsign ?? pool?.Role.ToString(), organizationId, responsibility, personnel, target, vehicle, legs[0].Eta, waterCap, waterLpm,
+            FuelOf(vehicle, rules).CapacityL, vehicle is not null && ArrivalEstimator.IsAerial(vehicle.Type), trace);
+    }
+
+    /// <summary>
+    /// A ida a um ponto de água (`kind = water`, das fontes das regras, acessível a autotanques) ou a um posto de abastecimento (`fuel`, das fontes de combustível) e o tempo lá:
+    /// o mais rápido de alcançar por estrada, com o perfil da própria viatura, entre os mais perto em linha reta, e o percurso que ela faz. Nula se nenhum se alcança.
+    /// </summary>
+    Task<UnitDuty.Trip?> TripAsync(string kind, string locationId, Vehicle v, LatLon from, double waterCapacityL, CancellationToken ct)
+    {
+        string key = $"{kind}|{locationId}|{from.Lat:F5},{from.Lon:F5}|{v.Type}|{v.OffRoad}|{v.HeightM}|{v.WidthM}|{v.WeightT}|{v.MaxSlopePercent}|{waterCapacityL}";
+        if (_trips.Count > MaxRememberedTrips) _trips.Clear();
+        var lazy = _trips.GetOrAdd(key, _ => new Lazy<Task<UnitDuty.Trip?>>(() => FindTripAsync(kind, locationId, v, from, waterCapacityL, CancellationToken.None)));
+        return lazy.Value.WaitAsync(ct);
+    }
+
+    const int TripCandidates = 8;
+
+    async Task<UnitDuty.Trip?> FindTripAsync(string kind, string locationId, Vehicle v, LatLon from, double waterCapacityL, CancellationToken ct)
+    {
+        try
+        {
+            var rules = settings.Rules;
+            List<(string Id, string Name, LatLon Position, double StopMinutes)> places;
+            if (kind == "water")
+            {
+                var sources = rules.Water.Refill.Sources.ToHashSet(StringComparer.Ordinal);
+                places = (await map.WaterPointsAsync(locationId, ct)).Where(w => w.TruckAccessible && w.Available && sources.Contains(w.Kind))
+                    .Select(w => (w.Id, w.Name, w.Position, rules.Water.Refill.SetupMinutes + waterCapacityL / (w.FlowLpm is > 0 ? w.FlowLpm.Value : w.Kind == "hydrant" ? rules.Water.Refill.HydrantFlowLpm : rules.Water.Refill.DefaultFlowLpm)))
+                    .ToList();
+            }
+            else
+            {
+                var sources = rules.Fuel.Sources.ToHashSet(StringComparer.Ordinal);
+                places = (await map.FacilitiesAsync(locationId, ct)).Where(f => sources.Contains(f.Kind)).Select(f => (f.Id, f.Name, f.Position, rules.Fuel.RefuelMinutes)).ToList();
+            }
+            var nearest = places.OrderBy(p => RoadGeometry.DistanceM(from.Lat, from.Lon, p.Position.Lat, p.Position.Lon)).Take(TripCandidates).ToList();
+            if (nearest.Count == 0) return null;
+            var profile = new VehicleProfile(v.Type, v.HeightM, v.WidthM, v.WeightT, v.OffRoad, v.CruiseSpeedKmh, v.MaxSlopePercent);
+            var drive = await routing.DriveMinutesAsync(locationId, from, nearest.Select(p => p.Position).ToList(), profile, ct);
+            foreach (var (place, _) in nearest.Zip(drive).Where(x => x.Second is not null).OrderBy(x => x.Second))
+            {
+                var estimate = await arrival.EstimateAsync(v, from, place.Position, locationId, null, ct);
+                if (estimate.Minutes is not { } minutes || estimate.Route is not { NumPoints: > 1 } path) continue;
+                return new UnitDuty.Trip(RoutePath.Of(path), Math.Max(1, minutes), Math.Max(1, place.StopMinutes), place.Id, place.Name, place.Position);
+            }
+            return null;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return null; // sem viagem conhecida: a viatura reabastece com o tempo genérico das regras
+        }
+    }
+
+    UnitState StateOf(Demand d, int minute, FireRun run)
+    {
+        var points = d.Trace.Points;
+        int at = Math.Clamp(minute, 0, points.Count - 1);
+        var point = points[at];
+        var segment = UnitDuty.At(d.Trace.Segments, at);
+        int worked = 0;
+        for (int i = 0; i <= at; i++) if (points[i].Status == DispatchStatus.Working) worked++;
+
+        WaterStatus? water = null;
+        if (d.WaterCapacityL > 0 && d.Vehicle is not null)
+        {
+            bool goingToWater = segment is { Phase: UnitDuty.Phase.ToWater or UnitDuty.Phase.Filling, Trip: not null };
+            var emptyAt = d.Trace.Segments.FirstOrDefault(s => s.From >= at && (s.Phase == UnitDuty.Phase.ToWater || (s.Phase == UnitDuty.Phase.Filling && s.Trip is null)))?.From;
+            water = new WaterStatus(point.WaterLevelL ?? d.WaterCapacityL, d.WaterCapacityL, d.WaterLpm, goingToWater ? segment!.Trip!.PlaceId : null,
+                segment is { Phase: UnitDuty.Phase.ToWater } s0 ? Math.Round(s0.To - at, 1) : null, emptyAt is { } e ? (int)Math.Round(e) : null);
+        }
+        var fuel = d.FuelCapacityL > 0 && point.FuelPct is { } pct
+            ? new FuelStatus(pct, d.FuelCapacityL, segment is { Phase: UnitDuty.Phase.ToFuel or UnitDuty.Phase.Fueling } s1 ? s1.Trip?.PlaceId : null)
             : null;
         var crew = d.Personnel > 0
-            ? new CrewStatus(
-                work?.WorkedMinutes ?? 0,
-                work?.FatiguePct ?? 0,
-                run.Start.AddHours(settings.Rules.Crews.ShiftLengthHours),
-                run.Start.AddMinutes(settings.Rules.Crews.MaxContinuousWorkMinutes))
+            ? new CrewStatus(worked, point.FatiguePct ?? 0, run.Start.AddHours(settings.Rules.Crews.ShiftLengthHours), run.Start.AddMinutes(settings.Rules.Crews.MaxContinuousWorkMinutes))
             : null;
-        var aerial = d.Aerial
-            ? new AerialStatus(
-                Drops: (int)((work?.WorkedMinutes ?? 0) / Math.Max(1, (d.Vehicle?.Aerial?.LoadMinutes ?? 0) + (d.Vehicle?.Aerial?.DropMinutes ?? 0))),
-                WaterDeliveredL: (int)((work?.WorkedMinutes ?? 0) / Math.Max(1, (d.Vehicle?.Aerial?.LoadMinutes ?? 0) + (d.Vehicle?.Aerial?.DropMinutes ?? 0)))
-                    * (d.Vehicle?.Aerial?.BucketCapacityL ?? 0),
-                CycleMinutes: (d.Vehicle?.Aerial?.LoadMinutes ?? 0) + (d.Vehicle?.Aerial?.DropMinutes ?? 0),
-                BlockedBy: null)
-            : null;
-
-        return new UnitState(
-            d.UnitId,
-            status,
-            d.ResourceType,
-            d.Callsign,
-            d.OrganizationId,
-            DispatchId: null,
-            d.Responsibility,
-            PositionAt(d, minute),
-            d.Target,
-            d.Eta,
-            d.Personnel,
-            water,
-            crew,
-            aerial);
-    }
-
-    UnitTrackPoint PointAt(Demand d, int minute, FireRun run)
-    {
-        var status = StatusAt(d, minute);
-        var work = status is DispatchStatus.Working or DispatchStatus.Refilling or DispatchStatus.Resting ? WorkAt(d, minute) : null;
-        return new UnitTrackPoint(minute, status, PositionAt(d, minute), work?.WaterL, work?.FatiguePct);
-    }
-
-    DispatchStatus StatusAt(Demand d, double minute)
-    {
-        if (minute < d.Start) return DispatchStatus.Ordered;
-        if (minute < d.WorkStart) return DispatchStatus.EnRoute;
-        if (minute < d.WorkEnd) return WorkAt(d, minute).Status;
-        if (minute < d.ReturnEnd) return DispatchStatus.Returning;
-        return DispatchStatus.Completed;
-    }
-
-    LatLon? PositionAt(Demand d, double minute)
-    {
-        if (minute < d.Start) return null;
-        if (minute < d.WorkStart)
+        AerialStatus? aerial = null;
+        if (d.Aerial)
         {
-            if (d.Route is not null) return CrewSafety.PositionAt(d.Route, d.Eta, d.Site, minute - d.Start);
-            return d.Origin is { } origin ? Lerp(origin, d.Site, d.Eta <= 0 ? 1 : (minute - d.Start) / d.Eta) : d.Site;
+            double cycle = (d.Vehicle?.Aerial?.LoadMinutes ?? 0) + (d.Vehicle?.Aerial?.DropMinutes ?? 0);
+            int drops = (int)(worked / Math.Max(1, cycle));
+            aerial = new AerialStatus(drops, drops * (d.Vehicle?.Aerial?.BucketCapacityL ?? 0), cycle, null);
         }
-        if (minute < d.WorkEnd) return d.Site;
-        if (minute < d.ReturnEnd)
-        {
-            if (d.Route is not null) return CrewSafety.PositionAt(d.Route, d.Eta, d.Site, Math.Max(0, d.Eta - (minute - d.WorkEnd)));
-            var f = d.Eta <= 0 ? 0 : 1 - (minute - d.WorkEnd) / d.Eta;
-            return d.Origin is { } origin ? Lerp(origin, d.Site, f) : d.Site;
-        }
-        return d.Origin ?? d.Site;
-    }
-
-    static LatLon Lerp(LatLon from, LatLon to, double fraction)
-    {
-        var f = Math.Clamp(fraction, 0, 1);
-        return new LatLon(from.Lat + (to.Lat - from.Lat) * f, from.Lon + (to.Lon - from.Lon) * f);
-    }
-
-    WorkState WorkAt(Demand d, double minute)
-    {
-        var elapsed = Math.Max(0, minute - d.WorkStart);
-        var capacity = d.WaterCapacityL;
-        var perMinute = d.WaterPerMinuteL;
-        var refillMinutes = Math.Max(1, (int)Math.Ceiling(settings.Rules.Water.Refill.ShuttleMinutes + settings.Rules.Water.Refill.SetupMinutes));
-        var restMinutes = Math.Max(1, settings.Rules.Crews.MandatoryRestMinutes);
-        var maxWork = Math.Max(1, settings.Rules.Crews.MaxContinuousWorkMinutes);
-
-        if (d.Aerial || capacity <= 0 || perMinute <= 0)
-        {
-            var workedOnly = (int)Math.Floor(elapsed);
-            return new WorkState(DispatchStatus.Working, capacity, workedOnly, Fatigue(workedOnly), null);
-        }
-
-        var water = capacity;
-        var worked = 0;
-        var sinceRest = 0;
-        var phase = DispatchStatus.Working;
-        var remaining = 0;
-        int? emptyAt = null;
-
-        for (int i = 0; i < (int)Math.Floor(elapsed); i++)
-        {
-            if (phase is DispatchStatus.Refilling or DispatchStatus.Resting)
-            {
-                remaining--;
-                if (remaining <= 0) phase = DispatchStatus.Working;
-                continue;
-            }
-
-            worked++;
-            sinceRest++;
-            water = Math.Max(0, water - perMinute);
-            if (water <= 0)
-            {
-                emptyAt ??= (int)Math.Floor(d.WorkStart + i + 1);
-                phase = DispatchStatus.Refilling;
-                remaining = refillMinutes;
-                continue;
-            }
-            if (sinceRest >= maxWork)
-            {
-                phase = DispatchStatus.Resting;
-                remaining = restMinutes;
-            }
-        }
-
-        if (phase == DispatchStatus.Working && water <= 0)
-        {
-            // the first minute of work can empty a very small tank; report the refill already
-            emptyAt ??= (int)Math.Floor(d.WorkStart + Math.Floor(elapsed));
-            phase = DispatchStatus.Refilling;
-        }
-
-        return new WorkState(phase, phase == DispatchStatus.Refilling ? 0 : water, worked, Fatigue(worked), emptyAt);
-    }
-
-    double Fatigue(int workedMinutes) => Math.Min(100, workedMinutes / 60.0 * settings.Rules.Crews.FatiguePctPerHour);
-
-    IReadOnlyList<UnitEvent> Events(Demand d, FireRun run)
-    {
-        var events = new List<UnitEvent>();
-        Add(events, (int)Math.Round(d.Start), "departed", null, run);
-        if (d.Eta > 0) Add(events, (int)Math.Round(d.WorkStart), "arrived", d.Site, run);
-        Add(events, (int)Math.Round(d.WorkStart), "started_working", d.Site, run);
-
-        var previous = WorkAt(d, d.WorkStart);
-        for (int minute = (int)Math.Ceiling(d.WorkStart) + 1; minute < d.WorkEnd; minute++)
-        {
-            var current = WorkAt(d, minute);
-            if (previous.Status != current.Status)
-            {
-                if (current.Status == DispatchStatus.Refilling) Add(events, minute, "refill_started", d.Site, run);
-                else if (current.Status == DispatchStatus.Resting) Add(events, minute, "rest_started", d.Site, run);
-                else if (previous.Status == DispatchStatus.Refilling) Add(events, minute, "refill_done", d.Site, run);
-                else if (previous.Status == DispatchStatus.Resting) Add(events, minute, "rest_done", d.Site, run);
-            }
-            if (previous.WaterL > 0 && current.WaterL <= 0) Add(events, minute, "water_empty", d.Site, run);
-            previous = current;
-        }
-
-        Add(events, (int)Math.Round(d.ReturnEnd), "returned", d.Origin ?? d.Site, run);
-        return events.OrderBy(e => e.TMin).ThenBy(e => e.Type, StringComparer.Ordinal).ToList();
-    }
-
-    void Add(List<UnitEvent> events, int tMin, string type, LatLon? position, FireRun run)
-    {
-        if (tMin < 0 || tMin > run.DurationMinutes) return;
-        if (events.Any(e => e.TMin == tMin && e.Type == type)) return;
-        events.Add(new UnitEvent(tMin, type, position));
+        double? eta = d.Eta;
+        if (point.Status == DispatchStatus.EnRoute && d.Trace.Legs.FirstOrDefault(l => l.Depart <= at && at < l.Arrive) is { Arrive: > 0 } leg) eta = Math.Max(0, leg.Arrive - at);
+        return new UnitState(d.UnitId, point.Status, d.ResourceType, d.Callsign, d.OrganizationId, DispatchId: null, d.Responsibility, point.Position, d.Target,
+            eta, d.Personnel, water, crew, aerial, fuel);
     }
 }

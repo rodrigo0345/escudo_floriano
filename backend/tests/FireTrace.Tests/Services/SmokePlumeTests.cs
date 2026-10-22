@@ -96,6 +96,49 @@ public class SmokePlumeTests
         Assert.Equal(0, field[0], 3);
     }
 
+    /// <summary>A versão antiga de `Puffs` (varre a grelha inteira por cada minuto), copiada tal e qual: é o oráculo de que a versão por minuto dá exatamente o mesmo.</summary>
+    static List<SmokePuff> ReferencePuffs(FireRun run, int[] burnMinutes, WindDisplacement wind, int tMin)
+    {
+        var smoke = TestSettings.All.Smoke; var D = smoke.Dispersion;
+        var puffs = new List<SmokePuff>();
+        var (width, cellM, block) = (run.Spec.Width, run.Spec.CellM, smoke.BlockCells);
+        for (int m = tMin; m >= Math.Max(0, tMin - D.PuffLifetimeMinutes); m -= D.PuffStepMinutes)
+        {
+            var sources = new Dictionary<(int, int), (double Q, double MaxI, bool Crown, double X, double Y, int N)>();
+            for (int c = 0; c < run.Ignition.Length; c++)
+            {
+                int t0 = run.Ignition[c];
+                if (t0 < 0 || t0 > m || m >= t0 + Math.Min(burnMinutes[c], D.FlameMinutes)) continue;
+                int x = c % width, y = c / width; var key = (x / block, y / block);
+                double intensity = run.IntensityKwm[c], q = intensity * cellM / D.HeatOfCombustionKjKg * D.EmissionFactorGPerKg;
+                var s = sources.GetValueOrDefault(key);
+                sources[key] = (s.Q + q, Math.Max(s.MaxI, intensity), s.Crown || (run.Flags[c] & 1) != 0, s.X + (x + 0.5) * cellM, s.Y + (y + 0.5) * cellM, s.N + 1);
+            }
+            foreach (var s in sources.Values)
+            {
+                double mass = s.Q * 60 * D.PuffStepMinutes, height = Plume.PlumeHeightM(s.MaxI, s.Crown);
+                var (dE, dN) = wind.Between(m, tMin);
+                double age = tMin - m, spacing = wind.SpeedMs(m) * 60 * D.PuffStepMinutes;
+                SmokePuff Place(double px, double py, double ms, double h, double east, double north, double a, double sp) => new(px + east, py - north, ms, h, double.Hypot(east, north), a, sp);
+                puffs.Add(Place(s.X / s.N, s.Y / s.N, mass * (1 - D.LowLevelFraction), height, dE * D.AloftWindFactor, dN * D.AloftWindFactor, age, spacing * D.AloftWindFactor));
+                puffs.Add(Place(s.X / s.N, s.Y / s.N, mass * D.LowLevelFraction, 0, dE, dN, age, spacing));
+            }
+        }
+        return puffs;
+    }
+
+    [Theory]
+    [InlineData(0)] [InlineData(5)] [InlineData(40)] [InlineData(57)] [InlineData(100)] [InlineData(180)] [InlineData(400)]
+    public void The_per_minute_index_gives_exactly_the_puffs_of_the_full_grid_scan(int t)
+    {
+        var (run, wind) = Burning(intensity: 9000, crown: true);
+        var burn = Enumerable.Range(0, N * N).Select(c => c % 7 == 0 ? 0 : 2 + c % 11).ToArray(); // tempos de queima variados, incluindo células que não emitem
+        var expected = ReferencePuffs(run, burn, wind, t);
+        for (int again = 0; again < 2; again++) // a segunda vez usa o índice já guardado
+            Assert.Equal(expected, Plume.Puffs(run, burn, wind, t));
+        Assert.Equal(ReferencePuffs(run, Burn, wind, t), Plume.Puffs(run, Burn, wind, t)); // outro tempo de queima para a mesma corrida não reaproveita o índice errado
+    }
+
     [Fact]
     public void The_series_says_when_it_is_unsafe_and_when_it_is_safe_again()
     {

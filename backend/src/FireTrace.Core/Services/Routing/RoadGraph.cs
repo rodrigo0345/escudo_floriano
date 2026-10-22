@@ -87,10 +87,21 @@ public sealed class RoadGraph
 
     double[]? _slopes;
     /// <summary>Declive (%) de cada troço, para as regras de movimento (sem isto, tudo é plano).</summary>
-    public RoadGraph WithSlopes(double[] slopePercent) { _slopes = slopePercent; return this; }
+    public RoadGraph WithSlopes(double[] slopePercent) { _slopes = slopePercent; _costs.Clear(); return this; }
     public double SlopeOf(int edge) => _slopes?[edge] ?? 0;
 
-    double?[] Costs(TravelProfile profile) => Net.Edges.Select((e, i) => profile.Minutes(e, Net.Spec.CellM, SlopeOf(i))).ToArray();
+    /// <summary>
+    /// O custo de cada troço depende só do perfil (um record: igual por valor), da rede e dos declives, por isso calcula-se uma vez por perfil e não em cada percurso:
+    /// cada meio de um plano pedia a rede inteira de novo. Os vetores guardados são só de leitura (a pesquisa só os lê).
+    /// </summary>
+    double?[] Costs(TravelProfile profile)
+    {
+        if (_costs.Count >= MaxCachedProfiles) _costs.Clear();
+        return _costs.GetOrAdd(profile, p => Net.Edges.Select((e, i) => p.Minutes(e, Net.Spec.CellM, SlopeOf(i))).ToArray());
+    }
+
+    const int MaxCachedProfiles = 64;
+    readonly ConcurrentDictionary<TravelProfile, double?[]> _costs = new();
 
     /// <summary>Minutos desde a origem mais próxima até cada alvo, sem passar por troços bloqueados (nada = sem acesso).</summary>
     public double?[] AccessTimes(IReadOnlyList<Anchor> origins, IReadOnlyList<Anchor> targets, TravelProfile profile, Func<int, bool>? blocked = null)

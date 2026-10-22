@@ -25,14 +25,20 @@ export interface PlanQueryParams {
   cursor?: string;
 }
 
+/**
+ * A plan the agents publish only to have the engine judge it (titled "[lab] …"): it is deleted seconds later and is never one of the
+ * operator's plans. Listing it lets the operator click a plan that is about to vanish ("o plano não existe", nothing on the map).
+ */
+export const isCandidatePlan = (plan: { title?: string | null }): boolean => String(plan.title ?? '').startsWith('[lab]');
+
 export const plansApi = {
   list: async (params: PlanQueryParams = {}): Promise<Page<PlanSummary>> => {
     const { data } = await http.get<Page<PlanSummary>>('/plans', { params });
     return data;
   },
 
-  all: (params: Omit<PlanQueryParams, 'limit' | 'cursor'> = {}): Promise<PlanSummary[]> =>
-    fetchAllPages<PlanSummary>('/plans', params as Record<string, string>),
+  all: async (params: Omit<PlanQueryParams, 'limit' | 'cursor'> = {}): Promise<PlanSummary[]> =>
+    (await fetchAllPages<PlanSummary>('/plans', params as Record<string, string>)).filter((p) => !isCandidatePlan(p)),
 
   get: async (id: string): Promise<Plan> => {
     const { data } = await http.get<Plan>(`/plans/${id}`);
@@ -92,7 +98,8 @@ export const plansApi = {
   // ---- helpers of the plans panel (agents' plans for a baseline and their what-if runs)
 
   /** Plans whose basis is this baseline simulation (`GET /plans?simulationId=`). */
-  listForSimulation: (simulationId: string): Promise<PlanSummary[]> => fetchAllPages<PlanSummary>('/plans', { simulationId }),
+  listForSimulation: async (simulationId: string): Promise<PlanSummary[]> =>
+    (await fetchAllPages<PlanSummary>('/plans', { simulationId })).filter((p) => !isCandidatePlan(p)),
 
   /**
    * The latest finished what-if run of each plan, keyed by plan id. The API has no "simulations of this plan" filter,

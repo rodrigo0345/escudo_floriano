@@ -67,7 +67,7 @@ public class OperationSimulatorTests
     public void A_tank_runs_dry_and_the_engine_goes_to_refill_with_the_backends_water_cycle()
     {
         var u = Run(Truck(waterL: 3000, pumpLpm: 1000), eta: 10, stay: 120).Single();
-        var perFill = 3000 / (1000 * TestSettings.All.Rules.Water.DutyCycle);
+        var perFill = 3000 / TestSettings.All.Rules.Water.WorkingLpm(1000);                   // as linhas de ataque, não o caudal todo da bomba
         Assert.Contains(u.Events, e => e.Type == "water_empty");
         Assert.Contains(u.Events, e => e.Type == "refill_started");
         Assert.Contains(u.Events, e => e.Type == "refill_done");
@@ -95,6 +95,79 @@ public class OperationSimulatorTests
         var b = Run(Truck(), 15, 90).Single();
         Assert.Equal(a.Points, b.Points);
         Assert.Equal(a.Events, b.Events);
+    }
+
+    [Fact]
+    public void A_vehicle_works_parked_where_its_road_ends_not_on_the_fire_line()
+    {
+        var roadEnd = new LatLon(41.0, -8.002);                                              // a estrada acaba ~170 m antes da linha
+        var route = Gf.CreateLineString(new[] { new Coordinate(Home.Lon, Home.Lat), new Coordinate(roadEnd.Lon, roadEnd.Lat) });
+        var action = new FireAttackAction
+        {
+            Id = "act-1", Title = "Ataque", OrganizationId = "org-1", Tactic = "direct", ExpectedDurationMinutes = 60,
+            Resources = new() { new ResourceAssignment(ResourceType.Vehicle, "veh-1", 5, Responsibility: Responsibility.Firefighting, FromStationId: "sta-1", EtaMinutes: 20, Route: route) },
+        };
+        var plan = new Plan { LocationId = "loc", Title = "Plano", Actions = new() { action }, Horizon = new PlanHorizon(Start, Start.AddHours(4)) };
+        var u = OperationSimulator.Simulate(plan, Start, 120, new Dictionary<string, Vehicle> { ["veh-1"] = Truck() }, new Dictionary<string, PersonnelPool>(),
+            new Dictionary<string, LatLon> { ["sta-1"] = Home }, new Dictionary<string, LatLon> { ["act-1"] = Site }, TestSettings.All.Rules, 30).Single();
+        Assert.Equal(DispatchStatus.Working, u.Points[25].Status);
+        Assert.Equal(roadEnd, u.Points[25].Position);                                        // a equipa vai a pé; a viatura fica na estrada
+    }
+
+    [Fact]
+    public void A_ground_vehicle_without_a_road_to_its_target_never_drives_across_the_mountain()
+    {
+        var action = new FireAttackAction
+        {
+            Id = "act-1", Title = "Ataque", OrganizationId = "org-1", Tactic = "direct", ExpectedDurationMinutes = 60,
+            Resources = new() { new ResourceAssignment(ResourceType.Vehicle, "veh-1", 5, Responsibility: Responsibility.Firefighting, FromStationId: "sta-1", EtaMinutes: 20) },
+        };
+        var plan = new Plan { LocationId = "loc", Title = "Plano", Actions = new() { action }, Horizon = new PlanHorizon(Start, Start.AddHours(4)) };
+        var u = OperationSimulator.Simulate(plan, Start, 120, new Dictionary<string, Vehicle> { ["veh-1"] = Truck() }, new Dictionary<string, PersonnelPool>(),
+            new Dictionary<string, LatLon> { ["sta-1"] = Home }, new Dictionary<string, LatLon> { ["act-1"] = Site }, TestSettings.All.Rules, 30).Single();
+        Assert.All(u.Points, p => Assert.Equal(Home, p.Position));                         // fica no posto
+        Assert.Equal(DispatchStatus.Failed, u.Points[30].Status);
+    }
+
+    [Fact]
+    public void An_empty_engine_drives_by_road_to_the_water_point_fills_up_at_its_flow_and_comes_back()
+    {
+        var rules = TestSettings.All.Rules;
+        var work = new LatLon(41.0, -8.0);
+        var tank = new LatLon(41.0, -7.95);
+        var road = RoutePath.Of(Gf.CreateLineString(new[] { new Coordinate(work.Lon, work.Lat), new Coordinate(-7.975, 41.01), new Coordinate(tank.Lon, tank.Lat) }));
+        var trip = new UnitDuty.Trip(road, Minutes: 8, StopMinutes: 6, "wp-1", "Charca", tank);
+        var lpm = rules.Water.WorkingLpm(1000);
+        var segments = UnitDuty.Plan(0, 120, new UnitDuty.Inputs(3000, lpm, trip, 16, 200, 200, 0.4, rules.Fuel.WorkingLph / 60, 50, null), rules.Crews).ToList();
+
+        var toWater = segments.First(s => s.Phase == UnitDuty.Phase.ToWater);
+        Assert.Equal(3000 / lpm, toWater.From, 3);                                           // sai quando a água acaba
+        var halfway = UnitDuty.PositionAt(toWater, toWater.From + 4, work);
+        Assert.True(halfway.Lat > 41.005);                                                   // vai pela estrada (pela curva a norte), não em linha reta
+        var filling = segments.First(s => s.Phase == UnitDuty.Phase.Filling);
+        Assert.Equal(tank, UnitDuty.PositionAt(filling, filling.From + 1, work));            // enche no ponto de água
+        Assert.Equal(6, filling.To - filling.From, 3);
+        var back = segments.First(s => s.Phase == UnitDuty.Phase.FromWater);
+        Assert.Equal(3000, back.WaterTo);                                                    // volta cheia
+        Assert.Equal(UnitDuty.Phase.Working, segments[segments.IndexOf(back) + 1].Phase);    // e volta a trabalhar no mesmo sítio
+        Assert.True(back.FuelTo < toWater.FuelFrom);                                         // a viagem gasta combustível
+    }
+
+    [Fact]
+    public void A_vehicle_low_on_fuel_goes_to_refuel_and_comes_back_full()
+    {
+        var rules = TestSettings.All.Rules;
+        var work = new LatLon(41.0, -8.0);
+        var pump = new LatLon(41.0, -7.9);
+        var trip = new UnitDuty.Trip(RoutePath.Of(Gf.CreateLineString(new[] { new Coordinate(work.Lon, work.Lat), new Coordinate(pump.Lon, pump.Lat) })), 10, rules.Fuel.RefuelMinutes, "fac-1", "Posto", pump);
+        // sem água (máquina de rasto, por exemplo) e com o depósito quase no limite: trabalha até ao limite e vai abastecer
+        var segments = UnitDuty.Plan(0, 300, new UnitDuty.Inputs(0, 0, null, 16, 200, 60, 0.4, 0.2, 50, trip), rules.Crews).ToList();
+        var toFuel = segments.First(s => s.Phase == UnitDuty.Phase.ToFuel);
+        Assert.Equal((60 - 50) / 0.2, toFuel.From, 3);
+        var fueling = segments.First(s => s.Phase == UnitDuty.Phase.Fueling);
+        Assert.Equal(200, fueling.FuelTo);
+        Assert.Equal(pump, UnitDuty.PositionAt(fueling, fueling.From, work));
+        Assert.Equal(UnitDuty.Phase.Working, segments[segments.IndexOf(fueling) + 2].Phase);
     }
 
     [Fact]

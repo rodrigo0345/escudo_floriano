@@ -455,8 +455,8 @@ class FirefighterAgent:
 
     # -- branch 1: people in the path → evacuate first ----------------------------
     def _protect_life(self, situation: Situation, in_danger: list[dict[str, Any]]) -> tuple[list[ActionProposal], str, float]:
-        if in_danger[0].get("assetType") == "building_zone":
-            return self._defend_zone(situation, in_danger[0])
+        if in_danger[0].get("assetType") == "building_zone" and (self.tier is not FirefighterTier.SQUAD and not (self.observation.capabilities & EVACUATION_CAPABILITIES)):
+            return self._defend_zone(situation, in_danger[0])  # an engine defends the houses; whoever can move people (on foot, transport, GNR) evacuates them
         arrival = min(asset["arrivalMinute"]["p50"] for asset in in_danger)
         names = ", ".join(str(asset.get("name") or asset["id"]) for asset in in_danger)
         people = sum(int(asset.get("population") or 0) for asset in in_danger)
@@ -513,7 +513,7 @@ class FirefighterAgent:
                 "label": f"Evacuação {names}",
                 "start": {"offsetMinutes": 0},
                 "geometry": _area_around(in_danger[0].get("position")),
-                "placeIds": [asset["id"] for asset in in_danger],
+                "placeIds": [asset["id"] for asset in in_danger if asset.get("assetType") != "building_zone"],  # isolated houses are an area, not a backend place
                 "completeBy": {"offsetMinutes": max(int(arrival) - self.SAFETY_MARGIN_MIN, 5)},
                 "population": people,
             },

@@ -6,25 +6,23 @@ import {
   simulationsApi,
   type Action,
   type ActionPatch,
-  type ActionStatus,
   type Plan,
   type PlanSummary,
   type PlanStatus,
   type Simulation,
 } from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
-import { OrgLogo } from '@/domain/organizationLogos';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
 import { AttackTimeline } from './AttackTimeline';
+import { PlanActionsNow } from './PlanActionsNow';
 import { PlanEditor } from './PlanEditor';
 import { PlanRequestBox } from './PlanRequestBox';
 import styles from './panels.module.css';
 
 const nf = (n: number) => n.toLocaleString('pt-PT');
-const ACTIONS_SHOWN = 40;
 
 const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
   proposed: 'Proposto',
@@ -42,32 +40,6 @@ const PLAN_STATUS_KIND: Record<PlanStatus, 'ok' | 'warn' | 'bad'> = {
   completed: 'ok',
   discarded: 'bad',
   cancelled: 'bad',
-};
-
-const ACTION_STATUS_LABEL: Record<string, string> = {
-  planned: 'Planeada',
-  acknowledged: 'Reconhecida',
-  in_progress: 'Em curso',
-  completed: 'Concluída',
-  blocked: 'Bloqueada',
-  cancelled: 'Cancelada',
-  failed: 'Falhou',
-};
-
-/**
- * Próximos passos de execução por estado atual — os valores reais de `ActionStatus` (G5).
- * `cancelled` fica sem passos; `completed` também: o backend só preenche `completedAt` (nunca o limpa),
- * por isso reabrir uma ação concluída deixaria o registo com `completedAt` e estado `in_progress`.
- */
-const ACTION_NEXT: Partial<Record<ActionStatus, { label: string; status: ActionStatus }[]>> = {
-  planned: [{ label: 'Iniciar', status: 'in_progress' }],
-  acknowledged: [{ label: 'Iniciar', status: 'in_progress' }],
-  in_progress: [
-    { label: 'Concluir', status: 'completed' },
-    { label: 'Bloqueada', status: 'blocked' },
-  ],
-  blocked: [{ label: 'Retomar', status: 'in_progress' }],
-  failed: [{ label: 'Retomar', status: 'in_progress' }],
 };
 
 type Stats = NonNullable<Simulation['stats']>;
@@ -204,7 +176,7 @@ function AgentRows({ m }: { m: AgentMetrics | null }) {
       <Row>
         <span>GNR</span>
         <span>
-          {m.gnr.roadsClosed} cortes patrulhados{m.gnr.roadsWithoutPatrol ? ` · ${m.gnr.roadsWithoutPatrol} sem patrulha` : ''}
+          {m.gnr.roadsClosed} acessos fechados{m.gnr.roadsWithoutPatrol ? ` · ${m.gnr.roadsWithoutPatrol} abertos (sem patrulha)` : ''}
         </span>
       </Row>
       <Row>
@@ -230,6 +202,7 @@ export function PlansPanel() {
   const setFocusedAction = useAppStore((s) => s.setFocusedAction);
   const { showSimulationById } = useSimulationActions();
   const organizations = useResourcesStore((s) => s.organizations);
+  const orgName = (id: string) => organizations.find((o) => o.id === id)?.name ?? id;
   const resourcesLoaded = useResourcesStore((s) => s.loaded);
   const loadResources = useResourcesStore((s) => s.load);
 
@@ -242,16 +215,10 @@ export function PlansPanel() {
   const [open, setOpen] = useState<Plan | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [full, setFull] = useState<Map<string, Plan>>(new Map()); // the whole plans: the list has no metadata (the agents' metrics)
-  const [orgFilter, setOrgFilter] = useState<string | null>(null); // G5: null = todas as organizações
 
   useEffect(() => {
     if (!resourcesLoaded) void loadResources();
   }, [resourcesLoaded, loadResources]);
-
-  const orgName = useCallback(
-    (organizationId: string) => organizations.find((o) => o.id === organizationId)?.name ?? organizationId,
-    [organizations],
-  );
 
   const refresh = useCallback(async (silent = false) => {
     if (!baseId) return;
@@ -357,12 +324,13 @@ export function PlansPanel() {
   const toggleActions = async (plan: PlanSummary) => {
     setFocusedAction(null);
     setEditingId(null);
-    setOrgFilter(null);
     if (open?.id === plan.id) return setOpen(null);
     try {
       setOpen(await plansApi.get(plan.id as string));
     } catch (e) {
-      showBanner(`Plano: ${(e as Error).message}`);
+      // a plan can disappear under the list (the agents replace or withdraw one): say so and show the list as it is now
+      showBanner(`Plano ${plan.variant ?? plan.title}: já não existe (a lista foi atualizada). ${(e as Error).message}`);
+      void refresh(true);
     }
   };
 
@@ -431,16 +399,6 @@ export function PlansPanel() {
         const sim = runs.get(id);
         const status = (plan.status ?? 'proposed') as PlanStatus;
         const statusKind = PLAN_STATUS_KIND[status] ?? 'warn';
-        const shownActions = open?.id === id ? open.actions.slice(0, ACTIONS_SHOWN) : [];
-        const groups = new Map<string, typeof shownActions>();
-        for (const action of shownActions) {
-          const organizationId = action.organizationId ?? '—';
-          const list = groups.get(organizationId);
-          if (list) list.push(action);
-          else groups.set(organizationId, [action]);
-        }
-        const executable = status === 'active'; // só o plano ativo está a ser executado (o backend recusa o resto com 409)
-        const orgOrder = [...groups.keys()].sort((a, b) => orgName(a).localeCompare(orgName(b)));
         return (
           <div key={id} className={`${styles.group} ${styles.spaced}`}>
             <div>
@@ -494,61 +452,14 @@ export function PlansPanel() {
               <div className={styles.actionGroups}>
                 <h3>Combate ao fogo</h3>
                 <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
-                <h3>Todas as ações ({open.actions.length}), por organização</h3>
-                <div className={styles.orgFilter}>
-                  <button className={orgFilter === null ? 'on' : ''} onClick={() => setOrgFilter(null)}>Todas</button>
-                  {orgOrder.map((organizationId) => (
-                    <button key={organizationId} className={orgFilter === organizationId ? 'on' : ''} onClick={() => setOrgFilter(organizationId)}>
-                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={14} inline />
-                      {orgName(organizationId)}
-                    </button>
-                  ))}
-                </div>
-                {orgOrder
-                  .filter((organizationId) => !orgFilter || organizationId === orgFilter)
-                  .map((organizationId) => [organizationId, groups.get(organizationId) as typeof shownActions] as const)
-                  .map(([organizationId, actions]) => (
-                  <div key={organizationId} className={styles.actionGroup}>
-                    <div className={styles.orgHead} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={24} inline />
-                      <b>{orgName(organizationId)}</b>
-                      <small className="note" style={{ marginLeft: 'auto' }}>{actions.length} ação(ões)</small>
-                    </div>
-                    {actions.map((a) => (
-                      <Row key={a.id}>
-                        <span className={styles.actionText}>
-                          <b>{a.title}</b>
-                          {a.rationale ? <small className={styles.rationale}>{a.rationale}</small> : null}
-                          <small className="note">
-                            {a.type} · {orgName(a.organizationId ?? organizationId)}
-                            {a.supportingOrganizationIds?.length ? ` · apoia: ${a.supportingOrganizationIds.map(orgName).join(', ')}` : ''}
-                          </small>
-                        </span>
-                        <span className={styles.actionTags}>
-                          <Tag kind={a.priority === 'critical' ? 'bad' : 'ok'}>{a.priority ?? 'normal'}</Tag>
-                          <Tag kind={a.status === 'completed' ? 'ok' : a.status === 'blocked' ? 'bad' : 'warn'}>
-                            {ACTION_STATUS_LABEL[a.status ?? 'planned'] ?? a.status ?? 'planeada'}
-                          </Tag>
-                          {executable && (ACTION_NEXT[a.status ?? 'planned'] ?? []).length ? (
-                            <span className={styles.stepBtns}>
-                              {(ACTION_NEXT[a.status ?? 'planned'] ?? []).map((step) => (
-                                <button
-                                  key={step.status}
-                                  disabled={busy === `act:${a.id as string}`}
-                                  title={`Marcar como ${ACTION_STATUS_LABEL[step.status] ?? step.status}`}
-                                  onClick={() => void patchAction(id, a, { status: step.status })}
-                                >
-                                  {busy === `act:${a.id as string}` ? '…' : step.label}
-                                </button>
-                              ))}
-                            </span>
-                          ) : null}
-                        </span>
-                      </Row>
-                    ))}
-                  </div>
-                ))}
-                {open.actions.length > ACTIONS_SHOWN ? <small className="note">… e mais {open.actions.length - ACTIONS_SHOWN} ações (a razão de cada uma está na dica ao passar o rato).</small> : null}
+                <PlanActionsNow
+                  key={id}
+                  plan={open}
+                  onMap={!!sim && showing?.id === sim.id}
+                  showOnMap={() => sim && void showSimulationById(sim.id as string)}
+                  busyActionId={busy?.startsWith('act:') ? busy.slice(4) : null}
+                  onProgress={(action, status) => void patchAction(id, action, { status })}
+                />
               </div>
             ) : null}
           </div>

@@ -117,15 +117,19 @@ class LifePlan:
         )
 
 
-def plan_life(items: Sequence[AtRisk], evacuators: Sequence[Evacuator], *, now: float = 0.0, margin_min: float = 10.0) -> LifePlan:
+def plan_life(items: Sequence[AtRisk], evacuators: Sequence[Evacuator], *, now: float = 0.0, margin_min: float = 10.0, order: Sequence[str] | None = None) -> LifePlan:
     """Give each at-risk place the evacuators it needs to finish in time, vulnerable and most urgent first.
 
     A place that cannot be emptied in time even with every evacuator left is advised to shelter in place, and keeps no
     evacuators (they go to the next place). ``now`` is the decision instant on the forecast's clock.
+
+    ``order`` (place ids, first first) replaces the vulnerable-then-soonest order when a commander has weighed the places differently (``advisor.py``); a place it does
+    not name comes after the ones it does, in the usual order.
     """
     free = sorted(evacuators, key=lambda e: -e.people_per_min)
     decisions: list[LifeDecision] = []
-    for item in sorted(items, key=lambda i: i.priority):
+    rank = {item_id: position for position, item_id in enumerate(order or ())}
+    for item in sorted(items, key=(lambda i: i.priority) if not rank else (lambda i: (rank.get(i.id, len(rank)), i.priority))):
         factor = VULNERABLE_RATE_FACTOR if item.vulnerable else 1.0
         deadline = item.arrival_p10 - margin_min
         window = deadline - now - MOBILIZATION_MIN

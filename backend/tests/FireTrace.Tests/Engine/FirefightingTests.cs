@@ -65,7 +65,7 @@ public class FirefightingTests
         var segments = CrewWorkSchedule.Plan(arrival: 20, until: 120, waterL: 3500, pumpLpm: 1500, rules);
         Assert.True(segments.Count > 1);
         Assert.Equal(20, segments[0].FromMinute);
-        double stint = 3500 / (1500 * rules.Water.DutyCycle);
+        double stint = 3500 / rules.Water.WorkingLpm(1500); // as linhas de ataque, não o caudal todo da bomba
         Assert.Equal(stint, segments[0].Minutes, 3);
         Assert.Equal(segments[0].FromMinute + stint + rules.Water.Refill.ShuttleMinutes + rules.Water.Refill.SetupMinutes, segments[1].FromMinute, 3); // o intervalo de reabastecimento
         Assert.True(segments[1].Fatigue < segments[0].Fatigue);                                                                                       // cansa-se

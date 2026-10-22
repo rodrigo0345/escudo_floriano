@@ -21,6 +21,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema import RefResolver
+from jsonschema import validators as _jsonschema_validators
 from jsonschema.exceptions import SchemaError
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,26 @@ ACTION_TYPE_INTERVENTIONS: dict[str, str] = {
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SPEC = REPO_ROOT / "api-spec" / "openapi.json"
 
+def _discriminated_one_of(validator: Any, one_of: Any, instance: Any, schema: Any) -> Any:
+    """``oneOf`` that follows the OpenAPI ``discriminator`` when the schema has one, and the plain ``oneOf`` otherwise.
+
+    ``Action`` is a ``oneOf`` of 15 schemas and ``Intervention`` of 8, both with ``discriminator: {propertyName: type, mapping}``. Plain JSON Schema tries every branch
+    of every action (and of each of its interventions): seconds for a plan of a few dozen actions, on every publish. The server picks the branch by ``type``, so the
+    check does the same: only the mapped schema is applied, and its own errors are the ones reported (clearer than "not valid under any of the given schemas").
+    A missing or unknown ``type`` falls back to the plain ``oneOf``, so such a payload is still refused exactly as before.
+    """
+    discriminator = schema.get("discriminator")
+    if isinstance(discriminator, dict) and isinstance(instance, dict):
+        target = (discriminator.get("mapping") or {}).get(instance.get(discriminator.get("propertyName")))
+        if isinstance(target, str):
+            yield from validator.descend(instance, {"$ref": target})
+            return
+    yield from _PLAIN_ONE_OF(validator, one_of, instance, schema)
+
+
+_PLAIN_ONE_OF = Draft202012Validator.VALIDATORS["oneOf"]
+ContractValidator = _jsonschema_validators.extend(Draft202012Validator, {"oneOf": _discriminated_one_of})
+
 _validator_cache: dict[str, Draft202012Validator] = {}
 _registry: dict[str, Any] | None = None
 _resolver: RefResolver | None = None
@@ -152,7 +173,7 @@ def validator(schema_name: str, *, spec_path: str | Path | None = None) -> Draft
         # pointer points into. RefResolver is deprecated upstream but stable and exact
         # for whole-document pointer resolution; when jsonschema removes it we pin.
         _resolver = RefResolver(base_uri="", referrer=doc)
-    resolved = Draft202012Validator(schema, resolver=_resolver)
+    resolved = ContractValidator(schema, resolver=_resolver)
     _validator_cache[cache_key] = resolved
     return resolved
 

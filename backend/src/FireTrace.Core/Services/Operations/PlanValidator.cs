@@ -22,9 +22,11 @@ namespace FireTrace.Core.Services.Operations;
 
 /// <summary>Verificações automáticas de um plano: referências a meios e organizações, dependências sem ciclos, conflitos de meios e segurança.</summary>
 public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> organizations, IDocumentStore<Vehicle> vehicles, IDocumentStore<PersonnelPool> pools,
-    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets, ArrivalEstimator arrival)
+    IDocumentStore<Equipment> equipment, IDocumentStore<Scenario> scenarios, IDocumentStore<Simulation> simulations, IFireRunRepository runs, CrewSafety crewSafety, TimeProvider clock, ResponsibilityRules rules, LimitsSettings limits, InterventionSettings interventions, SmokeService smoke, TargetResolver targets, ArrivalEstimator arrival,
+    ILogger<PlanValidator> log)
 {
-    readonly SemaphoreSlim _gate = new(1, 1);
+    // a validação é cara (rotas e fumo por ação): vários planos em paralelo, mas não ilimitados; o mesmo número do limite de endpoint de planos
+    readonly SemaphoreSlim _gate = new(limits.PlanningPermitLimit, limits.PlanningPermitLimit);
 
     /// <summary>A chave de uma viatura numa ação, como o <see cref="PlanRouter"/> a devolve.</summary>
     public static string RoutedKey(string actionId, string resourceId) => $"{actionId}/{resourceId}";
@@ -35,7 +37,10 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
     /// </summary>
     public async Task<PlanValidation> ValidateAsync(Plan plan, CancellationToken ct = default, IReadOnlySet<string>? routed = null)
     {
+        var waited = System.Diagnostics.Stopwatch.GetTimestamp();
         await _gate.WaitAsync(ct);
+        var begin = System.Diagnostics.Stopwatch.GetTimestamp();
+        TimeSpan resourcesTime = default, smokeTime = default, exposureTime = default;
         try
         {
             var issues = new List<ValidationIssue>();
@@ -69,7 +74,9 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
                 if (a.Trigger is not null and not AtTimeTrigger)
                     Add("warning", "trigger_not_simulated", "Este plano aceita o gatilho, mas ainda não o simula: a ação conta como começando ao ativar (T+0). Não assuma tempo condicional.", $"{at}/trigger", a.Id);
 
+                var resourcesStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 foreach (var (r, j) in (a.Resources ?? new()).Select((r, j) => (r, j))) await CheckResource(plan, r, $"{at}/resources/{j}", a, Add, routed, ct);
+                resourcesTime += System.Diagnostics.Stopwatch.GetElapsedTime(resourcesStart);
 
                 switch (a)
                 {
@@ -93,8 +100,12 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
 
             if (plan.Basis?.SimulationId is { } basisSimulation)
             {
+                var smokeStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 await CheckSmokeAsync(plan, basisSimulation, Add, ct);
+                smokeTime = System.Diagnostics.Stopwatch.GetElapsedTime(smokeStart);
+                var exposureStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 await CheckCrewExposureAsync(plan, basisSimulation, Add, ct);
+                exposureTime = System.Diagnostics.Stopwatch.GetElapsedTime(exposureStart);
             }
 
             var reach = Dependencies(plan);
@@ -112,6 +123,10 @@ public sealed class PlanValidator(IMapReader map, IDocumentStore<Organization> o
         finally
         {
             _gate.Release();
+            var total = System.Diagnostics.Stopwatch.GetElapsedTime(begin);
+            if (total.TotalMilliseconds >= 500 || System.Diagnostics.Stopwatch.GetElapsedTime(waited) - total >= TimeSpan.FromMilliseconds(500))
+                log.LogInformation("validação de plano: {Actions} ações, esperou {WaitMs:F0} ms, recursos {ResourcesMs:F0} ms, fumo {SmokeMs:F0} ms, exposição {ExposureMs:F0} ms, total {TotalMs:F0} ms",
+                    plan.Actions.Count, (System.Diagnostics.Stopwatch.GetElapsedTime(waited) - total).TotalMilliseconds, resourcesTime.TotalMilliseconds, smokeTime.TotalMilliseconds, exposureTime.TotalMilliseconds, total.TotalMilliseconds);
         }
     }
 

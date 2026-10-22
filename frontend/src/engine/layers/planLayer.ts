@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { Plan, PlanAction } from '@/api';
+import { actionWindows } from '@/domain/actionTiming';
 import { lineStringCoordinates, polygonRings, type LonLat } from '@/domain/geojson';
 import type { Georef, WorldPoint } from '@/domain/georef';
 
@@ -66,9 +67,19 @@ interface Span extends Window {
   alpha: number;
 }
 
-const UPCOMING = 0.22; // share of its alpha an effect keeps before it starts (the plan is still readable ahead of time)
+const UPCOMING = 0.22; // share of its alpha before it starts, when the whole plan is shown
 const DONE = 0.07; // ...and once it is over, or when another action is focused
 const WORKING = 1.35; // a working effect is drawn stronger than the plan at rest, without turning opaque
+
+/** Alpha of a timed element at minute `t`: `onlyActive` hides what is not happening now (nothing faint left on the map), else it dims it. */
+function alphaAt(s: Span, t: number | null, focus: string | null, onlyActive: boolean): number {
+  if (focus) return s.action === focus ? Math.min(1, s.alpha * 2.2) : onlyActive && t !== null ? 0 : s.alpha * DONE;
+  if (t === null) return s.alpha;
+  const active = t >= s.start && t < s.end;
+  if (active) return Math.min(1, s.alpha * WORKING);
+  if (onlyActive) return 0;
+  return t < s.start ? s.alpha * UPCOMING : s.alpha * DONE;
+}
 
 /** Triangles accumulated for one mesh; `tips[i]` is the tooltip of triangle `i` (what a hover on that face shows). */
 class MeshAcc {
@@ -83,14 +94,12 @@ class MeshAcc {
     if (win) this.spans.push({ ...win, from, to: this.positions.length / 3, alpha });
   }
 
-  /** Re-weights each timed effect's alpha for minute `t` (`null`: as drawn); a focused action is drawn at full strength whatever the time. */
-  retime(t: number | null, focus: string | null): void {
+  /** Re-weights each timed element's alpha for minute `t` (`null`: as drawn); a focused action is drawn at full strength whatever the time. */
+  retime(t: number | null, focus: string | null, onlyActive: boolean): void {
     const attr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
     if (!attr || !this.spans.length) return;
     for (const s of this.spans) {
-      let a = s.alpha;
-      if (focus) a = s.action === focus ? Math.min(1, s.alpha * 2.2) : s.alpha * DONE;
-      else if (t !== null) a = t < s.start ? s.alpha * UPCOMING : t >= s.end ? s.alpha * DONE : Math.min(1, s.alpha * WORKING);
+      const a = alphaAt(s, t, focus, onlyActive);
       for (let v = s.from; v < s.to; v++) attr.setW(v, a);
     }
     attr.needsUpdate = true;
@@ -166,10 +175,46 @@ class MeshAcc {
   }
 }
 
+/** Fixed-size points (patrols, shelters, lookouts...) with their time windows, faded like the meshes. */
+class PointAcc {
+  readonly positions: number[] = [];
+  readonly colors: number[] = [];
+  readonly tips: string[] = [];
+  private readonly spans: Span[] = [];
+  private geometry: THREE.BufferGeometry | null = null;
+
+  add(p: WorldPoint, color: THREE.Color, tip: string, win?: Window): void {
+    const index = this.tips.length;
+    this.positions.push(p[0], p[1], p[2]);
+    this.colors.push(color.r, color.g, color.b, 1);
+    this.tips.push(tip);
+    if (win) this.spans.push({ ...win, from: index, to: index + 1, alpha: 1 });
+  }
+
+  retime(t: number | null, focus: string | null, onlyActive: boolean): void {
+    const attr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
+    if (!attr || !this.spans.length) return;
+    for (const s of this.spans) attr.setW(s.from, alphaAt(s, t, focus, onlyActive));
+    attr.needsUpdate = true;
+  }
+
+  build(): THREE.Points | null {
+    if (!this.tips.length) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 4));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, transparent: true, depthTest: false }));
+    points.renderOrder = 8;
+    points.userData.tipFor = (i: number) => this.tips[i] ?? '';
+    this.geometry = geometry;
+    return points;
+  }
+}
+
 interface Bucket {
   ribbons: MeshAcc;
   fills: MeshAcc;
-  markers: { positions: number[]; colors: number[]; tips: string[] };
+  markers: PointAcc;
 }
 
 const tipOf = (action: PlanAction, win?: Window, facts = ''): string => {
@@ -242,7 +287,8 @@ export class PlanLayer {
   private readonly kindGroups = new Map<PlanKind, THREE.Group>();
   private readonly hidden = new Set<PlanKind>();
   private readonly listeners = new Set<() => void>();
-  private readonly accs: MeshAcc[] = [];
+  private readonly accs: (MeshAcc | PointAcc)[] = [];
+  private onlyActive = true;
   private readonly focusGroup = new THREE.Group();
   private plan: Plan | null = null;
   private time: number | null = null;
@@ -263,8 +309,14 @@ export class PlanLayer {
   setPlan(plan: Plan | null, places: ReadonlyMap<string, { lat: number; lon: number }>, roadGeometry?: (id: string) => LonLat[]): void {
     this.clear();
     if (!plan) return;
-    const buckets = new Map<PlanKind, Bucket>(KIND_ORDER.map((k) => [k, { ribbons: new MeshAcc(), fills: new MeshAcc(), markers: { positions: [], colors: [], tips: [] } }]));
+    const buckets = new Map<PlanKind, Bucket>(KIND_ORDER.map((k) => [k, { ribbons: new MeshAcc(), fills: new MeshAcc(), markers: new PointAcc() }]));
     const world = (ring: LonLat[]): WorldPoint[] => ring.map(([lon, lat]) => this.geo.world(lat, lon, LIFT));
+    // when each action happens (the backend's own timing): closures, patrols, escape routes and markers appear only while their action is under way
+    const windows = actionWindows(plan);
+    const whenOf = (action: PlanAction): Window | undefined => {
+      const w = windows.get(action.id as string);
+      return w ? { action: action.id as string, start: w.start, end: w.end } : undefined;
+    };
 
     const shape = (kind: PlanKind, geometry: Parameters<typeof lineStringCoordinates>[0], color: THREE.Color, tip: string, width: number, win?: Window) => {
       const b = buckets.get(kind)!;
@@ -280,11 +332,8 @@ export class PlanLayer {
         if (rings.length) this.counts[kind]++;
       }
     };
-    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind = 'safety') => {
-      const m = buckets.get(kind)!.markers;
-      m.positions.push(...this.geo.world(lat, lon, 3));
-      m.colors.push(color.r, color.g, color.b);
-      m.tips.push(tip);
+    const marker = (lat: number, lon: number, color: THREE.Color, tip: string, kind: PlanKind = 'safety', win?: Window) => {
+      buckets.get(kind)!.markers.add(this.geo.world(lat, lon, 3), color, tip, win);
       this.counts[kind]++;
     };
     const placeRing = (id: string | undefined): LonLat[] | null => {
@@ -293,7 +342,8 @@ export class PlanLayer {
     };
 
     for (const action of plan.actions) {
-      const tip = tipOf(action);
+      const when = whenOf(action);
+      const tip = tipOf(action, when);
       for (const effect of action.simulationEffects ?? []) {
         const win = windowOf(action, effect);
         const effectTip = win ? tipOf(action, win, effectFacts(effect)) : tip;
@@ -324,14 +374,14 @@ export class PlanLayer {
           }
           case 'evacuation': {
             const color = new THREE.Color(PLAN_KINDS.evacuation.color);
-            if (effect.geometry) shape('evacuation', effect.geometry, color, tip, LINE_HALF_WIDTH);
+            if (effect.geometry) shape('evacuation', effect.geometry, color, tip, LINE_HALF_WIDTH, when);
             else
               for (const id of effect.placeIds ?? []) {
                 const ring = placeRing(id);
                 if (!ring) continue;
                 const b = buckets.get('evacuation')!;
-                b.fills.fan(world(ring), color, FILL_ALPHA, tip);
-                b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, OUTLINE_ALPHA, tip, true);
+                b.fills.fan(world(ring), color, FILL_ALPHA, tip, when);
+                b.ribbons.ribbon(world(ring), OUTLINE_HALF_WIDTH, color, OUTLINE_ALPHA, tip, true, when);
                 this.counts.evacuation++;
               }
             break;
@@ -347,36 +397,36 @@ export class PlanLayer {
         for (const id of action.roadIds ?? []) {
           const points = roadGeometry?.(id) ?? [];
           if (points.length < 2) continue;
-          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, CLOSURE_ALPHA, tip);
+          buckets.get('road_closure')!.ribbons.ribbon(world(points), CLOSURE_HALF_WIDTH, color, CLOSURE_ALPHA, tip, false, when);
           drawn = true;
         }
         if (drawn) this.counts.road_closure++;
       }
       if (action.type === 'traffic_control_point' && action.position) {
-        marker(action.position.lat, action.position.lon, new THREE.Color(PLAN_KINDS.traffic_control.color), tip, 'traffic_control');
+        marker(action.position.lat, action.position.lon, new THREE.Color(PLAN_KINDS.traffic_control.color), tip, 'traffic_control', when);
       }
       if (action.type === 'evacuation') {
         // Proteção Civil's part of an evacuation: the road to the shelter and the shelter itself
         const orange = new THREE.Color(PLAN_KINDS.evacuation.color);
         for (const route of action.routes ?? []) {
-          buckets.get('evacuation')!.ribbons.ribbon(world(lineStringCoordinates(route.geometry)), ROUTE_HALF_WIDTH, orange, ROUTE_ALPHA, `Rota de evacuação · ${tip}`);
+          buckets.get('evacuation')!.ribbons.ribbon(world(lineStringCoordinates(route.geometry)), ROUTE_HALF_WIDTH, orange, ROUTE_ALPHA, `Rota de evacuação · ${tip}`, false, when);
         }
-        for (const shelter of action.shelters ?? []) marker(shelter.position.lat, shelter.position.lon, orange, `Abrigo: ${shelter.name ?? ''} · ${action.title}`, 'evacuation');
+        for (const shelter of action.shelters ?? []) marker(shelter.position.lat, shelter.position.lon, orange, `Abrigo: ${shelter.name ?? ''} · ${action.title}`, 'evacuation', when);
       }
       if (action.type === 'medical_standby') {
         const pink = new THREE.Color(PLAN_KINDS.support.color);
-        for (const target of action.positions ?? []) if (target.position) marker(target.position.lat, target.position.lon, pink, tip, 'support');
+        for (const target of action.positions ?? []) if (target.position) marker(target.position.lat, target.position.lon, pink, tip, 'support', when);
       }
       if (action.type === 'establish_command_post' && action.location.position) {
-        marker(action.location.position.lat, action.location.position.lon, new THREE.Color(PLAN_KINDS.support.color), tip, 'support');
+        marker(action.location.position.lat, action.location.position.lon, new THREE.Color(PLAN_KINDS.support.color), tip, 'support', when);
       }
       if (action.type === 'fire_attack') {
         const white = new THREE.Color(PLAN_KINDS.safety.color);
         for (const route of action.escapeRoutes ?? []) {
-          buckets.get('safety')!.ribbons.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH, white, ROUTE_ALPHA * 0.85, `Via de fuga · ${tip}`);
+          buckets.get('safety')!.ribbons.ribbon(world(lineStringCoordinates(route)), ROUTE_HALF_WIDTH, white, ROUTE_ALPHA * 0.85, `Via de fuga · ${tip}`, false, when);
         }
-        for (const zone of action.safetyZones ?? []) marker(zone.lat, zone.lon, new THREE.Color('#3dff7a'), `Zona de segurança · ${action.title}`);
-        for (const look of action.lookouts ?? []) marker(look.lat, look.lon, new THREE.Color('#ffe14d'), `Vigia · ${action.title}`);
+        for (const zone of action.safetyZones ?? []) marker(zone.lat, zone.lon, new THREE.Color('#3dff7a'), `Zona de segurança · ${action.title}`, 'safety', when);
+        for (const look of action.lookouts ?? []) marker(look.lat, look.lon, new THREE.Color('#ffe14d'), `Vigia · ${action.title}`, 'safety', when);
       }
     }
 
@@ -390,13 +440,9 @@ export class PlanLayer {
         kindGroup.add(mesh);
         this.pickables.push(mesh as unknown as Pickable);
       }
-      if (b.markers.tips.length) {
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(b.markers.positions, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(b.markers.colors, 3));
-        const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }));
-        points.renderOrder = 8;
-        points.userData.tipFor = (i: number) => b.markers.tips[i] ?? '';
+      const points = b.markers.build();
+      if (points) {
+        this.accs.push(b.markers);
         kindGroup.add(points);
         this.pickables.push(points as unknown as Pickable);
       }
@@ -431,7 +477,19 @@ export class PlanLayer {
 
   private retime(): void {
     const focus = this.focused() ? this.focus : null;
-    for (const acc of this.accs) acc.retime(this.time, focus);
+    for (const acc of this.accs) acc.retime(this.time, focus, this.onlyActive);
+  }
+
+  /** Only what is happening at the playback minute (the default), or the whole plan with what is not under way dimmed. */
+  isOnlyActive(): boolean {
+    return this.onlyActive;
+  }
+
+  setOnlyActive(on: boolean): void {
+    if (on === this.onlyActive) return;
+    this.onlyActive = on;
+    this.retime();
+    this.listeners.forEach((listener) => listener());
   }
 
   private clearFocus(): void {

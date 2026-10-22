@@ -1568,7 +1568,7 @@ export interface components {
         ValidationIssue: {
             /** @enum {string} */
             severity: "error" | "warning" | "info";
-            /** @description Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`...). */
+            /** @description Código estável e legível por máquina (`resource_conflict`, `unreachable`, `unsupported_capability`, `trigger_not_simulated` — o plano aceita `on_fire_arrival`/`on_action_complete` mas o motor ainda não os simula, pelo que a ação conta como começando ao ativar). */
             code: string;
             message: string;
             /** @description JSON Pointer (RFC 6901) para o campo do pedido a que se refere. */
@@ -3988,8 +3988,16 @@ export interface components {
             etaMinutes?: number | null;
             personnel?: number;
             water?: components["schemas"]["WaterStatus"];
+            fuel?: components["schemas"]["FuelStatus"];
             crew?: components["schemas"]["CrewStatus"];
             aerial?: components["schemas"]["AerialStatus"];
+        };
+        /** @description Combustível de uma viatura terrestre na simulação: gasta-se a andar (por km) e com a bomba a trabalhar (por hora); abaixo de `Rules.fuel.refuelBelowPct` a viatura vai abastecer ao posto de combustível (ou ao seu quartel) mais perto por estrada. */
+        FuelStatus: {
+            levelPct?: number;
+            capacityL?: number | null;
+            /** @description Posto de combustível (ou quartel) para onde vai abastecer, se o estiver a fazer. */
+            refuelFacilityId?: string | null;
         };
         UnitStateList: {
             simulationId: components["schemas"]["Id"];
@@ -3999,7 +4007,7 @@ export interface components {
         UnitEvent: {
             tMin: number;
             /** @enum {string} */
-            type: "departed" | "arrived" | "started_working" | "water_empty" | "refill_started" | "refill_done" | "rest_started" | "rest_done" | "shift_ended" | "grounded" | "resumed" | "withdrawn" | "overrun_risk" | "returned";
+            type: "departed" | "arrived" | "started_working" | "water_empty" | "refill_started" | "refill_done" | "refuel_started" | "refuel_done" | "rest_started" | "rest_done" | "shift_ended" | "grounded" | "resumed" | "withdrawn" | "overrun_risk" | "returned";
             position?: components["schemas"]["LatLon"] | null;
             detail?: string;
         };
@@ -4014,6 +4022,8 @@ export interface components {
                 status: components["schemas"]["DispatchStatus"];
                 waterLevelL?: number | null;
                 fatiguePct?: number | null;
+                /** @description Combustível que resta (%), nas viaturas terrestres. */
+                fuelPct?: number | null;
             }[];
             events: components["schemas"]["UnitEvent"][];
         };
@@ -4042,6 +4052,9 @@ export interface components {
             water?: {
                 consumptionLpm?: string;
                 dutyCycle?: number;
+                /** @description Caudal máximo das linhas de ataque de uma viatura (L/min): o consumo a trabalhar é `min(pumpFlowLpm, attackFlowLpm) × dutyCycle` (num incêndio rural trabalha-se com duas linhas de mangueira, não com o caudal todo da bomba). */
+                attackFlowLpm?: number;
+                /** @description Sem água, a viatura vai por estrada ao ponto de água mais rápido de alcançar (das `sources`), enche (`capacidade / caudal do ponto` + `setupMinutes`) e volta. */
                 refill?: {
                     setupMinutes?: number;
                     defaultFlowLpm?: number;
@@ -4053,6 +4066,19 @@ export interface components {
                     /** @description Pontos onde uma autotanque pode reabastecer. */
                     sources?: components["schemas"]["WaterPointKind"][];
                 };
+            };
+            /** @description Combustível das viaturas terrestres. Uma viatura sem `fuelCapacityL` usa `defaultCapacityL`; com `rangeKm` gasta `fuelCapacityL / rangeKm` por km, senão `drivingLPer100Km`. Parte com `state.fuelPct` (cheia se não houver). */
+            fuel?: {
+                defaultCapacityL?: number;
+                drivingLPer100Km?: number;
+                /** @description Gasto a trabalhar no local (bomba e motor ao ralenti), L/h. */
+                workingLph?: number;
+                /** @description Abaixo disto a viatura vai abastecer. */
+                refuelBelowPct?: number;
+                /** @description Tempo no posto (encher o depósito), sem contar a viagem. */
+                refuelMinutes?: number;
+                /** @description Onde se abastece, por ordem de preferência quando o tempo de viagem é igual. */
+                sources?: components["schemas"]["FacilityKind"][];
             };
             crews?: {
                 shiftLengthHours?: number;
