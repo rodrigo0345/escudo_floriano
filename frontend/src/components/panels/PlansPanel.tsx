@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { plansApi, simulationsApi, type Plan, type PlanSummary, type PlanStatus, type Simulation } from '@/api';
+import {
+  ApiError,
+  plansApi,
+  simulationsApi,
+  type Action,
+  type ActionPatch,
+  type ActionStatus,
+  type Plan,
+  type PlanSummary,
+  type PlanStatus,
+  type Simulation,
+} from '@/api';
 import { Row, Tag } from '@/components/common/StatCard';
 import { OrgLogo } from '@/domain/organizationLogos';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
@@ -40,6 +51,23 @@ const ACTION_STATUS_LABEL: Record<string, string> = {
   completed: 'Concluída',
   blocked: 'Bloqueada',
   cancelled: 'Cancelada',
+  failed: 'Falhou',
+};
+
+/**
+ * Próximos passos de execução por estado atual — os valores reais de `ActionStatus` (G5).
+ * `cancelled` fica sem passos; `completed` também: o backend só preenche `completedAt` (nunca o limpa),
+ * por isso reabrir uma ação concluída deixaria o registo com `completedAt` e estado `in_progress`.
+ */
+const ACTION_NEXT: Partial<Record<ActionStatus, { label: string; status: ActionStatus }[]>> = {
+  planned: [{ label: 'Iniciar', status: 'in_progress' }],
+  acknowledged: [{ label: 'Iniciar', status: 'in_progress' }],
+  in_progress: [
+    { label: 'Concluir', status: 'completed' },
+    { label: 'Bloqueada', status: 'blocked' },
+  ],
+  blocked: [{ label: 'Retomar', status: 'in_progress' }],
+  failed: [{ label: 'Retomar', status: 'in_progress' }],
 };
 
 type Stats = NonNullable<Simulation['stats']>;
@@ -214,6 +242,7 @@ export function PlansPanel() {
   const [open, setOpen] = useState<Plan | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [full, setFull] = useState<Map<string, Plan>>(new Map()); // the whole plans: the list has no metadata (the agents' metrics)
+  const [orgFilter, setOrgFilter] = useState<string | null>(null); // G5: null = todas as organizações
 
   useEffect(() => {
     if (!resourcesLoaded) void loadResources();
@@ -302,9 +331,33 @@ export function PlansPanel() {
     }
   };
 
+  /** G5: registo de execução (`PATCH /plans/{id}/actions/{actionId}`, merge-patch — só o campo alterado). Otimista, com reversão. */
+  const patchAction = async (planId: string, action: Action, patch: ActionPatch) => {
+    const before = open;
+    if (!before || before.id !== planId) return;
+    const replaceAction = (plan: Plan, updated: Action): Plan => ({ ...plan, actions: plan.actions.map((a) => (a.id === updated.id ? updated : a)) });
+    setOpen(replaceAction(before, { ...action, status: patch.status ?? action.status })); // otimista
+    setBusy(`act:${action.id as string}`);
+    try {
+      const updated = await plansApi.patchAction(planId, action.id as string, patch);
+      setOpen((current) => (current?.id === planId ? replaceAction(current, updated) : current));
+      setFull((previous) => {
+        const plan = previous.get(planId);
+        return plan ? new Map(previous).set(planId, replaceAction(plan, updated)) : previous;
+      });
+    } catch (e) {
+      // revert only if the panel still shows this plan: the operator may have switched plans meanwhile
+      setOpen((current) => (current?.id === planId ? before : current));
+      showBanner(`Ação “${action.title}”: ${e instanceof ApiError ? `${e.code}: ${e.message}` : (e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toggleActions = async (plan: PlanSummary) => {
     setFocusedAction(null);
     setEditingId(null);
+    setOrgFilter(null);
     if (open?.id === plan.id) return setOpen(null);
     try {
       setOpen(await plansApi.get(plan.id as string));
@@ -386,6 +439,8 @@ export function PlansPanel() {
           if (list) list.push(action);
           else groups.set(organizationId, [action]);
         }
+        const executable = status === 'active'; // só o plano ativo está a ser executado (o backend recusa o resto com 409)
+        const orgOrder = [...groups.keys()].sort((a, b) => orgName(a).localeCompare(orgName(b)));
         return (
           <div key={id} className={`${styles.group} ${styles.spaced}`}>
             <div>
@@ -440,7 +495,19 @@ export function PlansPanel() {
                 <h3>Combate ao fogo</h3>
                 <AttackTimeline plan={open} onMap={!!sim && showing?.id === sim.id} showOnMap={() => sim && void showSimulationById(sim.id as string)} />
                 <h3>Todas as ações ({open.actions.length}), por organização</h3>
-                {[...groups.entries()].sort(([a], [b]) => orgName(a).localeCompare(orgName(b))).map(([organizationId, actions]) => (
+                <div className={styles.orgFilter}>
+                  <button className={orgFilter === null ? 'on' : ''} onClick={() => setOrgFilter(null)}>Todas</button>
+                  {orgOrder.map((organizationId) => (
+                    <button key={organizationId} className={orgFilter === organizationId ? 'on' : ''} onClick={() => setOrgFilter(organizationId)}>
+                      <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={14} inline />
+                      {orgName(organizationId)}
+                    </button>
+                  ))}
+                </div>
+                {orgOrder
+                  .filter((organizationId) => !orgFilter || organizationId === orgFilter)
+                  .map((organizationId) => [organizationId, groups.get(organizationId) as typeof shownActions] as const)
+                  .map(([organizationId, actions]) => (
                   <div key={organizationId} className={styles.actionGroup}>
                     <div className={styles.orgHead} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <OrgLogo org={organizations.find((o) => o.id === organizationId) ?? organizationId} size={24} inline />
@@ -462,6 +529,20 @@ export function PlansPanel() {
                           <Tag kind={a.status === 'completed' ? 'ok' : a.status === 'blocked' ? 'bad' : 'warn'}>
                             {ACTION_STATUS_LABEL[a.status ?? 'planned'] ?? a.status ?? 'planeada'}
                           </Tag>
+                          {executable && (ACTION_NEXT[a.status ?? 'planned'] ?? []).length ? (
+                            <span className={styles.stepBtns}>
+                              {(ACTION_NEXT[a.status ?? 'planned'] ?? []).map((step) => (
+                                <button
+                                  key={step.status}
+                                  disabled={busy === `act:${a.id as string}`}
+                                  title={`Marcar como ${ACTION_STATUS_LABEL[step.status] ?? step.status}`}
+                                  onClick={() => void patchAction(id, a, { status: step.status })}
+                                >
+                                  {busy === `act:${a.id as string}` ? '…' : step.label}
+                                </button>
+                              ))}
+                            </span>
+                          ) : null}
                         </span>
                       </Row>
                     ))}

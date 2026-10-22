@@ -1,4 +1,4 @@
-import type { Ignition, SimulationRequest, WeatherEvent, WeatherKeyframe, WeatherResolveRequest, WeatherSample, WeatherSpec } from '@/api';
+import type { Capabilities, Ignition, SimulationRequest, WeatherEvent, WeatherKeyframe, WeatherResolveRequest, WeatherSample, WeatherSpec } from '@/api';
 
 import { weatherMeans, type WeatherBaseStats } from './weather';
 
@@ -33,6 +33,45 @@ export type CustomWeatherEventType =
   | 'temperature_shift'
   | 'humidity_shift'
   | 'heat_dry';
+
+/**
+ * Capability gating (G6): each UI event type maps to every backend weather event and base
+ * variable `buildWeatherSpec` emits for it below — keep the two in step, or the buttons gate
+ * on the wrong capabilities (a disabled event the engine supports, or an enabled one it rejects).
+ */
+const EVENT_REQUIRES: Record<CustomWeatherEventType, { events: string[]; variables: string[] }> = {
+  rain: { events: ['precipitation'], variables: ['precipitationMmH'] },
+  // a storm is rain + a fixed strong wind + a temperature drop (see `ce.type === 'storm'` below)
+  storm: { events: ['precipitation', 'wind_set', 'temperature_shift'], variables: ['precipitationMmH', 'windKmh', 'tempC'] },
+  // "clouds" lowers humidity/temperature; cloud cover itself is only a display keyframe, not a weather event
+  clouds: { events: ['humidity_shift', 'temperature_shift'], variables: ['humidityPct', 'tempC'] },
+  // `wind_shift` only turns the wind; when a speed is set it also emits `wind_set`
+  wind_shift: { events: ['wind_shift', 'wind_set'], variables: ['windFromDeg', 'windKmh'] },
+  wind_scale: { events: ['wind_scale'], variables: ['windKmh'] },
+  wind_set: { events: ['wind_set'], variables: ['windKmh'] },
+  gust_burst: { events: ['gust_burst'], variables: ['gustKmh'] },
+  front_passage: { events: ['front_passage'], variables: ['windKmh'] },
+  temperature_shift: { events: ['temperature_shift'], variables: ['tempC'] },
+  humidity_shift: { events: ['humidity_shift'], variables: ['humidityPct'] },
+  heat_dry: { events: ['temperature_shift', 'humidity_shift'], variables: ['tempC', 'humidityPct'] },
+};
+
+/** Why a UI event type is not addable with the backend's current capabilities (null = no problem). */
+export function eventCapabilityNote(type: CustomWeatherEventType, capabilities: Capabilities | null): string | null {
+  if (!capabilities) return null; // sem capabilities (backend antigo ou a arrancar), não bloqueamos
+  const req = EVENT_REQUIRES[type];
+  // An absent list means the server does not advertise that dimension (the spec only requires `apiVersion`),
+  // not that it supports nothing: gate only on the lists that were actually reported.
+  const missing = [
+    ...(capabilities.weatherEvents ? req.events.filter((name) => !capabilities.weatherEvents!.some((e) => e.name === name && e.supported)) : []),
+    ...(capabilities.weatherVariables ? req.variables.filter((name) => !capabilities.weatherVariables!.some((v) => v.name === name && v.supported)) : []),
+  ];
+  if (!missing.length) return null;
+  const notes = [...(capabilities.weatherEvents ?? []), ...(capabilities.weatherVariables ?? [])]
+    .filter((c) => missing.includes(c.name) && c.note)
+    .map((c) => c.note);
+  return `O motor ainda não suporta: ${missing.join(', ')}.${notes.length ? ` ${[...new Set(notes)].join(' ')}` : ''}`;
+}
 
 /**
  * Interactive range-based weather event (Requirement 1 & 1.1):

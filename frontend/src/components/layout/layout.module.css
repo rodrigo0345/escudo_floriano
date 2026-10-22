@@ -639,6 +639,39 @@
   box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.35), 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 
+/* ---- G4: click-to-jump markers on the event track (plan action starts & first road cuts) ---- */
+.trackMarker {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 4px;
+  margin-left: -2px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  border-radius: 2px;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.55);
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+
+.trackMarker:hover {
+  transform: scaleY(1.18);
+  filter: brightness(1.25);
+  z-index: 7;
+}
+
+/* plan action start: slightly wider bar, colour comes inline from the organization (ORG_COLOR) */
+.markerAction {
+  width: 5px;
+  margin-left: -2.5px;
+}
+
+/* first cut of a road: fixed red bar */
+.markerRoad {
+  background: #ef4444;
+}
+
 .keyframePopover {
   width: 360px;
 }
@@ -756,6 +789,17 @@
   border-color: #38bdf8 !important;
   color: #ffffff !important;
   font-weight: 600;
+}
+
+/* G6: event type not supported by the backend's current capabilities */
+.typePill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.typePill:disabled:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #d1d5db;
 }
 
 .popoverField {
@@ -882,6 +926,28 @@
 
 .addEventBtn:hover {
   background: rgba(2, 132, 199, 0.3);
+}
+
+/* H2-lite: the "Vento roda agora" inject button (event → re-simulation → plan request) */
+.injectBtn {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.injectBtn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.injectBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 900px) {

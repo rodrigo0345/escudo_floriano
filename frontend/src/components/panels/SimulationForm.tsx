@@ -13,6 +13,7 @@ import {
   createTimelineKeyframe,
   createTimelineRangeEvent,
   defaultFormValues,
+  eventCapabilityNote,
   resizeCustomEvents,
   type CustomWeatherEventType,
   type SimulationFormValues,
@@ -62,6 +63,9 @@ export function SimulationForm() {
   const job = useAppStore((s) => s.job);
   const progress = useAppStore((s) => s.progress);
   const limits = useAppStore((s) => s.capabilities?.limits);
+  const capabilities = useAppStore((s) => s.capabilities);
+  /** G6: por que razão um evento não é adicionável com as capacidades do motor (null = suportado). */
+  const capNote = (type: CustomWeatherEventType) => eventCapabilityNote(type, capabilities);
   const storeCustomEvents = useAppStore((s) => s.customEvents);
   const storeKeyframes = useAppStore((s) => s.weatherKeyframes);
   const setCustomEvents = useAppStore((s) => s.setCustomEvents);
@@ -430,7 +434,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('rain')}
-              title="Adicionar intervalo com chuva"
+              disabled={!!capNote('rain')}
+              title={capNote('rain') ?? 'Adicionar intervalo com chuva'}
             >
               <Icon name="rain" /> Chuva
             </button>
@@ -438,7 +443,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('storm')}
-              title="Adicionar trovoada com vento e chuva"
+              disabled={!!capNote('storm')}
+              title={capNote('storm') ?? 'Adicionar trovoada com vento e chuva'}
             >
               <Icon name="storm" /> Trovoada
             </button>
@@ -446,7 +452,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('clouds')}
-              title="Adicionar neblina / nuvens densas"
+              disabled={!!capNote('clouds')}
+              title={capNote('clouds') ?? 'Adicionar neblina / nuvens densas'}
             >
               <Icon name="cloud" /> Neblina
             </button>
@@ -454,7 +461,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('wind_shift')}
-              title="Adicionar rotação do vento"
+              disabled={!!capNote('wind_shift')}
+              title={capNote('wind_shift') ?? 'Adicionar rotação do vento'}
             >
               <Icon name="wind" /> Vento
             </button>
@@ -462,7 +470,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('heat_dry')}
-              title="Adicionar calor e seca"
+              disabled={!!capNote('heat_dry')}
+              title={capNote('heat_dry') ?? 'Adicionar calor e seca'}
             >
               <Icon name="sun" /> Calor
             </button>
@@ -470,7 +479,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('wind_set')}
-              title="Fixar vento e rumo numa janela"
+              disabled={!!capNote('wind_set')}
+              title={capNote('wind_set') ?? 'Fixar vento e rumo numa janela'}
             >
               <Icon name="wind" /> Vento fixo
             </button>
@@ -478,7 +488,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('gust_burst')}
-              title="Adicionar rajadas de pico"
+              disabled={!!capNote('gust_burst')}
+              title={capNote('gust_burst') ?? 'Adicionar rajadas de pico'}
             >
               <Icon name="gust" /> Rajada
             </button>
@@ -486,7 +497,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('front_passage')}
-              title="Adicionar passagem de frente (vento, temperatura, humidade e chuva)"
+              disabled={!!capNote('front_passage')}
+              title={capNote('front_passage') ?? 'Adicionar passagem de frente (vento, temperatura, humidade e chuva)'}
             >
               <Icon name="front" /> Frente
             </button>
@@ -494,7 +506,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('temperature_shift')}
-              title="Adicionar variação ou valor fixo de temperatura"
+              disabled={!!capNote('temperature_shift')}
+              title={capNote('temperature_shift') ?? 'Adicionar variação ou valor fixo de temperatura'}
             >
               <Icon name="thermometer" /> Temp.
             </button>
@@ -502,7 +515,8 @@ export function SimulationForm() {
               type="button"
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('humidity_shift')}
-              title="Adicionar variação ou valor fixo de humidade"
+              disabled={!!capNote('humidity_shift')}
+              title={capNote('humidity_shift') ?? 'Adicionar variação ou valor fixo de humidade'}
             >
               <Icon name="humidity" /> Humidade
             </button>

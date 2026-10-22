@@ -110,6 +110,33 @@
   gap: 10px;
 }
 
+.orgFilter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.orgFilter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.stepBtns {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.stepBtns button {
+  padding: 2px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .actionGroup {
   display: grid;
   gap: 4px;
@@ -530,6 +557,18 @@
 .quickAddBtn:hover {
   background: color-mix(in srgb, var(--acc) 18%, var(--panel));
   border-color: var(--acc);
+}
+
+.quickAddBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.quickAddBtn:disabled:hover {
+  background: var(--panel);
+  border-color: var(--line);
 }
 
 .miniTimelineWrap {

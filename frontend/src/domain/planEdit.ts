@@ -50,7 +50,13 @@ export function setTriggerMinute(action: Action, minute: number): Action {
   return next as Action;
 }
 
-/** The target fields each action type carries; anything else is not a place on the map. */
+/**
+ * The target fields each action type carries, mirroring the geometry fields of the corresponding
+ * `Action*` schemas in `api-spec/openapi.json` (e.g., `ActionEvacuation.area`, `ActionFireAttack.line`).
+ * Anything not listed here is treated as having "no place on the map"; if a new action type is added
+ * to the contract, its geometry field(s) MUST be registered here, or the editor/map will silently
+ * fall back to the generic search in `actionCentre` (which may miss nested or non-standard targets).
+ */
 const TARGET_KEYS: Record<string, string[]> = {
   dispatch_units: ['target'],
   stage_resources: ['stagingArea'],

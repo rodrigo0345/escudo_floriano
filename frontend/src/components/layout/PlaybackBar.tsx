@@ -1,17 +1,23 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
-import { Icon, WEATHER_EVENT_ICON } from '@/components/common/Icon';
+import { planRequestsApi } from '@/api/services/planRequests';
+import { Icon, WEATHER_EVENT_ICON, type IconName } from '@/components/common/Icon';
 import { compass } from '@/domain/georef';
+import { triggerStartMinute } from '@/domain/planEdit';
+import { ORG_COLOR } from '@/domain/resourceLabels';
 import {
   buildSimulationRequest,
   createTimelineKeyframe,
   defaultFormValues,
+  eventCapabilityNote,
   type CustomWeatherEventType,
   type TimelineRangeEvent,
 } from '@/domain/simulationForm';
 import { formatDateTime, sampleWeatherAt } from '@/domain/weather';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
+import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
+import { useResourcesStore } from '@/store/resourcesStore';
 
 import styles from './layout.module.css';
 import { TimelineKeyframeEditor } from './TimelineKeyframeEditor';
@@ -32,6 +38,21 @@ const EVENT_LABEL: Record<string, string> = {
   precipitation: 'Chuva',
   custom_series: 'Série própria',
 };
+
+/** The popover's event-type pills, in display order — also the G6 capability-gating list. */
+const TYPE_PILLS: { type: CustomWeatherEventType; icon: IconName; label: string }[] = [
+  { type: 'rain', icon: 'rain', label: 'Chuva' },
+  { type: 'storm', icon: 'storm', label: 'Trovoada' },
+  { type: 'clouds', icon: 'cloud', label: 'Nuvens' },
+  { type: 'wind_shift', icon: 'wind', label: 'Vento' },
+  { type: 'wind_scale', icon: 'gust', label: 'Vento ×' },
+  { type: 'wind_set', icon: 'wind', label: 'Vento fixo' },
+  { type: 'gust_burst', icon: 'gust', label: 'Rajada' },
+  { type: 'front_passage', icon: 'front', label: 'Frente' },
+  { type: 'temperature_shift', icon: 'thermometer', label: 'Temp.' },
+  { type: 'humidity_shift', icon: 'humidity', label: 'Humidade' },
+  { type: 'heat_dry', icon: 'sun', label: 'Calor' },
+];
 
 type TimeSpec = { offsetMinutes?: number; time?: string };
 
@@ -63,6 +84,10 @@ export function PlaybackBar() {
   const ignitions = useAppStore((s) => s.ignitions);
   const customEvents = useAppStore((s) => s.customEvents);
   const keyframes = useAppStore((s) => s.weatherKeyframes);
+  const capabilities = useAppStore((s) => s.capabilities);
+  const activePlan = useAppStore((s) => s.activePlan);
+  const organizations = useResourcesStore((s) => s.organizations);
+  const world = useWorld();
   const setPlaying = useAppStore((s) => s.setPlaying);
   const setSpeed = useAppStore((s) => s.setSpeed);
   const setTime = useAppStore((s) => s.setTime);
@@ -83,6 +108,8 @@ export function PlaybackBar() {
   // Keyframe editing: a point on the curve is dragged along the axis and opens its editor on click.
   const keyframeDragRef = useRef<{ id: string; moved: boolean } | null>(null);
   const [keyframeEditId, setKeyframeEditId] = useState<string | null>(null);
+  // H2-lite: the "Vento roda agora" inject is running (event → re-simulation → plan request)
+  const [injecting, setInjecting] = useState(false);
 
   // Popover form values
   const [popoverType, setPopoverType] = useState<CustomWeatherEventType>('rain');
@@ -122,6 +149,42 @@ export function PlaybackBar() {
     }
     return list;
   }, [run, duration]);
+
+  // G4: one marker per action of the shown plan, at its `at_time` start minute, coloured by organization
+  const actionMarkers = useMemo(() => {
+    if (!activePlan) return [];
+    const out: { at: number; label: string; color: string }[] = [];
+    for (const action of activePlan.actions ?? []) {
+      const at = triggerStartMinute(action);
+      if (at == null || at < 0 || at > duration) continue; // conditional/manual triggers have no timed start
+      const org = organizations.find((o) => o.id === action.organizationId);
+      out.push({
+        at,
+        label: `Ação: ${action.title ?? action.id} @ T+${at} min`,
+        color: (org ? ORG_COLOR[org.type] : undefined) ?? '#9aa0a8',
+      });
+    }
+    return out;
+  }, [activePlan, organizations, duration]);
+
+  // G4: the first minute each road appears cut in the baseline's impact timeline, grouped per minute
+  const roadCutMarkers = useMemo(() => {
+    const impact = run?.impact;
+    if (!impact) return [];
+    const firstAt = new Map<number, number>();
+    for (let m = 0; m <= duration; m++) for (const i of impact.at(m).cut) if (!firstAt.has(i)) firstAt.set(i, m);
+    const byMinute = new Map<number, string[]>();
+    for (const [i, at] of [...firstAt].sort((a, b) => a[1] - b[1])) {
+      const name = world?.roads.features[i]?.properties?.name ?? `Troço ${i}`;
+      const list = byMinute.get(at) ?? [];
+      if (!list.includes(name)) list.push(name);
+      byMinute.set(at, list);
+    }
+    return [...byMinute.entries()].map(([at, names]) => ({
+      at,
+      label: `Estrada cortada: ${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4} vias` : ''} @ T+${at} min`,
+    }));
+  }, [run, duration, world]);
 
   const togglePlay = () => {
     if (!run) return;
@@ -363,16 +426,16 @@ export function PlaybackBar() {
     setSelection(null);
   };
 
-  /** Stores `events` as the scenario's weather changes and runs the simulation again with them (the current run's start, duration and base weather). */
+  /** Stores `events` as the scenario's weather changes and runs the simulation again with them (the current run's start, duration and base weather). Returns the run's promise, or null when it could not start. */
   const rerunWith = (events: TimelineRangeEvent[]) => {
     setCustomEvents(events);
     setSelection(null);
-    if (!run || !locationId || !ignitions.length || busy) return;
+    if (!run || !locationId || !ignitions.length || busy) return null;
     const values = defaultFormValues(run);
     values.customEvents = events;
     values.keyframes = keyframes;
     setScenario('custom');
-    void runSimulation(buildSimulationRequest(values, locationId, ignitions));
+    return runSimulation(buildSimulationRequest(values, locationId, ignitions));
   };
 
   // Remove a weather change from the timeline and simulate without it
@@ -386,6 +449,48 @@ export function PlaybackBar() {
   const handleSimulateWithEvent = () => {
     const ev = buildCurrentEvent();
     if (ev) rerunWith([...customEvents.filter((x) => x.id !== ev.id), ev]);
+  };
+
+  /** H2-lite "inject" moment: rotate the wind ~90° now (10 min ramp), re-run the baseline and ask the agents for fresh plans A/B. */
+  const handleInjectWindTurn = async () => {
+    if (!run || !locationId || !ignitions.length || busy) return;
+    setPlaying(false);
+    setSelection(null);
+    const beforeId = run.id;
+    const w = sampleWeatherAt(run.weather, run.startMs, t);
+    const kmh = Math.round(w?.windKmh ?? popoverWindKmh);
+    const toDeg = (Math.round(w?.windFromDeg ?? popoverWindDeg) + 90) % 360;
+    const start = Math.min(t, Math.max(0, duration - 15));
+    const end = Math.min(duration, start + 15);
+    const ev: TimelineRangeEvent = {
+      id: `ev_wind_shift_${Date.now()}`,
+      type: 'wind_shift',
+      label: `Vento roda → ${compass(toDeg)} ${kmh} km/h (T+${start}–${end})`,
+      enabled: true,
+      startMinute: start,
+      endMinute: end,
+      windKmh: kmh,
+      windFromDeg: toDeg,
+      rampMinutes: 10,
+    };
+    setInjecting(true);
+    try {
+      // same commit path as the popover's "Simular com este Evento" (keeps the other custom events)
+      const started = rerunWith([...customEvents.filter((x) => x.id !== ev.id), ev]);
+      if (!started) return;
+      await started;
+      const after = useAppStore.getState().run;
+      if (!after || after.id === beforeId) return; // the re-run did not start; showSimulation already said why
+      useAppStore.getState().setHint('A pedir novos planos (A e B) aos agentes…');
+      await planRequestsApi.create(after.id);
+      useAppStore
+        .getState()
+        .setHint('Vento rodado e linha base re-simulada — novos planos A/B pedidos aos agentes (veja o painel Planos).');
+    } catch (e) {
+      useAppStore.getState().showBanner(`Erro ao pedir planos aos agentes: ${(e as Error).message}`);
+    } finally {
+      setInjecting(false);
+    }
   };
 
   // Highlight interval for drag or selection
@@ -417,6 +522,14 @@ export function PlaybackBar() {
           onClick={handleQuickAddAtCurrentTime}
         >
           + Evento T+{t}
+        </button>
+        <button
+          className={styles.injectBtn}
+          disabled={busy || injecting || !run}
+          title="Injetar agora: rodar o vento 90° a partir do minuto atual, re-simular a linha base e pedir novos planos A/B aos agentes"
+          onClick={() => void handleInjectWindTurn()}
+        >
+          🚨 Vento roda agora
         </button>
         <button
           className={styles.addKeyframeBtn}
@@ -485,6 +598,36 @@ export function PlaybackBar() {
               />
             );
           })}
+
+          {/* G4: click-to-jump markers — plan action starts (coloured by organization) and the first cut of each road */}
+          {actionMarkers.map((m, i) => (
+            <button
+              key={`act-${i}`}
+              type="button"
+              className={`${styles.trackMarker} ${styles.markerAction}`}
+              style={{ left: `${Math.min(100, Math.max(0, (m.at / duration) * 100))}%`, background: m.color }}
+              title={m.label}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTime(m.at);
+              }}
+            />
+          ))}
+          {roadCutMarkers.map((m) => (
+            <button
+              key={`road-${m.at}`}
+              type="button"
+              className={`${styles.trackMarker} ${styles.markerRoad}`}
+              style={{ left: `${Math.min(100, Math.max(0, (m.at / duration) * 100))}%` }}
+              title={m.label}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTime(m.at);
+              }}
+            />
+          ))}
 
           {/* Selection Highlight (drag or active selection) */}
           {(dragState?.isDragging || selection) && (
@@ -566,85 +709,23 @@ export function PlaybackBar() {
               </button>
             </div>
 
-            {/* Event Type selector pills */}
+            {/* Event Type selector pills (G6: disabled with the backend's reason when it doesn't support the event) */}
             <div className={styles.typePills}>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'rain' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('rain')}
-              >
-                <Icon name="rain" /> Chuva
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'storm' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('storm')}
-              >
-                <Icon name="storm" /> Trovoada
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'clouds' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('clouds')}
-              >
-                <Icon name="cloud" /> Nuvens
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'wind_shift' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('wind_shift')}
-              >
-                <Icon name="wind" /> Vento
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'wind_scale' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('wind_scale')}
-              >
-                <Icon name="gust" /> Vento ×
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'wind_set' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('wind_set')}
-              >
-                <Icon name="wind" /> Vento fixo
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'gust_burst' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('gust_burst')}
-              >
-                <Icon name="gust" /> Rajada
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'front_passage' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('front_passage')}
-              >
-                <Icon name="front" /> Frente
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'temperature_shift' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('temperature_shift')}
-              >
-                <Icon name="thermometer" /> Temp.
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'humidity_shift' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('humidity_shift')}
-              >
-                <Icon name="humidity" /> Humidade
-              </button>
-              <button
-                type="button"
-                className={`${styles.typePill} ${popoverType === 'heat_dry' ? styles.typePillActive : ''}`}
-                onClick={() => setPopoverType('heat_dry')}
-              >
-                <Icon name="sun" /> Calor
-              </button>
+              {TYPE_PILLS.map((pill) => {
+                const note = eventCapabilityNote(pill.type, capabilities);
+                return (
+                  <button
+                    key={pill.type}
+                    type="button"
+                    className={`${styles.typePill} ${popoverType === pill.type ? styles.typePillActive : ''}`}
+                    disabled={note != null}
+                    title={note ?? undefined}
+                    onClick={() => setPopoverType(pill.type)}
+                  >
+                    <Icon name={pill.icon} /> {pill.label}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Specific parameter controls depending on event type */}
