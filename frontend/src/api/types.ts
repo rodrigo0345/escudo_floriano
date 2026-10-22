@@ -54,6 +54,7 @@ export type SimulationProgress = Schemas['SimulationProgress'];
 export type SummaryMilestone = Schemas['SummaryMilestone'];
 export type SimulationSummary = Schemas['SimulationSummary'];
 export type PerimeterCollection = Schemas['PerimeterCollection'];
+export type Percentile = Schemas['Percentile'];
 export type SpreadVectorCollection = Schemas['SpreadVectorCollection'];
 export type SpreadVectorFeature = Schemas['SpreadVectorFeature'];
 export type RoadStatusTimeline = Schemas['RoadStatusTimeline'];

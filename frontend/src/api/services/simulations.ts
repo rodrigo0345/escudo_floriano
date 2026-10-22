@@ -2,6 +2,7 @@ import { fetchGrid } from '../binaryGrids';
 import { http } from '../httpClient';
 import type {
   GridData,
+  Percentile,
   PerimeterCollection,
   PlaceAccessTimeline,
   RoadStatusTimeline,
@@ -84,10 +85,11 @@ export const simulationsApi = {
     return data.samples;
   },
 
-  perimeter: async (simulationId: string, tMin: number): Promise<PerimeterCollection> => {
-    const { data } = await http.get<PerimeterCollection>(`/simulations/${simulationId}/perimeters`, {
-      params: { tMin: Math.floor(tMin) },
-    });
+  /** Ensemble quantiles share the `percentile` query value (the backend splits it on commas). */
+  perimeter: async (simulationId: string, tMin: number, percentile?: Percentile[]): Promise<PerimeterCollection> => {
+    const params: Record<string, unknown> = { tMin: Math.floor(tMin) };
+    if (percentile?.length) params.percentile = percentile.join(',');
+    const { data } = await http.get<PerimeterCollection>(`/simulations/${simulationId}/perimeters`, { params });
     return data;
   },
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { WaterPointKind } from '@/api';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
-import { useEngine, useWorld } from '@/engine/EngineContext';
+import { useEngine, useEngineContext, useWorld } from '@/engine/EngineContext';
 import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import type { ViewModeName } from '@/engine/viewMode';
@@ -221,6 +221,7 @@ function OverlayBox() {
   const setThunderEnabled = useAppStore((s) => s.setThunderEnabled);
   const windDensity = useAppStore((s) => s.windDensity);
   const setWindDensity = useAppStore((s) => s.setWindDensity);
+  const { ensembleEnabled, setEnsembleEnabled } = useEngineContext();
   return (
     <section className={styles.layerSection}>
       <div className={styles.sectionHead}>
@@ -270,6 +271,19 @@ function OverlayBox() {
               <span className={styles.densityValue}>{windDensity}%</span>
             </div>
             <span className={styles.legendNote}>campo com concentração e deflexão junto ao fogo</span>
+          </div>
+        ) : null}
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow} title="A faixa p10–p90 do ensemble: os cenários otimista e pessimista da propagação">
+          <input type="checkbox" checked={ensembleEnabled} onChange={(e) => setEnsembleEnabled(e.target.checked)} />
+          <span>Incerteza (ensemble)</span>
+        </label>
+        {ensembleEnabled ? (
+          <div className={styles.overlayLegend}>
+            {/* `hasSpread` is a mutable field on the layer, so it cannot drive a re-render: keep the legend
+                descriptive instead of printing a value that would stay stale until something else renders. */}
+            <span className={styles.legendNote}>Incerteza p10–p90 · o p90 é a mancha pessimista, o p10 a otimista</span>
           </div>
         ) : null}
       </div>

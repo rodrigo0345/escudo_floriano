@@ -6,6 +6,7 @@ import { AftermathLayer } from './layers/aftermathLayer';
 import { AssetLayer } from './layers/assetLayer';
 import { FireLayer } from './layers/fireLayer';
 import { burnStyles, burnStyleTexture } from './burnShader';
+import { EnsembleLayer } from './layers/ensembleLayer';
 import { FlameLayer } from './layers/flameLayer';
 import { FleetLayer } from './layers/fleetLayer';
 import { PhotorealLayer, type CitySource } from './layers/photorealLayer';
@@ -55,6 +56,8 @@ export class World {
   readonly city: PhotorealLayer;
   /** The flames, in 3D, where the fire is burning at the minute shown. */
   readonly flames: FlameLayer;
+  /** The ensemble's p10–p90 "cone of futures" band around the median footprint (empty for single-rep runs). */
+  readonly ensemble: EnsembleLayer;
   /** After the flames: smoke wisps, embers, ash or smoke columns by what burned, fading over the following hour or so. */
   readonly aftermath: AftermathLayer;
   /** Every registered vehicle not in a replayed operation: parked at its station, or where the API says it is. */
@@ -83,6 +86,7 @@ export class World {
     this.terrain.setBurnStyle(burnStyleTexture(styles, geo.gridWidth, geo.gridHeight));
     this.city = new PhotorealLayer(geo, location.id as string, this.terrain.burn);
     this.flames = new FlameLayer(geo);
+    this.ensemble = new EnsembleLayer(geo);
     this.fleet = new FleetLayer(geo);
     this.flames.setStyles(styles);
     this.aftermath = new AftermathLayer(geo);
@@ -103,6 +107,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.ensemble.group,
       this.aftermath.points,
       this.fleet.group,
       this.roads.mesh,
@@ -126,7 +131,7 @@ export class World {
   /** What the operator reads the map with: drawn over the 3D city in their own pass (hidden by hills, never by buildings or trees). */
   private get overlays(): THREE.Object3D[] {
     // the flames too: they are the burning trees, so the photographed canopy must not swallow them
-    return [this.roads.mesh, this.assets.group, this.water.group, this.plan.group, this.fire.group, this.units.group, this.fleet.group, this.flames.mesh];
+    return [this.roads.mesh, this.assets.group, this.water.group, this.plan.group, this.fire.group, this.ensemble.group, this.units.group, this.fleet.group, this.flames.mesh];
   }
 
   /** Objects that react to hover (facilities, places, water points, the plan's actions). */
@@ -158,6 +163,7 @@ export class World {
       this.terrain.mesh,
       this.terrain.depthProxy,
       this.flames.mesh,
+      this.ensemble.group,
       this.aftermath.points,
       this.fleet.group,
       this.roads.mesh,
@@ -180,6 +186,7 @@ export class World {
     this.engine.setOverlayPass(null);
     this.city.dispose();
     this.flames.dispose();
+    this.ensemble.dispose();
     this.aftermath.dispose();
     this.fleet.clear();
     this.terrain.dispose();

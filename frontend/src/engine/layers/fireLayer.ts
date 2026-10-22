@@ -129,7 +129,10 @@ export class FireLayer {
       this.perimeter.traverse((o) => (o as THREE.Line).geometry?.dispose());
       this.perimeter = null;
     }
-    const geometry = collection?.features?.[0]?.geometry;
+    const features = collection?.features ?? [];
+    // Com o ensemble, a coleção traz p10/p50/p90: o contorno principal é sempre o p50 (a mediana),
+    // não o primeiro feature da coleção.
+    const geometry = (features.find((f) => f.properties?.percentile === 'p50') ?? features[0])?.geometry;
     const rings = polygonRings(geometry);
     if (!rings.length) return;
     const group = new THREE.Group();

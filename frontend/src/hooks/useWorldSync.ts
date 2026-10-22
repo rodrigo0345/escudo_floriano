@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { simulationsApi, type PerimeterCollection, type Smoke, type SpreadVectorCollection } from '@/api';
 import { lineStringCoordinates } from '@/domain/geojson';
-import { useWorld } from '@/engine/EngineContext';
+import { useEngineContext } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
 
@@ -16,7 +16,7 @@ type Detail = [PerimeterCollection, SpreadVectorCollection];
  * colored by the impact at that minute.
  */
 export function useWorldSync(): void {
-  const world = useWorld();
+  const { world, ensembleEnabled } = useEngineContext();
   const baseLayer = useAppStore((s) => s.baseLayer);
   const smokeEnabled = useAppStore((s) => s.smokeEnabled);
   const windEnabled = useAppStore((s) => s.windEnabled);
@@ -127,11 +127,12 @@ export function useWorldSync(): void {
     if (!resourcesLoaded) void useResourcesStore.getState().load();
   }, [resourcesLoaded]);
 
-  // a new run invalidates cached per-minute detail
+  // a new run invalidates cached per-minute detail, and the ensemble band must not survive it
   useEffect(() => {
     detailCache.current.clear();
     smokeCache.current.clear();
-  }, [run?.id]);
+    world?.ensemble.reset();
+  }, [world, run?.id]);
 
   // perimeter + spread arrows for the current minute
   useEffect(() => {
@@ -143,6 +144,7 @@ export function useWorldSync(): void {
     if (cached) {
       world.fire.setPerimeter(cached[0]);
       world.fire.setArrows(cached[1]);
+      if (ensembleEnabled) world.ensemble.setCollections(cached[0]);
       return;
     }
 
@@ -153,14 +155,17 @@ export function useWorldSync(): void {
         const intT = Math.floor(wantedT);
         inFlightDetail.current = true;
         try {
+          // asking for the p10/p50/p90 quantiles in the same request keeps one fetch per minute
+          // (the backend splits the single comma-joined `percentile` query value)
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, intT),
+            simulationsApi.perimeter(run.id, intT, ['p10', 'p50', 'p90']),
             simulationsApi.vectors(run.id, intT),
           ]);
           detailCache.current.set(`${run.id}:${intT}`, detail);
           if (useAppStore.getState().run?.id === run.id) {
             world.fire.setPerimeter(detail[0]);
             world.fire.setArrows(detail[1]);
+            if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
           }
         } catch (e) {
           console.warn('detalhe do fogo:', (e as Error).message);
@@ -175,6 +180,7 @@ export function useWorldSync(): void {
               const nextCached = detailCache.current.get(nextKey)!;
               world.fire.setPerimeter(nextCached[0]);
               world.fire.setArrows(nextCached[1]);
+              if (ensembleEnabled) world.ensemble.setCollections(nextCached[0]);
             } else {
               void fetchNext(currentT);
             }
@@ -188,13 +194,14 @@ export function useWorldSync(): void {
       const timer = setTimeout(async () => {
         try {
           const detail = await Promise.all([
-            simulationsApi.perimeter(run.id, minute),
+            simulationsApi.perimeter(run.id, minute, ['p10', 'p50', 'p90']),
             simulationsApi.vectors(run.id, minute),
           ]);
           detailCache.current.set(key, detail);
           if (!cancelled && useAppStore.getState().run?.id === run.id) {
             world.fire.setPerimeter(detail[0]);
             world.fire.setArrows(detail[1]);
+            if (ensembleEnabled) world.ensemble.setCollections(detail[0]);
           }
         } catch (e) {
           console.warn('detalhe do fogo:', (e as Error).message);
@@ -206,7 +213,12 @@ export function useWorldSync(): void {
         clearTimeout(timer);
       };
     }
-  }, [world, run, t, playing]);
+  }, [world, run, t, playing, ensembleEnabled]);
+
+  // the operator's switch: hidden while off or with no run. Stale geometry on a run change is dropped above.
+  useEffect(() => {
+    world?.ensemble.setEnabled(ensembleEnabled && !!run);
+  }, [world, run?.id, ensembleEnabled]);
 
   // smoke resource (plume height, roads without visibility) for the current minute
   useEffect(() => {
