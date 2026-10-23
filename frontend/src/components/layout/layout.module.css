@@ -99,12 +99,13 @@
 /* the pickers give way first when the bar runs short (the long names end in "…") */
 .top > .selects {
   flex-shrink: 1;
-  min-width: 0;
+  min-width: 176px; /* the place name and the scenario picker stay readable (the other things in the bar give way first, see the media queries) */
+  overflow: hidden; /* whatever still does not fit is cut inside the pickers' box: it can never reach the tabs */
 }
 
 .selects select {
   flex: 0 1 175px;
-  min-width: 90px;
+  min-width: 80px;
   max-width: 175px;
   height: 28px;
   padding: 2px 6px;
@@ -117,9 +118,10 @@
 
 /* the one location on offer: a label, not a one-option picker */
 .locationName {
-  display: inline-flex;
-  align-items: center;
+  display: block;
+  box-sizing: border-box;
   height: 28px;
+  line-height: 26px;
   padding: 0 8px;
   font-size: 11.5px;
   font-weight: 600;
@@ -127,6 +129,11 @@
   background: var(--panel2);
   border: 1px solid var(--line);
   white-space: nowrap;
+  /* it gives way before anything else: a long name ends in "…" instead of pushing the scenario picker over the tabs */
+  flex: 0 1 auto;
+  min-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .period {
@@ -143,11 +150,15 @@
 }
 
 /* Smaller screens (laptops): the bar compacts step by step; large screens keep everything above. */
-@media (max-width: 1280px) {
+/* below a laptop-wide screen the scenario name in the chip and the word "Atalhos" give way first: the pickers need their room */
+@media (max-width: 1440px) {
   .focusScenario,
   .helpText {
     display: none;
   }
+}
+
+@media (max-width: 1280px) {
   .helpLink {
     padding: 4px 9px;
   }
@@ -156,10 +167,26 @@
   }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1200px) {
   .brandName {
     display: none;
   }
+}
+
+/* a tablet or a phone: the top bar cannot show everything, so it scrolls sideways (tabs and chips stay reachable) instead of cutting them off */
+@media (max-width: 1000px) {
+  .top {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .top::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
   .top {
     gap: 6px;
     padding: 0 8px;
@@ -923,17 +950,6 @@
   .main {
     grid-template-columns: minmax(0, 1fr); /* `1fr` alone grows to the widest content and pushed the map and the panel out of a phone's screen */
     grid-template-rows: 55vh auto;
-  }
-
-  /* the top bar cannot show everything on a phone: it scrolls sideways (tabs and chips stay reachable) instead of cutting them off */
-  .top {
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-
-  .top::-webkit-scrollbar {
-    display: none;
   }
 
   /* the playback bar wraps onto a second line instead of forcing the whole page wider */
