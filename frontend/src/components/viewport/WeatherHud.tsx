@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/common/Icon';
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
 import { fireRiskLevel, findUpcomingWeatherShift, groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
+import { useEngine } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './viewport.module.css';
@@ -24,10 +25,25 @@ function readOpen(): boolean {
  * humidity, and a dot when the fire risk is high. Open, it adds the alerts (rain, a coming wind shift, smoke, risk), gusts,
  * fine-fuel moisture and the source. Values follow the playback minute.
  *
- * The arrow is the WIND: it points where the wind blows, measured from the N at the top of the dial. It does not depend on how the
- * user has turned the map (the compass rose at the bottom left is what follows the camera), so it only changes when the wind does.
+ * The arrow is the WIND: it points where the wind blows ON THE SCREEN, turning with the camera like the compass rose, so it always
+ * matches the wind particles and smoke drifting across the map. The dial has no N of its own: the compass rose shows north.
  */
 export function WeatherHud() {
+  const engine = useEngine();
+  const rose = useRef<SVGGElement>(null);
+  useEffect(() => {
+    if (!engine) return;
+    let shown = Number.NaN;
+    let shownOn: SVGGElement | null = null;
+    return engine.onFrame((_ts, azimuth) => {
+      const el = rose.current;
+      const deg = Math.round(((-azimuth * 180) / Math.PI) * 2) / 2; // half-degree steps: no DOM write while the camera is still
+      if (!el || (el === shownOn && deg === shown)) return;
+      shown = deg;
+      shownOn = el; // the card unmounts while there is no run: a new element needs the angle again
+      el.setAttribute('transform', `rotate(${deg})`);
+    });
+  }, [engine]);
   const [open, setOpen] = useState(readOpen);
   const toggle = () =>
     setOpen((was) => {
@@ -58,13 +74,12 @@ export function WeatherHud() {
     <div className={`${styles.hud} ${open ? styles.hudOpen : ''}`}>
       <button type="button" className={styles.hudHead} onClick={toggle} aria-expanded={open} aria-label={label} title={label}>
         <svg className={styles.dial} viewBox="-32 -32 64 64" role="img" aria-label={`Vento de ${compass(weather.windFromDeg)}, a soprar para ${compass(to)}`}>
-          <title>{`Seta: direção do vento. Sopra para ${compass(to)} (vem de ${compass(weather.windFromDeg)}), medido a partir do N. Não depende de como rodou o mapa.`}</title>
+          <title>{`Seta: para onde o vento sopra no mapa, tal como o vê. Sopra para ${compass(to)} (vem de ${compass(weather.windFromDeg)}); roda com a câmara.`}</title>
           <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".22" />
-          <text y="-18" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" opacity=".75">
-            N
-          </text>
-          <g transform={`rotate(${to})`} style={{ color }}>
-            <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
+          <g ref={rose}>
+            <g transform={`rotate(${to})`} style={{ color }}>
+              <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
+            </g>
           </g>
         </svg>
         <span className={styles.hudWind}>

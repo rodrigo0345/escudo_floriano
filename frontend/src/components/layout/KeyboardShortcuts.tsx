@@ -23,7 +23,7 @@ const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'F', action: 'Camada de fumo' },
   { keys: 'G', action: 'Camada de vento 3D' },
   { keys: 'I', action: 'Separador Incidente' },
-  { keys: 'H', action: 'Só o mapa: esconder painéis, barras e ícones (H ou Esc para voltar)' },
+  { keys: 'H', action: 'Modo foto: esconder painéis, barras e ícones; os meios continuam no mapa (H ou Esc para voltar)' },
   { keys: '?', action: 'Abrir / fechar esta ajuda' },
   { keys: 'Esc', action: 'Fechar esta ajuda' },
 ];

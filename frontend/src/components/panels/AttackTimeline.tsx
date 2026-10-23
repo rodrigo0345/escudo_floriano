@@ -175,7 +175,12 @@ function AttackDetail({ row, horizon, seeWorking }: { row: AttackRow; horizon: n
   return (
     <div className={styles.attackDetail}>
       <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '8px' }}>
-        <VehicleModelPhoto type={photoType} size={{ width: 84, height: 54 }} />
+        <VehicleModelPhoto
+          type={row.lead?.type ?? photoType}
+          typeCode={row.lead?.typeCode}
+          callsign={row.lead?.callsign}
+          size={{ width: 84, height: 54 }}
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <b>{row.title}</b>
         </div>

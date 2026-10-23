@@ -1015,9 +1015,12 @@ export function buildSimulationRequest(
   const locationId = typeof firstArg === 'string' ? firstArg : (secondArg as string);
   const ignitions = Array.isArray(firstArg) ? firstArg : (secondArg as Ignition[]);
 
+  const clock = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+  // the operator's name for the fire names the scenario; the generic "Foco 1" does not say anything, so it keeps the default
+  const fireName = ignitions[0]?.label?.trim();
   return {
     scenario: {
-      name: `Cenário personalizado ${new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}`,
+      name: fireName && !/^Foco \d+$/.test(fireName) ? `${fireName} · ${clock}` : `Cenário personalizado ${clock}`,
       locationId,
       start: formStartToIso(values.start),
       durationMinutes: values.duration,

@@ -1246,7 +1246,18 @@ export function SimulationForm() {
           {ignitions.map((ig, i) => (
             <div key={i} className={styles.ignitionRow}>
               <div>
-                <b>{ig.label ?? `Foco ${i + 1}`}</b>
+                <input
+                  className={styles.ignitionName}
+                  value={ig.label ?? ''}
+                  placeholder={`Foco ${i + 1}`}
+                  maxLength={60}
+                  title="Nome do foco (aparece no mapa e no cenário)"
+                  aria-label={`Nome do foco ${i + 1}`}
+                  onChange={(e) => updateIgnition(i, { label: e.target.value || undefined })}
+                  onBlur={(e) => {
+                    if (!e.target.value.trim()) updateIgnition(i, { label: `Foco ${i + 1}` });
+                  }}
+                />
                 <small className="mut">
                   {ig.position.lat.toFixed(4)}, {ig.position.lon.toFixed(4)}
                   {ig.timeOffsetMinutes ? ` · T+${ig.timeOffsetMinutes} min` : ''}

@@ -4,6 +4,20 @@ import { StatusTag } from './statusTag';
 import { VehicleMarker } from './vehicleMarker';
 import { buildVehicle, isAircraft, liveryOf, type ModelClass, type VehicleModel } from './vehicleModels';
 
+/** Map-only view (H): every vehicle keeps working on the map, without its overhead badge or status tag. */
+export const actorDisplay = { bare: false };
+
+/**
+ * With the 3D city on: how far its ground is from our terrain at a point (world units), so ground vehicles stand on the tiles instead of sinking into them
+ * (`PhotorealLayer.groundOffset`; null where it has no answer). Null while the city is off.
+ */
+export const groundSnap: { offsetAt: ((x: number, z: number) => number | null) | null } = { offsetAt: null };
+/** A vehicle asks for the ground again after moving this far (world units, 1 = 10 m), or after `SNAP_REFRESH_MS` (tiles keep loading). */
+const SNAP_MOVE = 0.4;
+const SNAP_REFRESH_MS = 1500;
+/** Share of the gap closed per frame: a new ground height eases in, so nothing jumps. */
+const SNAP_EASE = 0.15;
+
 /** Base scale factor so vehicles are comfortably visible on the regional wildfire terrain map. */
 export const BASE_VEHICLE_SCALE = 1.4;
 
@@ -32,6 +46,11 @@ export class VehicleActor {
   hovered = false;
   private readonly inner = new THREE.Group();
   private tip = '';
+  /** Lift onto the 3D city's ground: the eased value drawn, the value asked for, and where/when it was last asked. */
+  private snapY = 0;
+  private snapTarget = 0;
+  private readonly snapAt = new THREE.Vector3(Infinity, 0, Infinity);
+  private snapTime = 0;
 
   constructor(
     readonly cls: ModelClass,
@@ -89,9 +108,34 @@ export class VehicleActor {
     this.heading = heading;
     this.enlarge = 1;
     this.group.position.copy(pos);
+    if (!this.air) this.group.position.y += this.groundLift(pos);
     this.group.rotation.y = heading;
     this.group.scale.setScalar(1);
-    this.marker.draw(this.hovered);
+    this.marker.sprite.visible = !actorDisplay.bare;
+    if (actorDisplay.bare) this.tag.sprite.visible = false;
+    else this.marker.draw(this.hovered);
+  }
+
+  /** How far to raise (or lower) a ground vehicle at `pos` to stand on the 3D city's ground; eases back to 0 when the city is off. */
+  private groundLift(pos: THREE.Vector3): number {
+    const offsetAt = groundSnap.offsetAt;
+    if (!offsetAt) {
+      this.snapTarget = 0;
+      this.snapAt.set(Infinity, 0, Infinity);
+    } else {
+      const now = performance.now();
+      const dx = pos.x - this.snapAt.x;
+      const dz = pos.z - this.snapAt.z;
+      if (dx * dx + dz * dz > SNAP_MOVE * SNAP_MOVE || now - this.snapTime > SNAP_REFRESH_MS) {
+        this.snapAt.copy(pos);
+        this.snapTime = now + Math.random() * 300; // spread the refreshes of a whole fleet over several frames
+        // up only: the overlay pass depth-tests vehicles against our terrain, so one lowered below it would vanish (a few metres of float is the lesser evil)
+        this.snapTarget = Math.max(0, offsetAt(pos.x, pos.z) ?? 0);
+      }
+    }
+    this.snapY += (this.snapTarget - this.snapY) * SNAP_EASE;
+    if (Math.abs(this.snapY) < 1e-3 && this.snapTarget === 0) this.snapY = 0;
+    return this.snapY;
   }
 
   /** Constant dimensions: vehicle never gets bigger when zooming out or in. */

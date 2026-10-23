@@ -7,7 +7,7 @@ import { DISPATCH_STATUS_LABEL } from '@/domain/resourceLabels';
 import type { Pickable } from '../picking';
 import { spreadPositions } from '../vehicles/declutter';
 import { activityColor, type Activity } from '../vehicles/statusTag';
-import { headingBetween, VehicleActor } from '../vehicles/vehicleActor';
+import { actorDisplay, headingBetween, VehicleActor } from '../vehicles/vehicleActor';
 import { modelClassOf } from '../vehicles/vehicleModels';
 import { WaterEffects } from '../vehicles/waterEffects';
 
@@ -252,8 +252,8 @@ export class UnitLayer {
     const people = unit.state.personnel ?? 0;
     const callsign = unit.state.callsign ?? unit.state.unitId;
     // the status tag only while the cursor is on the vehicle
-    actor.tag.sprite.visible = actor.hovered;
-    if (actor.hovered) {
+    actor.tag.sprite.visible = actor.hovered && !actorDisplay.bare;
+    if (actor.tag.sprite.visible) {
       actor.tag.set({
         callsign,
         org: e.org,

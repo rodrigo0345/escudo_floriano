@@ -568,6 +568,8 @@ function VehiclesSection({ org, list, stations }: { org: Organization; list: Veh
                 <VehicleModelPhoto
                   type={v.type}
                   tplKey={photoKey}
+                  typeCode={v.typeCode}
+                  callsign={v.callsign}
                   size="fill"
                 />
                 <div className={styles.cardBannerBadge}>
@@ -762,7 +764,7 @@ function VehicleEditor({
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <VehicleModelPhoto type={d.type} tplKey={tpl?.key ?? d.typeCode?.toLowerCase()} size={{ width: 84, height: 54 }} />
+            <VehicleModelPhoto type={d.type} tplKey={tpl?.key ?? d.typeCode?.toLowerCase()} typeCode={d.typeCode} callsign={d.callsign} size={{ width: 84, height: 54 }} />
             <button className={styles.closeBtn} onClick={onCancel} title="Fechar (Esc)">✕</button>
           </div>
         </div>

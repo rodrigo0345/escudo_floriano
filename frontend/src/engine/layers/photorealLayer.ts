@@ -59,6 +59,11 @@ const CALIBRATION_TRIES = 6;
 /** A correction larger than this, or samples spread wider than this, mean the rays hit something other than ground (coarse tiles, rooftops): do not trust them. */
 const MAX_CALIBRATION_M = 25;
 const MAX_SPREAD_M = 40;
+/** Vehicles stand on the city's ground only within this many metres of our terrain: higher hits are canopy or roofs. */
+const GROUND_SNAP_MAX_M = 6;
+/** How far around a vehicle the extra ground rays land (one usually finds a gap between trees). */
+const GROUND_SNAP_SPREAD_M = 8;
+const DOWN = new THREE.Vector3(0, -1, 0);
 
 /**
  * The 3D city: Google Photorealistic 3D Tiles, streamed from Google while in use ('live': the operator types a key, kept in memory only and dropped when the layer is
@@ -90,6 +95,11 @@ export class PhotorealLayer {
   private readonly loadCenter = new THREE.Vector3();
   private loadRadiusM = Infinity;
   private readonly toTileFrame = new THREE.Matrix4();
+  /** The finest tiles drawn, refreshed every half second for `groundOffset`. */
+  private fine: THREE.Object3D[] = [];
+  private fineAt = 0;
+  private readonly groundRay = new THREE.Raycaster();
+  private readonly rayOrigin = new THREE.Vector3();
 
   constructor(
     private readonly geo: Georef,
@@ -155,6 +165,46 @@ export class PhotorealLayer {
   setHeightTrim(metres: number): void {
     this.trimM = metres;
     if (this.tiles) this.applyAlignment(this.tiles);
+  }
+
+  /**
+   * How far (world units) the city's ground is above (+) or below (−) our terrain at (`x`, `z`), for vehicles to stand on the tiles instead of sinking into them; null
+   * where no tile answers. Five rays (the point and four around it, `GROUND_SNAP_SPREAD_M` away) start `GROUND_SNAP_MAX_M` above the terrain, so a canopy or roof
+   * higher than that is never seen, and the LOWEST hit wins: in a wood one ray usually finds the ground between the trees. Only the finest tiles drawn are used, as in
+   * `calibrate`: a coarse parent overlaps its children while they load.
+   */
+  groundOffset(x: number, z: number): number | null {
+    const tiles = this.tiles;
+    if (!tiles || !this.enabled) return null;
+    const now = performance.now();
+    if (now - this.fineAt > 500) {
+      this.fineAt = now;
+      this.fine = this.finestScenes(tiles);
+    }
+    if (!this.fine.length) return null;
+    const geo = this.geo;
+    const terrainY = geo.y(geo.elevAtUV(Math.min(Math.max(x / geo.W + 0.5, 0), 1), Math.min(Math.max(z / geo.H + 0.5, 0), 1)), x, z);
+    const reach = (GROUND_SNAP_MAX_M * geo.exag) / geo.unit;
+    const spread = GROUND_SNAP_SPREAD_M / geo.unit;
+    this.groundRay.far = reach * 2;
+    let lowest = Infinity;
+    for (const [dx, dz] of [[0, 0], [spread, 0], [-spread, 0], [0, spread], [0, -spread]]) {
+      this.groundRay.set(this.rayOrigin.set(x + dx, terrainY + reach, z + dz), DOWN);
+      const hit = this.groundRay.intersectObjects(this.fine, true)[0];
+      if (hit) lowest = Math.min(lowest, hit.point.y);
+    }
+    return Number.isFinite(lowest) ? lowest - terrainY : null;
+  }
+
+  private finestScenes(tiles: TilesRenderer): THREE.Object3D[] {
+    let finest = Infinity;
+    const loaded: { scene: THREE.Object3D; error: number }[] = [];
+    tiles.forEachLoadedModel((scene: THREE.Object3D, tile: { geometricError: number }) => {
+      if (!scene.visible) return;
+      loaded.push({ scene, error: tile.geometricError });
+      finest = Math.min(finest, tile.geometricError);
+    });
+    return loaded.filter((l) => l.error <= finest * 1.01).map((l) => l.scene);
   }
 
   /** Per frame, before drawing: lets the renderer pick, load and drop tiles for the current camera. */

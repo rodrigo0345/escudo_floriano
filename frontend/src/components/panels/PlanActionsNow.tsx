@@ -256,7 +256,7 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
                           const v: Vehicle | undefined = r.resourceType === 'vehicle' ? vehicleOf.get(r.resourceId as string) : undefined;
                           return (
                             <span key={r.resourceId as string} className={styles.unitChip} title={v ? `${v.callsign} · ${VEHICLE_TYPE_LABEL[v.type] ?? v.type}` : String(r.resourceId)}>
-                              {v ? <VehicleModelPhoto type={v.type} size={{ width: 34, height: 22 }} /> : null}
+                              {v ? <VehicleModelPhoto type={v.type} typeCode={v.typeCode} callsign={v.callsign} size={{ width: 34, height: 22 }} /> : null}
                               <span>{v?.callsign ?? (r.resourceType === 'personnel_pool' ? 'Equipa a pé' : String(r.resourceId))}</span>
                               {r.personnel ? <small>{r.personnel} p</small> : null}
                             </span>

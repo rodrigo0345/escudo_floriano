@@ -44,6 +44,8 @@ LIGHT_HELI = {"type": "helicopter", "typeCode": "HEBL", "crewCapacity": 2, "mini
               "aerial": {**AERIAL, "bucketCapacityL": 1000, "loadMinutes": 1, "dropMinutes": 1, "cruiseSpeedKmh": 200}}
 HEAVY_HELI = {"type": "helicopter", "typeCode": "HEBP", "crewCapacity": 3, "minimumCrew": 2, "waterCapacityL": 4500, "cruiseSpeedKmh": 230, "capabilities": ["aerial_water_drop"],
               "aerial": {**AERIAL, "bucketCapacityL": 4500, "loadMinutes": 2, "dropMinutes": 1, "cruiseSpeedKmh": 230}}
+MEDIUM_HELI = {"type": "helicopter", "typeCode": "HEBM", "crewCapacity": 3, "minimumCrew": 2, "waterCapacityL": 1500, "cruiseSpeedKmh": 220, "capabilities": ["aerial_water_drop"],
+               "aerial": {**AERIAL, "bucketCapacityL": 1500, "loadMinutes": 1, "dropMinutes": 1, "cruiseSpeedKmh": 220}}
 MEDIUM_AMPHIBIOUS = {"type": "airtanker", "typeCode": "AVBM", "crewCapacity": 1, "minimumCrew": 1, "waterCapacityL": 3000, "cruiseSpeedKmh": 300, "capabilities": ["aerial_water_drop"],
                      "aerial": {**AERIAL, "bucketCapacityL": 3000, "loadMinutes": 1, "dropMinutes": 1, "cruiseSpeedKmh": 300}}
 HEAVY_AMPHIBIOUS = {"type": "airtanker", "typeCode": "AVBP", "crewCapacity": 2, "minimumCrew": 2, "waterCapacityL": 6000, "cruiseSpeedKmh": 330, "capabilities": ["aerial_water_drop"],
@@ -54,10 +56,12 @@ SCOOP_KM = 25  # the nearest water body an amphibious airtanker can scoop from (
 
 # where the aircraft come from (the side of the map their base is), minutes until they are overhead on that edge, the aircraft
 AIR_GROUPS: list[dict[str, Any]] = [
-    {"name": "Helicópteros ligeiros de ataque inicial (centro de meios aéreos a nascente)", "short": "HEBL nascente", "prefix": "HEBL", "side": 80, "mobilization": 8, "aircraft": [LIGHT_HELI] * 2},
-    {"name": "Helicópteros pesados (base regional a sul)", "short": "HEBP sul", "prefix": "HEBP", "side": 180, "mobilization": 30, "aircraft": [HEAVY_HELI] * 2},
-    {"name": "Aviões anfíbios médios (base regional a sul)", "short": "Anfíbios médios", "prefix": "AVBM", "side": 200, "mobilization": 25, "aircraft": [MEDIUM_AMPHIBIOUS] * 2},
-    {"name": "Aviões anfíbios pesados (dispositivo nacional)", "short": "Anfíbios pesados", "prefix": "AVBP", "side": 190, "mobilization": 55, "aircraft": [HEAVY_AMPHIBIOUS] * 2},
+    # demo boost: a reinforced air component (20 aircraft instead of 9) so the plans have a strong air attack to work with
+    {"name": "Helicópteros ligeiros de ataque inicial (centro de meios aéreos a nascente)", "short": "HEBL nascente", "prefix": "HEBL", "side": 80, "mobilization": 8, "aircraft": [LIGHT_HELI] * 4},
+    {"name": "Helicópteros médios (centro de meios aéreos a poente)", "short": "HEBM poente", "prefix": "HEBM", "side": 290, "mobilization": 15, "aircraft": [MEDIUM_HELI] * 3},
+    {"name": "Helicópteros pesados (base regional a sul)", "short": "HEBP sul", "prefix": "HEBP", "side": 180, "mobilization": 30, "aircraft": [HEAVY_HELI] * 4},
+    {"name": "Aviões anfíbios médios (base regional a sul)", "short": "Anfíbios médios", "prefix": "AVBM", "side": 200, "mobilization": 25, "aircraft": [MEDIUM_AMPHIBIOUS] * 4},
+    {"name": "Aviões anfíbios pesados (dispositivo nacional)", "short": "Anfíbios pesados", "prefix": "AVBP", "side": 190, "mobilization": 55, "aircraft": [HEAVY_AMPHIBIOUS] * 4},
     {"name": "Helicóptero de coordenação aérea (dispositivo nacional)", "short": "HECO coordenação", "prefix": "HECO", "side": 210, "mobilization": 20, "aircraft": [COORDINATION_HELI]},
 ]
 
