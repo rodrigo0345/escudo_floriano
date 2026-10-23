@@ -21,8 +21,8 @@ EARTH_RADIUS_M = 6_371_008.8
 # take the slower flanks (and every tier falls back to all sectors when there are few).
 HELICOPTER_SHARE = 1 / 3
 TRUCK_SHARE = 2 / 3
-FIGHTABLE_FULL_KWM = 2500.0  # ``Rules.suppression.fullEffectUpToKwm``
-FIGHTABLE_NONE_KWM = 4000.0  # ``Rules.suppression.noEffectFromKwm``
+FIGHTABLE_FULL_KWM = 12000.0  # ``Rules.suppression.fullEffectUpToKwm``
+FIGHTABLE_NONE_KWM = 35000.0  # ``Rules.suppression.noEffectFromKwm``
 UNFIGHTABLE_SHARE = 0.05  # a stretch crews cannot fight still counts for this share (people may need it held later, aircraft and lines still help)
 WORKABILITY_FLOOR = 0.35  # a stretch crews can barely work still counts for this share of its danger: a fast fire is not ignored because its ground is bad
 

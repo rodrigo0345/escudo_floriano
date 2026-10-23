@@ -23,8 +23,8 @@ from ..travel import TravelPlanner
 log = logging.getLogger("firetrace.commander")
 
 # = the backend's InterventionSettings (appsettings.json): a finished line holds up to the first, is breached from the second (not in /rules)
-LINE_HOLD_KWM, LINE_BREACH_KWM = 3500.0, 10000.0
-DEFAULT_FULL_KWM = 2500.0
+LINE_HOLD_KWM, LINE_BREACH_KWM = 20000.0, 50000.0
+DEFAULT_FULL_KWM = 12000.0
 ARRIVAL_STEP_MIN = 15
 
 
