@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 
 import type { ActionStatus, Plan, PlanAction, Vehicle } from '@/api';
+import { Icon } from '@/components/common/Icon';
 import { Tag } from '@/components/common/StatCard';
 import { actionWindows, phaseAt, PHASE_LABEL, windowText, type ActionPhase } from '@/domain/actionTiming';
 import { OrgLogo } from '@/domain/organizationLogos';
-import { VEHICLE_TYPE_LABEL } from '@/domain/resourceLabels';
+import { coreOrganizationIds, VEHICLE_TYPE_LABEL } from '@/domain/resourceLabels';
 import { VehicleModelPhoto } from '@/domain/vehicleModelImages';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
@@ -94,11 +95,13 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
   const [all, setAll] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
+  const [showReinforcements, setShowReinforcements] = useState(false);
   const selectedUnitId = useAppStore((s) => s.selectedUnitId);
   const selectUnit = useAppStore((s) => s.selectUnit);
 
   const windows = useMemo(() => actionWindows(plan), [plan]);
   const vehicleOf = useMemo(() => new Map(vehicles.map((v) => [v.id as string, v])), [vehicles]);
+  const coreIds = useMemo(() => coreOrganizationIds(organizations), [organizations]);
   const cursor = onMap && run ? t : null;
   const nowOnly = cursor !== null && !all;
 
@@ -120,6 +123,33 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
     .sort((a, b) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b));
   const visibleGroups = [...groups.entries()].filter(([id]) => orgFilter === null || id === orgFilter);
   const active = cursor === null ? 0 : rows.filter((r) => r.phase === 'active').length;
+  // the concelho's four corporations first; reinforcements and other organizations under one "Reforços" entry, closed unless asked for
+  const isCore = (id: string) => coreIds.has(id);
+  const coreChipIds = orgIds.filter(isCore);
+  const extraIds = orgIds.filter((id) => !isCore(id));
+  const extraOpen = showReinforcements || (orgFilter !== null && !isCore(orgFilter));
+  const sortedGroups = visibleGroups.sort(([a], [b]) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b));
+  const coreGroups = sortedGroups.filter(([id]) => isCore(id));
+  const extraGroups = sortedGroups.filter(([id]) => !isCore(id));
+  const shownGroups = extraOpen ? [...coreGroups, ...extraGroups] : coreGroups;
+  const extraActions = extraGroups.reduce((sum, [, list]) => sum + list.length, 0);
+  const orgChip = (id: string) => (
+    <button key={id} className={orgFilter === id ? 'on' : ''} onClick={() => setOrgFilter(id)}>
+      <OrgLogo org={orgOf(id) ?? id} size={14} inline />
+      {orgOf(id)?.shortName ?? orgOf(id)?.name ?? id}
+    </button>
+  );
+  const reinforcementsHead = extraGroups.length ? (
+    <button type="button" className={styles.reinforcementsHead} onClick={() => setShowReinforcements(!extraOpen)} aria-expanded={extraOpen}>
+      <b>Reforços</b>
+      <small className="note">
+        {extraGroups.length} {extraGroups.length === 1 ? 'corporação' : 'corporações'} · {extraActions} {extraActions === 1 ? 'ação' : 'ações'}
+      </small>
+      <span className={`${styles.reinforcementsChevron} ${extraOpen ? styles.reinforcementsChevronOpen : ''}`} aria-hidden="true">
+        <Icon name="chevron" size={14} />
+      </span>
+    </button>
+  ) : null;
 
   // a vehicle clicked on the map: focus the action it is doing at this minute (else the next one it has, else the last it had)
   useEffect(() => {
@@ -137,6 +167,7 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
     setOpenRow(id);
     setAll(true);
     setOrgFilter(null); // the vehicle's action may belong to another organization than the one filtered
+    if (!coreIds.has(chosen.organizationId as string)) setShowReinforcements(true); // ...or to a reinforcement
     setTimeout(() => document.getElementById(`action-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
     const where = whereOf(chosen);
     if (where && world) world.focusOnLatLon(where.lat, where.lon);
@@ -155,34 +186,44 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
   return (
     <>
       <div className={styles.actionsHead}>
-        <h3>
-          {nowOnly ? `A decorrer em T+${Math.round(cursor!)} min` : `Todas as ações (${plan.actions.length})`}
-          {nowOnly ? <small className="note"> · {active} em curso · {rows.length - active} a caminho</small> : null}
-        </h3>
+        <div className={styles.actionsHeadText}>
+          <span className={styles.actionsHeadTitle}>{nowOnly ? `A decorrer · T+${Math.round(cursor!)} min` : `Todas as ações · ${plan.actions.length}`}</span>
+          {nowOnly ? (
+            <span className={styles.actionsCounts}>
+              <span className={styles.countPill}>
+                <b>{active}</b> em curso
+              </span>
+              <span className={styles.countPill}>
+                <b>{rows.length - active}</b> a caminho
+              </span>
+            </span>
+          ) : cursor === null ? (
+            <small className="note">Ponha o plano no mapa para ver o que decorre em cada minuto.</small>
+          ) : null}
+        </div>
         {cursor !== null ? (
-          <button className={all ? '' : 'on'} onClick={() => setAll(!all)}>
-            {all ? 'Só o que decorre agora' : 'Ver todas'}
+          <button type="button" className={styles.actionsToggle} onClick={() => setAll(!all)}>
+            {all ? 'Só agora' : 'Ver todas'}
           </button>
-        ) : (
-          <small className="note">Ponha o plano no mapa para ver o que decorre em cada minuto.</small>
-        )}
+        ) : null}
       </div>
       <div className={styles.orgFilter}>
         <button className={orgFilter === null ? 'on' : ''} onClick={() => setOrgFilter(null)}>Todas</button>
-        {orgIds.map((id) => (
-          <button key={id} className={orgFilter === id ? 'on' : ''} onClick={() => setOrgFilter(id)}>
-            <OrgLogo org={orgOf(id) ?? id} size={14} inline />
-            {orgOf(id)?.name ?? id}
+        {coreChipIds.map(orgChip)}
+        {extraIds.length ? (
+          <button className={extraOpen ? 'on' : ''} onClick={() => setShowReinforcements(!extraOpen)} aria-expanded={extraOpen} title="Grupos de reforço e outras organizações">
+            Reforços ({extraIds.length})
           </button>
-        ))}
+        ) : null}
+        {extraOpen ? extraIds.map(orgChip) : null}
       </div>
       {!visibleGroups.length ? <p className="note">{nowOnly ? 'Nada a decorrer neste minuto com este filtro: avance a linha do tempo ou veja todas.' : 'Sem ações para esta organização.'}</p> : null}
-      {visibleGroups
-        .sort(([a], [b]) => (orgOf(a)?.name ?? a).localeCompare(orgOf(b)?.name ?? b))
-        .map(([organizationId, list]) => {
+      {shownGroups.map(([organizationId, list], index) => {
           const org = orgOf(organizationId);
           return (
-            <div key={organizationId} className={styles.actionGroup}>
+            <Fragment key={organizationId}>
+            {index === coreGroups.length ? reinforcementsHead : null}
+            <div className={styles.actionGroup}>
               <div className={styles.orgHead}>
                 <OrgLogo org={org ?? organizationId} size={26} inline />
                 <b>{org?.shortName ?? org?.name ?? organizationId}</b>
@@ -248,8 +289,10 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
                 );
               })}
             </div>
+            </Fragment>
           );
         })}
+      {!extraOpen ? reinforcementsHead : null}
     </>
   );
 }

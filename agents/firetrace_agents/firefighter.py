@@ -313,6 +313,8 @@ class FirefighterAgent:
         tier = tier_for_vehicle(vehicle.get("type", ""))
         if tier is None:
             return None
+        if tier is FirefighterTier.HELICOPTER and vehicle.get("capabilities") is not None and "aerial_water_drop" not in vehicle["capabilities"]:
+            return None  # a coordination/recon aircraft (HECO) drops no water: the backend refuses it 'firefighting' when the plan is activated
         return cls(
             Observation(
                 agent_id=agent_id,

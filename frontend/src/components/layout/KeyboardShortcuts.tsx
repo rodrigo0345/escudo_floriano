@@ -23,6 +23,7 @@ const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'F', action: 'Camada de fumo' },
   { keys: 'G', action: 'Camada de vento 3D' },
   { keys: 'I', action: 'Separador Incidente' },
+  { keys: 'H', action: 'Só o mapa: esconder painéis, barras e ícones (H ou Esc para voltar)' },
   { keys: '?', action: 'Abrir / fechar esta ajuda' },
   { keys: 'Esc', action: 'Fechar esta ajuda' },
 ];
@@ -42,6 +43,9 @@ export function KeyboardShortcuts() {
       if (e.key === 'Escape') {
         if (s.helpOpen) {
           s.setHelpOpen(false);
+          e.preventDefault();
+        } else if (s.cleanView) {
+          s.setCleanView(false); // Esc also brings the interface back
           e.preventDefault();
         }
         return;
@@ -93,6 +97,9 @@ export function KeyboardShortcuts() {
           break;
         case 'i':
           s.setTab('incident');
+          break;
+        case 'h':
+          s.setCleanView(!s.cleanView);
           break;
         default:
           return;

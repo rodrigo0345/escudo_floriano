@@ -76,6 +76,14 @@ def test_stage_resources_are_held_to_the_end_of_the_run_not_the_backends_30_minu
     assert plan["actions"][0]["expectedDurationMinutes"] == 700 and plan["actions"][0]["holdUntil"] == {"offsetMinutes": 720}
 
 
+def test_a_reserve_is_held_until_a_later_order_draws_on_it_not_to_the_end_of_the_run() -> None:
+    reserve = {"id": "reserve-0", "type": "stage_resources", "resources": [{"resourceId": "u9", "etaMinutes": 15}], "trigger": {"kind": "at_time", "at": {"offsetMinutes": 5}}}
+    wave = {"id": "w120", "type": "fire_attack", "resources": [{"resourceId": "u9"}], "trigger": {"kind": "at_time", "at": {"offsetMinutes": 120}}}
+    plan = {"actions": [reserve, wave]}
+    hold_idle_units(plan, None, 720, {})
+    assert reserve["expectedDurationMinutes"] == 100 and reserve["holdUntil"] == {"offsetMinutes": 120}  # arrives at 20, re-tasked at 120
+
+
 def test_a_route_through_cells_that_burn_when_the_unit_passes_is_refused_but_not_the_last_stretch() -> None:
     route = {"type": "LineString", "coordinates": [[0.0005, 0.9995], [0.0095, 0.9995]]}  # along row 0, west to east (~1 km)
     burning_midway = clock({(0, 4): 20, (0, 5): 20})

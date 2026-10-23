@@ -159,11 +159,96 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* "Reforços": the reinforcement groups behind one row, closed by default */
+.reinforcementsHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reinforcementsHead:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.reinforcementsChevron {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  color: var(--mut);
+  transition: transform 0.15s ease;
+}
+
+.reinforcementsChevronOpen {
+  transform: rotate(180deg);
+}
+
 .actionsHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+}
+
+.actionsHeadText {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.actionsHeadTitle {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mut);
+}
+
+.actionsCounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.countPill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.countPill b {
+  color: var(--fg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* a quiet switch between "what runs now" and "everything", not a big primary button */
+.actionsToggle {
+  flex: none;
+  padding: 3px 10px !important;
+  font-size: 11px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: transparent !important;
+  color: var(--fg) !important;
+  white-space: nowrap;
+}
+
+.actionsToggle:hover {
+  border-color: var(--acc) !important;
+  color: var(--acc) !important;
 }
 
 .actionCard {

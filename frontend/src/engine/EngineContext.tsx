@@ -23,7 +23,7 @@ const EngineContext = createContext<EngineContextValue | null>(null);
 export function EngineProvider({ children }: { children: ReactNode }) {
   const [engine, setEngine] = useState<SceneEngine | null>(null);
   const [world, setWorld] = useState<World | null>(null);
-  const [ensembleEnabled, setEnsembleEnabled] = useState(true);
+  const [ensembleEnabled, setEnsembleEnabled] = useState(false); // "Melhor e pior cenário": off until the operator asks for it
   const value = useMemo(
     () => ({ engine, world, setEngine, setWorld, ensembleEnabled, setEnsembleEnabled }),
     [engine, world, ensembleEnabled],

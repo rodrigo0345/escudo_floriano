@@ -49,19 +49,25 @@ export function TopBar() {
         Escudo Floriano <small>Coordenação de resposta a incêndios rurais</small>
       </div>
       <div className={styles.selects}>
-        <select
-          title="Local"
-          value={locationId ?? ''}
-          onChange={(e) => {
-            window.location.search = `?loc=${e.target.value}`;
-          }}
-        >
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
+        {locations.length > 1 ? (
+          <select
+            title="Local"
+            value={locationId ?? ''}
+            onChange={(e) => {
+              window.location.search = `?loc=${e.target.value}`;
+            }}
+          >
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className={styles.locationName} title="Local">
+            {locations[0]?.name ?? '—'}
+          </span>
+        )}
         <select title="Cenário" value={scenarioId ?? ''} onChange={(e) => void selectScenario(e.target.value)}>
           {scenarios.map((s) => (
             <option key={s.id} value={s.id}>

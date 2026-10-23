@@ -34,18 +34,38 @@ export function Viewport() {
   }, [setEngine]);
 
   const cityEnabled = useAppStore((s) => s.cityEnabled);
+  const cleanView = useAppStore((s) => s.cleanView);
   const attribution = world
     ? `${cityEnabled && world.city.attribution ? `Cidade 3D: Google Maps · ${world.city.attribution} · ` : ''}Imagem: ${world.terrain.attribution || '—'} · Relevo: AWS Terrain Tiles · Espécies: ESA WorldCover 2021, Copernicus HRL, Sentinel-2 · Estradas/instalações: © OpenStreetMap · Meteo: Open-Meteo`
     : '';
+
+  // map-only view: the icons on the map step aside too (facilities, water points, vehicles, people, the plan's drawings); terrain, fire and smoke stay
+  useEffect(() => {
+    if (!world) return;
+    for (const group of [world.assets.group, world.water.group, world.fleet.group, world.units.group, world.people.group, world.plan.group]) group.visible = !cleanView;
+  }, [world, cleanView]);
+
+  if (cleanView) {
+    return (
+      <div className={styles.view}>
+        <div ref={host} className={styles.canvasHost} />
+        <div className={styles.cleanHint}>H ou Esc para voltar</div>
+        <div className={styles.attrib}>{attribution}</div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.view}>
       <div ref={host} className={styles.canvasHost} />
       <LayersPanel />
       <Compass />
-      <WeatherHud />
+      {/* the weather card and, under it, the population alerts: one column, so an alert always sits below the card, open or closed */}
+      <div className={styles.leftStack}>
+        <WeatherHud />
+        <AlertToast />
+      </div>
       <ScaleBar />
-      <AlertToast />
       <Hint />
       <Banner />
       <LoadingOverlay />
