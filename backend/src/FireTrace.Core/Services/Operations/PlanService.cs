@@ -23,7 +23,7 @@ namespace FireTrace.Core.Services.Operations;
 /// Também guarda a execução de cada ação por quem as cumpre.
 /// </summary>
 public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator, DispatchService dispatching, CrudService<Dispatch> dispatches, CrudService<RoadClosure> closures,
-    PlanRouter router, PlanInterventions interventions, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock, ILogger<PlanService> log)
+    PlanRouter router, PlanInterventions interventions, SimulationService simulations, IDocumentStore<Simulation> simulationStore, IDocumentStore<Vehicle> vehicleStore, TimeProvider clock, ILogger<PlanService> log)
 {
     // ===================================================================================================== criar e alterar
     public Task<PlanValidation> ValidateAsync(Plan input, CancellationToken ct = default) => validator.ValidateAsync(input, ct);
@@ -92,15 +92,7 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
         var plan = await Require(id, PlanStatus.Selected, ct);
         // a plan still selected owns no live dispatch: any left by an activation that failed half-way is cancelled before trying again
         await CancelDispatchesAsync(plan.Id, ct);
-        // a vehicle the plan gives several jobs (attack the head, then defend a village) is dispatched once, to its first job by time:
-        // the dispatcher refuses the same vehicle twice in one batch, and its later jobs stay on the plan
-        var start = plan.Basis?.SituationAsOf ?? clock.GetUtcNow();
-        var assignments = plan.Actions
-            .Select((a, order) => (Action: a, Order: order, At: a.Trigger is AtTimeTrigger t ? t.At.MinutesFrom(start) : 0))
-            .OrderBy(x => x.At).ThenBy(x => x.Order)
-            .SelectMany(x => (x.Action.Resources ?? new()).Where(r => r.ResourceType != ResourceType.Equipment).Select(r => (x.Action, Resource: r)))
-            .DistinctBy(x => x.Resource.ResourceType == ResourceType.Vehicle ? $"vehicle:{x.Resource.ResourceId}" : $"{x.Action.Id}:{x.Resource.ResourceType}:{x.Resource.ResourceId}")
-            .ToList();
+        var assignments = await AssignmentsToDispatchAsync(plan, ct);
         var batch = new DispatchBatch(assignments.Select(x => ToDispatch(x.Action, x.Resource)).ToList(), $"Plano {plan.Title}");
 
         var check = await dispatching.ValidateAsync(batch, ct);
@@ -127,6 +119,39 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
             foreach (var closure in opened) await closures.DeleteAsync(closure.Id, CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>
+    /// What activating a plan dispatches. A vehicle or a crew the plan gives several jobs (attack the head, then defend a village) is dispatched once, for its
+    /// first job by time: the dispatcher refuses the same vehicle twice in one batch and counts the same crew's people once per dispatch, so the later jobs stay
+    /// on the plan. A crew is sent with the most people any of its jobs asks for. A vehicle the plan gives no crew to (the agents leave it out for aircraft)
+    /// goes with its minimum crew, not the one person the dispatch defaults to.
+    /// </summary>
+    async Task<List<(PlanAction Action, ResourceAssignment Resource)>> AssignmentsToDispatchAsync(Plan plan, CancellationToken ct)
+    {
+        var start = plan.Basis?.SituationAsOf ?? clock.GetUtcNow();
+        var jobs = plan.Actions
+            .Select((a, order) => (Action: a, Order: order, At: a.Trigger is AtTimeTrigger t ? t.At.MinutesFrom(start) : 0))
+            .OrderBy(x => x.At).ThenBy(x => x.Order)
+            .SelectMany(x => (x.Action.Resources ?? new()).Where(r => r.ResourceType != ResourceType.Equipment).Select(r => (x.Action, Resource: r)));
+
+        var assignments = new List<(PlanAction Action, ResourceAssignment Resource)>();
+        var firstJob = new Dictionary<string, int>();
+        foreach (var (action, resource) in jobs)
+        {
+            var key = $"{resource.ResourceType}:{resource.ResourceId}";
+            if (!firstJob.TryGetValue(key, out var at)) { firstJob[key] = assignments.Count; assignments.Add((action, resource)); continue; }
+            if (resource.ResourceType == ResourceType.PersonnelPool && (resource.Personnel ?? 1) > (assignments[at].Resource.Personnel ?? 1))
+                assignments[at] = (assignments[at].Action, assignments[at].Resource with { Personnel = resource.Personnel });
+        }
+
+        for (var i = 0; i < assignments.Count; i++)
+        {
+            var (action, resource) = assignments[i];
+            if (resource.ResourceType != ResourceType.Vehicle || resource.Personnel is not null) continue;
+            if (await vehicleStore.GetAsync(resource.ResourceId, ct) is { } vehicle) assignments[i] = (action, resource with { Personnel = vehicle.MinimumCrew ?? 1 });
+        }
+        return assignments;
     }
 
     async Task CancelDispatchesAsync(string planId, CancellationToken ct)
