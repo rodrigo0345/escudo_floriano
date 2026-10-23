@@ -19,9 +19,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .alternatives import SAFETY_ROUNDS, WIND_ERROR_DEG, Evaluation, central_engine, evaluate, withdraw
+from .alternatives import SAFETY_ROUNDS, WIND_ERROR_DEG, Evaluation, central_engine, drop_actions, evaluate, withdraw
 from .campaign import scenario_at
-from .client import FiretraceClient
+from .client import ApiProblem, FiretraceClient
 
 log = logging.getLogger("firetrace.judge")
 
@@ -120,6 +120,31 @@ class Judge:
             log.warning("baseline %s: %d of %d wrong-wind runs did not succeed", self.baseline_id, len(shifts) - len(wrong), len(shifts))
         worst = max(range(len(wrong)), key=lambda i: wrong[i].burned_ha, default=None)
         return Verdict(forecast, wrong, {} if worst is None else {shifts[worst]: idle[worst][1]})
+
+    def keep_holds_safe(self, plan: dict[str, Any], decided_at: int, rounds: int = 2) -> tuple[int, int]:
+        """Judge a plan that now has its standby crews (``hold-*``, added after the judge) and take out the ones the fire catches. Returns (holds taken out, casualties left).
+
+        A hold does no suppression, so taking it out only sends that unit home: it never changes the fire, and one round is normally enough. Any other crew the
+        engine still finds caught is cut or dropped as ``make_safe`` does. After ``rounds`` rounds every hold that is left goes too, as the last resort.
+        """
+        taken = 0
+        verdict = self.verdict(plan, wrong_wind=False)
+        for round_ in range(rounds + 1):
+            if verdict is None:
+                raise ApiProblem(0, {"code": "no_verdict", "title": "the what-if of the plan with its standby crews did not succeed"})
+            if verdict.casualties == 0:
+                return taken, 0
+            caught = verdict.exposures()
+            holds = {str(e["actionId"]) for e in caught if str(e["actionId"]).startswith("hold-")}
+            if round_ == rounds:  # still caught after the rounds: no standby at all
+                holds = {str(a["id"]) for a in plan["actions"] if str(a["id"]).startswith("hold-")}
+            others = [e for e in caught if str(e["actionId"]) not in holds]
+            taken += drop_actions(plan, holds) if holds else 0
+            cut, gone = withdraw(plan, others, decided_at, remove_all=round_ >= 1) if others else (0, 0)
+            if not holds and not cut and not gone:
+                return taken, verdict.casualties
+            verdict = self.verdict(plan, wrong_wind=False)
+        return taken, verdict.casualties if verdict is not None else 0
 
     def make_safe(self, plan: dict[str, Any], decided_at: int, rounds: int = SAFETY_ROUNDS, *, wrong_wind: bool = True) -> tuple[Verdict | None, int, int]:
         """Judge ``plan`` and, while it predicts casualties, cut the stay of the crews caught (then drop them). Returns (last verdict, crews shortened, crews removed).
