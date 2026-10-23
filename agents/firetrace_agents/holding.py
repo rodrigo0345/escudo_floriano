@@ -87,11 +87,19 @@ def hold_idle_units(plan: dict[str, Any], clock: FireClock | HoldingClock | None
         return 0
     held = 0
     why = why if why is not None else {}
+    def trigger_minute(action: dict[str, Any]) -> float:
+        return float(((action.get("trigger") or {}).get("at") or {}).get("offsetMinutes") or 0)
+
     for action in plan["actions"]:
         if action.get("type") == "stage_resources" and not action.get("expectedDurationMinutes"):
-            start = float(((action.get("trigger") or {}).get("at") or {}).get("offsetMinutes") or 0) + max((float(r.get("etaMinutes") or 0) for r in action.get("resources") or []), default=0.0)
-            action["expectedDurationMinutes"] = max(int(run_minutes - start), 30)
-            action["holdUntil"] = {"offsetMinutes": int(run_minutes)}
+            start = trigger_minute(action) + max((float(r.get("etaMinutes") or 0) for r in action.get("resources") or []), default=0.0)
+            # held to the end of the run, unless a later order (a re-planning wave) draws on the reserve: then until that order
+            units = {str(r.get("resourceId")) for r in action.get("resources") or []}
+            later = [trigger_minute(a) for a in plan["actions"] if a is not action and trigger_minute(a) > trigger_minute(action)
+                     and units & {str(r.get("resourceId")) for r in a.get("resources") or []}]
+            until = min([float(run_minutes), *later])
+            action["expectedDurationMinutes"] = max(int(until - start), 1 if later else 30)
+            action["holdUntil"] = {"offsetMinutes": int(until)}
     if clock is None:
         why["no fire data"] = why.get("no fire data", 0) + 1
         return 0
