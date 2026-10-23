@@ -243,7 +243,8 @@ def merge_wave(plan: dict[str, Any], wave_plan: dict[str, Any], minute: int, dec
                 del action["trigger"]
         if "trigger" not in action:
             action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": minute - decided_at}}
-    units = {str(r.get("resourceId")) for a in new if a.get("type") != "stage_resources" for r in a.get("resources") or [] if r.get("resourceType") in ("vehicle", "personnel_pool")}
+    # every unit the wave gives a job, a reserve or staging point included: it leaves what it was doing (else it would hold two orders at once)
+    units = {str(r.get("resourceId")) for a in new for r in a.get("resources") or [] if r.get("resourceType") in ("vehicle", "personnel_pool")}
     # a unit that waited at a staging point is now sent somewhere: it leaves the waiting action (which goes if nobody is left in it)
     emptied: set[str] = set()
     for action in plan["actions"]:

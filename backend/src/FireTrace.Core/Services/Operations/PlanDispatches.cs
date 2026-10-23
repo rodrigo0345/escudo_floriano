@@ -9,7 +9,8 @@ namespace FireTrace.Core.Services.Operations;
 /// Os despachos que a ativação de um plano cria: um por viatura e um por grupo de pessoal, não um por cada tarefa. Um plano usa o mesmo meio em tarefas que se
 /// seguem (uma equipa ataca e depois fica em prontidão; um grupo evacua e depois ataca, quando a evacuação acaba): são um só despacho, para a primeira tarefa, e o
 /// grupo cede as pessoas que as suas tarefas pedem ao mesmo tempo (o máximo, não a soma). Esperar (estacionar, reserva, prontidão) acaba quando chega a ordem
-/// seguinte do mesmo meio. Tarefas da mesma viatura que se sobrepõem no tempo não se juntam: ficam
+/// seguinte do mesmo meio; e uma viatura só está num sítio: uma ordem dada mais tarde muda-lhe a tarefa (o que fazia acaba aí). Tarefas da mesma viatura que
+/// começam ao mesmo tempo não se juntam: ficam
 /// despachos à parte, e o despacho recusa-as por estarem repetidas; num grupo somam-se, e o despacho recusa se não houver gente que chegue. Um conflito real
 /// continua a bloquear a ativação.
 /// </summary>
@@ -56,7 +57,14 @@ public static class PlanDispatches
                 result.Add((first.Action, first.Resource with { Personnel = peak }, Stay(first.Start, first.Eta, ordered.Max(j => j.End))));
                 continue;
             }
-            // a vehicle: the tasks it chains (each starts when the one before has ended) are one dispatch; one that overlaps the chain stays apart (a real conflict)
+            // a vehicle is in one place at a time: an order given later re-tasks it (a re-planning wave redirects a crew on the road, or moves it off a quiet
+            // stretch), and what it was doing ends when that order starts. Two orders at the same moment stay a conflict.
+            for (int i = 0; i + 1 < ordered.Count; i++)
+            {
+                var later = ordered.Skip(i + 1).FirstOrDefault(j => j.Start > ordered[i].Start + SameMinute);
+                if (later.Action is not null) ordered[i] = ordered[i] with { End = Math.Min(ordered[i].End, later.Start) };
+            }
+            // the tasks it chains (each starts when the one before has ended) are one dispatch; one that overlaps the chain stays apart (a real conflict)
             var chain = new List<(PlanAction Action, ResourceAssignment Resource, double Start, double Eta, double End)> { ordered[0] };
             foreach (var job in ordered.Skip(1))
             {
