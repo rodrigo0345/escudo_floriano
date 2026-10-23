@@ -8,6 +8,7 @@ export const ORG_LOGOS = {
   gnr: '/orgs/logognrtipo.png',
   inem: '/orgs/INEM_logo.png',
   civil_protection: '/orgs/ANEPC_logo.png',
+  psp: '/orgs/logopsp.png',
 } as const;
 
 export type KnownOrgType = keyof typeof ORG_LOGOS;
@@ -41,6 +42,9 @@ export function getOrgLogo(
   if (raw === 'gnr' || raw === 'gnr_post') {
     return ORG_LOGOS.gnr;
   }
+  if (raw === 'psp' || raw === 'policia de seguranca publica' || raw === 'polícia de segurança pública') {
+    return ORG_LOGOS.psp;
+  }
   if (raw === 'inem' || raw === 'inem_base' || raw === 'hospital' || raw === 'health_centre') {
     return ORG_LOGOS.inem;
   }
@@ -54,6 +58,9 @@ export function getOrgLogo(
   }
   if (raw.includes('gnr') || raw.includes('guarda nacional republicana')) {
     return ORG_LOGOS.gnr;
+  }
+  if (raw.includes('polícia de segurança pública') || raw.includes('policia de seguranca publica') || /\bpsp\b/.test(raw)) {
+    return ORG_LOGOS.psp;
   }
   if (raw.includes('inem') || raw.includes('vmer') || raw.includes('siv') || raw.includes('médic') || raw.includes('medic')) {
     return ORG_LOGOS.inem;
