@@ -27,11 +27,12 @@ const MAX_TOP_Y = 340;
 const MAX_THUNDER_DELAY_S = 6;
 
 // Lightning ribbon budget: main channel + branches, each segment emitting a core quad and a wider glow quad (2 triangles each).
-// The fractal generator doubles the point count per level: 5 levels → 33 points on the main channel.
-const BOLT_LEVELS = 5;
+// The fractal generator doubles the point count per level: 6 levels → 65 points on the main channel (fine kinks, not a smooth tube).
+const BOLT_LEVELS = 6;
 const MAIN_POINTS = (1 << BOLT_LEVELS) + 1;
-const MAX_BRANCHES = 3;
-const BRANCH_POINTS = (1 << 3) + 1; // 9
+const MAX_BRANCHES = 6;
+const BRANCH_LEVELS = 4;
+const BRANCH_POINTS = (1 << BRANCH_LEVELS) + 1; // 17
 const BOLT_SEGMENTS = MAIN_POINTS - 1 + MAX_BRANCHES * (BRANCH_POINTS - 1);
 const BOLT_FLOATS = BOLT_SEGMENTS * 12 * 3; // per segment: core 6 verts + glow 6 verts, xyz each
 const BOLT_LIFE_S = 0.42;
@@ -94,6 +95,8 @@ export class StormLayer {
   private boltMode: 'ground' | 'cloud' = 'ground';
   private readonly groundFlash: THREE.Sprite;
   private readonly cloudFlash: THREE.Sprite;
+  /** Lights the ground (or the cloud base) around a strike, fading with distance: the strike is local, not a whole-map strobe. */
+  private readonly strikeLight: THREE.PointLight;
   private lastFlash = false;
 
   private active = false;
@@ -206,6 +209,10 @@ export class StormLayer {
     }));
     this.cloudFlash.renderOrder = 27;
     this.group.add(this.cloudFlash);
+
+    // always in the group (intensity 0 between strikes): adding and removing a light would recompile every lit material
+    this.strikeLight = new THREE.PointLight(0xc8d8ff, 0, 0, 1);
+    this.group.add(this.strikeLight);
 
     this.group.visible = false;
   }
@@ -333,16 +340,24 @@ export class StormLayer {
         this.drawBolt(camera, env, t);
         const impact = this.channel[this.channel.length - 1];
         this.groundFlash.position.copy(impact);
-        this.groundFlash.scale.setScalar(8 + t * 26);
-        (this.groundFlash.material as THREE.SpriteMaterial).opacity = env * 0.85;
+        this.groundFlash.scale.setScalar(6 + t * 16);
+        (this.groundFlash.material as THREE.SpriteMaterial).opacity = env * 0.55;
         (this.cloudFlash.material as THREE.SpriteMaterial).opacity = 0;
+        // the land around the impact lights up and falls off with distance (1 unit = 10 m: ~1 km of glow)
+        this.strikeLight.position.set(impact.x, impact.y + 30, impact.z);
+        this.strikeLight.distance = Math.max(60, radiusUnits * 2.2);
+        this.strikeLight.intensity = env * 85;
       } else {
         this.boltGeometry().setDrawRange(0, 0);
         const start = this.channel[0];
         this.cloudFlash.position.set(start.x, start.y + 6, start.z);
         this.cloudFlash.scale.setScalar(radiusUnits * 0.9 * (0.7 + t * 0.5));
-        (this.cloudFlash.material as THREE.SpriteMaterial).opacity = env * 0.9;
+        (this.cloudFlash.material as THREE.SpriteMaterial).opacity = env * 0.7;
         (this.groundFlash.material as THREE.SpriteMaterial).opacity = 0;
+        // an intra-cloud flash lights the cloud from inside and the ground only faintly
+        this.strikeLight.position.set(start.x, start.y - 10, start.z);
+        this.strikeLight.distance = Math.max(80, radiusUnits * 2.5);
+        this.strikeLight.intensity = env * 40;
       }
     } else {
       this.hideBolt();
@@ -353,6 +368,7 @@ export class StormLayer {
     this.boltGeometry().setDrawRange(0, 0);
     (this.groundFlash.material as THREE.SpriteMaterial).opacity = 0;
     (this.cloudFlash.material as THREE.SpriteMaterial).opacity = 0;
+    this.strikeLight.intensity = 0;
   }
 
   private boltGeometry(): THREE.BufferGeometry {
@@ -372,21 +388,23 @@ export class StormLayer {
       this.boltMode === 'ground' ? groundY + 0.5 : start.y - radiusUnits * 0.25,
       start.z + (rand(this.clock * 6.7 + 9.4) - 0.5) * radiusUnits * 0.3,
     );
-    const roughness = this.boltMode === 'ground' ? 0.22 : 0.16; // horizontal swing per level, as a share of segment length
+    const roughness = this.boltMode === 'ground' ? 0.3 : 0.22; // horizontal swing per level, as a share of segment length: sharp zig-zags
     this.channel = fractalBolt(start, end, BOLT_LEVELS, roughness, (seed) => rand(seed + this.clock * 3.71));
 
-    // branches: fork off the channel at coarse levels, reach out and down, and are themselves little fractal bolts
+    // branches: most fork high up (where the stepped leader spreads), reach out and down a short way, and are themselves little fractal bolts
     this.branches = [];
-    const forkCount = 1 + Math.floor(rand(this.clock * 2.17 + 5.5) * MAX_BRANCHES);
+    const forkCount = 2 + Math.floor(rand(this.clock * 2.17 + 5.5) * (MAX_BRANCHES - 1));
     for (let b = 0; b < forkCount; b++) {
-      const at = 4 + Math.floor(rand(this.clock * 4.4 + b * 7.7) * (MAIN_POINTS - 10));
+      const along = rand(this.clock * 4.4 + b * 7.7) ** 1.6; // biased towards the top of the channel
+      const at = 3 + Math.floor(along * (MAIN_POINTS - 12));
       const from = this.channel[Math.min(at, MAIN_POINTS - 2)];
+      const reach = 0.18 + rand(this.clock * 1.3 + b * 3.3) * 0.3;
       const tip = new THREE.Vector3(
-        from.x + (rand(this.clock * 6.1 + b * 2.3) - 0.3) * radiusUnits * 0.35,
-        Math.max(groundY, from.y - (from.y - end.y) * (0.45 + rand(this.clock + b) * 0.3)),
-        from.z + (rand(this.clock * 8.3 + b * 5.1) - 0.3) * radiusUnits * 0.35,
+        from.x + (rand(this.clock * 6.1 + b * 2.3) - 0.5) * radiusUnits * reach,
+        Math.max(groundY, from.y - (from.y - end.y) * (0.15 + rand(this.clock + b) * 0.3)),
+        from.z + (rand(this.clock * 8.3 + b * 5.1) - 0.5) * radiusUnits * reach,
       );
-      this.branches.push(fractalBolt(from.clone(), tip, 3, 0.24, (seed) => rand(seed + this.clock * 7.77 + b * 31)));
+      this.branches.push(fractalBolt(from.clone(), tip, BRANCH_LEVELS, 0.3, (seed) => rand(seed + this.clock * 7.77 + b * 31)));
     }
 
     this.boltLife = BOLT_LIFE_S;
@@ -450,14 +468,14 @@ export class StormLayer {
         const bright = env * returnStroke(f, t);
         const w = widthAt(f) * gain;
         quad(points[i], pointRight(points, i, this.rightA), points[i + 1], pointRight(points, i + 1, this.rightB), w, CORE, bright);
-        quad(points[i], pointRight(points, i, this.rightA), points[i + 1], pointRight(points, i + 1, this.rightB), w * 2.4, GLOW, bright * 0.75);
+        quad(points[i], pointRight(points, i, this.rightA), points[i + 1], pointRight(points, i + 1, this.rightB), w * 3.0, GLOW, bright * 0.38);
       }
     };
 
     const r = boltWidth(this.channel);
-    emit(this.channel, (f) => r * (0.45 + 0.75 * Math.sin(Math.PI * Math.min(1, f * 1.15)) ** 0.7), 1);
+    emit(this.channel, (f) => r * (0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, f * 1.15)) ** 0.7), 1);
     for (let b = 0; b < this.branches.length; b++) {
-      emit(this.branches[b], (f) => r * 0.5 * (1 - f * 0.7), 0.75);
+      emit(this.branches[b], (f) => r * 0.45 * (1 - f * 0.8), 0.6); // thinner and fainter towards their tips
     }
 
     this.boltGeometry().setDrawRange(0, v / 3);
@@ -492,10 +510,13 @@ export class StormLayer {
   }
 }
 
-/** Half-width of the bolt's core ribbon: a fraction of the channel's length (a 2 km drop draws a ~50 m channel). */
+/**
+ * Half-width of the bolt's white core: thin, a fraction of the channel's length (a 2 km drop draws a ~20 m core), with a much
+ * wider but faint blue glow around it. A fat core read as a solid blue band from above instead of a crack of light.
+ */
 function boltWidth(channel: THREE.Vector3[]): number {
   const length = channel[0].distanceTo(channel[channel.length - 1]);
-  return Math.max(1.4, Math.min(5.5, length * 0.024));
+  return Math.max(0.8, Math.min(2.0, length * 0.011));
 }
 
 /**
@@ -534,7 +555,7 @@ function fractalBolt(from: THREE.Vector3, to: THREE.Vector3, levels: number, rou
       next.push(mid, b);
     }
     points = next;
-    magnitude *= 0.62; // roughness decay: big swings high up, fine detail low down
+    magnitude *= 0.7; // roughness decay: big swings high up, still visible kinks at the finest level (lower made a smooth tube)
   }
   return points;
 }

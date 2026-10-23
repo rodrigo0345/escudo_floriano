@@ -20,7 +20,10 @@ export type IconName =
   | 'clock'
   | 'flame'
   | 'info'
-  | 'keyboard';
+  | 'keyboard'
+  | 'chevron'
+  | 'sound'
+  | 'soundOff';
 
 const PATHS: Record<IconName, string> = {
   close: 'M6 6l12 12M18 6L6 18',
@@ -42,6 +45,9 @@ const PATHS: Record<IconName, string> = {
   flame: 'M12 21c-3.9 0-6.5-2.6-6.5-6 0-3.6 3-5.4 3.8-9 2.2 1.4 3.2 3.6 3.2 5.5 1-.6 1.7-1.8 1.9-3 2 1.6 4.1 4 4.1 6.5 0 3.4-2.6 6-6.5 6z',
   info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v6M12 7.5V8',
   keyboard: 'M3 7h18v10H3zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8',
+  chevron: 'M6 9l6 6 6-6',
+  sound: 'M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10',
+  soundOff: 'M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 10l4 4M20 10l-4 4',
 };
 
 export function Icon({ name, size = 14, style, title }: { name: IconName; size?: number; style?: CSSProperties; title?: string }) {

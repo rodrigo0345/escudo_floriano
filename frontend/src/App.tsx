@@ -48,9 +48,10 @@ function Workspace() {
 }
 
 export function App() {
+  const cleanView = useAppStore((s) => s.cleanView);
   return (
     <EngineProvider>
-      <div className={styles.app}>
+      <div className={`${styles.app} ${cleanView ? styles.cleanView : ''}`}>
         <TopBar />
         <div className={styles.main}>
           <Viewport />

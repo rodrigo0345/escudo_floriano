@@ -9,29 +9,30 @@ import { useAppStore } from '@/store/appStore';
 
 import styles from './viewport.module.css';
 
-/**
- * Weather card over the map: wind arrow (rotates with the camera), speed and gust, bearing,
- * temperature, air humidity and fine-fuel moisture. Values follow the playback minute; only
- * the arrow rotation is driven per frame (straight on the DOM, no React re-render).
- */
-const COLLAPSED_KEY = 'firetrace.weatherHud.collapsed';
+const OPEN_KEY = 'firetrace.weatherHud.open';
 
-/** The collapsed state is a per-viewer convenience: it is remembered when the browser lets it, and the card works without it. */
-function readCollapsed(): boolean {
+/** Open or closed is a per-viewer convenience: closed by default, remembered when the browser lets it, and the card works without it. */
+function readOpen(): boolean {
   try {
-    return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+    return window.localStorage.getItem(OPEN_KEY) === '1';
   } catch {
     return false;
   }
 }
 
+/**
+ * Weather card over the map. Closed (the default) it is one line: wind arrow (rotates with the camera), speed, where it blows from,
+ * air temperature and humidity, and a dot when the fire risk is high. Open, it adds the alerts (rain, a coming wind shift, smoke,
+ * risk), gusts, fine-fuel moisture and the source. Values follow the playback minute; only the arrow rotation is driven per frame
+ * (straight on the DOM, no React re-render).
+ */
 export function WeatherHud() {
   const engine = useEngine();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [open, setOpen] = useState(readOpen);
   const toggle = () =>
-    setCollapsed((was) => {
+    setOpen((was) => {
       try {
-        window.localStorage.setItem(COLLAPSED_KEY, was ? '0' : '1');
+        window.localStorage.setItem(OPEN_KEY, was ? '0' : '1');
       } catch {
         /* not remembered */
       }
@@ -42,105 +43,132 @@ export function WeatherHud() {
   const scenarioId = useAppStore((s) => s.scenarioId);
   const smokeInfo = useAppStore((s) => s.smokeInfo);
   const arrow = useRef<SVGGElement>(null);
+  const north = useRef<SVGTextElement>(null);
   const windToDeg = useRef(0);
 
   const weather = useMemo(() => (run ? sampleWeatherAt(run.weather, run.startMs, t) : null), [run, t]);
-  const upcomingShift = useMemo(
-    () => (run ? findUpcomingWeatherShift(run.weather, run.startMs, t) : null),
-    [run, t],
-  );
+  const upcomingShift = useMemo(() => (run ? findUpcomingWeatherShift(run.weather, run.startMs, t) : null), [run, t]);
   const visibilityM = useMemo(() => groundVisibilityFromSmoke(smokeInfo), [smokeInfo]);
   windToDeg.current = weather ? (weather.windFromDeg + 180) % 360 : 0;
 
   useEffect(() => {
     if (!engine) return;
     return engine.onFrame((_ts, azimuth) => {
+      // both turn with the camera: the arrow points where the wind blows on screen, the N sits where north is on screen (kept upright)
       arrow.current?.setAttribute('transform', `rotate(${windToDeg.current - (azimuth * 180) / Math.PI})`);
+      north.current?.setAttribute('x', (21 * Math.sin(-azimuth)).toFixed(2));
+      north.current?.setAttribute('y', (-21 * Math.cos(-azimuth) + 3).toFixed(2));
     });
   }, [engine]);
 
   if (!weather) return null;
   const to = (weather.windFromDeg + 180) % 360;
   const color = windColorCss(weather.windKmh);
-
   const risk = fireRiskLevel(weather);
+  const riskLabel = risk === 'extreme' ? 'Risco extremo' : risk === 'high' ? 'Risco elevado' : null;
+  const label = open ? 'Esconder detalhes da meteorologia' : 'Mostrar detalhes da meteorologia';
+
   return (
-    <div className={`${styles.hud} ${collapsed ? styles.hudCollapsed : ''}`}>
-      <button
-        className={styles.hudToggle}
-        onClick={toggle}
-        aria-label={collapsed ? 'Mostrar as condições meteorológicas' : 'Esconder as condições meteorológicas'}
-        title={collapsed ? 'Mostrar as condições meteorológicas' : 'Esconder as condições meteorológicas'}
-      >
-        {collapsed ? '▸' : '◂'}
-      </button>
-      <svg className={styles.dial} viewBox="-32 -32 64 64" aria-hidden="true">
-        <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".25" />
-        <text y="-19" textAnchor="middle" fontSize="8" fill="currentColor" opacity=".7">
-          N
-        </text>
-        <g ref={arrow} style={{ color }}>
-          <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
-        </g>
-      </svg>
-      <div className={styles.hudMain}>
-        <b style={{ color }}>
-          {Math.round(weather.windKmh)} km/h
-          {collapsed ? <small className={styles.hudChip}> · {Math.round(weather.tempC)} °C · {Math.round(weather.humidityPct)} %{risk === 'extreme' ? ' · risco extremo' : risk === 'high' ? ' · risco elevado' : ''}</small> : null}
-        </b>
-        {collapsed ? null : <small>
-          de {compass(weather.windFromDeg)} · {Math.round(weather.windFromDeg)}° (sopra para {compass(to)})
-        </small>}
-        {collapsed ? null : <small>
-          {weather.gustKmh ? `rajadas ${Math.round(weather.gustKmh)} km/h` : ''}
-          {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? ` · ${Math.round(weather.cloudCoverPct)}% nuvens` : ''}
-          {weather.isDay != null ? ` · ${weather.isDay ? 'dia' : 'noite'}` : ''}
-        </small>}
-      </div>
-      {collapsed ? null : <>
-      {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
-        <div className={styles.hudPrecip}>
-          <Icon name="rain" /> Chuva: <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
-        </div>
-      ) : null}
-      {upcomingShift && (
-        <div
-          className={styles.upcomingShift}
-          title={`Prevista rotação de ${upcomingShift.dirChangeDeg}° e variação de ${upcomingShift.speedDeltaKmh > 0 ? '+' : ''}${upcomingShift.speedDeltaKmh} km/h ao minuto ${upcomingShift.atMinute}`}
-        >
-          <span className={styles.shiftIcon}>
-            <Icon name="clock" />
+    <div className={`${styles.hud} ${open ? styles.hudOpen : ''}`}>
+      <button type="button" className={styles.hudHead} onClick={toggle} aria-expanded={open} aria-label={label} title={label}>
+        <svg className={styles.dial} viewBox="-32 -32 64 64" role="img" aria-label={`Vento de ${compass(weather.windFromDeg)}, a soprar para ${compass(to)}`}>
+          <title>{`Vento a soprar para ${compass(to)}. A seta e o N rodam com o mapa: o N marca o norte no ecrã.`}</title>
+          <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".22" />
+          <text ref={north} y="-18" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" opacity=".75">
+            N
+          </text>
+          <g ref={arrow} style={{ color }}>
+            <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
+          </g>
+        </svg>
+        <span className={styles.hudWind}>
+          <b style={{ color }}>
+            {Math.round(weather.windKmh)}
+            <small> km/h</small>
+          </b>
+          <small>
+            de {compass(weather.windFromDeg)} → {compass(to)}
+          </small>
+        </span>
+        <span className={styles.hudQuick}>
+          <span title="Temperatura do ar">
+            <Icon name="thermometer" size={12} /> {Math.round(weather.tempC)}°
           </span>
-          <span>{upcomingShift.label}</span>
-        </div>
-      )}
-      {visibilityM != null && visibilityM < 4000 ? (
-        <div className={styles.hudVisibility} title="Visibilidade reduzida ao nível do solo devido à propagação de fumo">
-          <Icon name="cloud" /> Visibilidade: <b>{(visibilityM / 1000).toFixed(1)} km</b> (fumo)
+          <span title="Humidade do ar">
+            <Icon name="humidity" size={12} /> {Math.round(weather.humidityPct)}%
+          </span>
+        </span>
+        {riskLabel && !open ? <i className={`${styles.riskDot} ${risk === 'extreme' ? styles.riskDotExtreme : ''}`} title={riskLabel} /> : null}
+        <span className={styles.hudChevron} aria-hidden="true">
+          <Icon name="chevron" size={14} />
+        </span>
+      </button>
+
+      {open ? (
+        <div className={styles.hudBody}>
+          {risk === 'extreme' ? (
+            <div className={`${styles.hudAlert} ${styles.alertExtreme}`} title="Regra dos 30-30-30: temperatura ≥ 30 °C, humidade ≤ 30 %, vento ou rajadas ≥ 30 km/h">
+              <Icon name="alert" size={12} /> <b>Risco extremo</b> · regra 30-30-30
+            </div>
+          ) : risk === 'high' ? (
+            <div className={`${styles.hudAlert} ${styles.alertHigh}`} title="Calor e ar seco: os combustíveis finos ardem com mais facilidade (T ≥ 30 °C · HR ≤ 30 %)">
+              <Icon name="alert" size={12} /> <b>Risco elevado</b> · calor e seca
+            </div>
+          ) : null}
+          {upcomingShift ? (
+            <div
+              className={`${styles.hudAlert} ${styles.alertShift}`}
+              title={`Rotação prevista de ${upcomingShift.dirChangeDeg}° e ${upcomingShift.speedDeltaKmh > 0 ? '+' : ''}${upcomingShift.speedDeltaKmh} km/h ao minuto ${upcomingShift.atMinute}`}
+            >
+              <Icon name="clock" size={12} /> {upcomingShift.label}
+            </div>
+          ) : null}
+          {weather.precipitationMmH != null && weather.precipitationMmH > 0 ? (
+            <div className={`${styles.hudAlert} ${styles.alertRain}`}>
+              <Icon name="rain" size={12} /> Chuva <b>{weather.precipitationMmH.toFixed(1)} mm/h</b>
+            </div>
+          ) : null}
+          {visibilityM != null && visibilityM < 4000 ? (
+            <div className={`${styles.hudAlert} ${styles.alertSmoke}`} title="Visibilidade ao nível do solo reduzida pelo fumo">
+              <Icon name="cloud" size={12} /> Visibilidade <b>{(visibilityM / 1000).toFixed(1)} km</b> · fumo
+            </div>
+          ) : null}
+
+          <dl className={styles.hudRows}>
+            <dt>Vento</dt>
+            <dd>
+              {Math.round(weather.windFromDeg)}° · sopra para {compass(to)}
+            </dd>
+            {weather.gustKmh ? (
+              <>
+                <dt>Rajadas</dt>
+                <dd>{Math.round(weather.gustKmh)} km/h</dd>
+              </>
+            ) : null}
+            <dt title="Temperatura do ar do modelo meteorológico; não é a temperatura do fogo">Temp. do ar</dt>
+            <dd>{Math.round(weather.tempC)} °C</dd>
+            <dt>Humidade do ar</dt>
+            <dd>
+              <i className={styles.bar}>
+                <i style={{ width: `${Math.min(weather.humidityPct, 100)}%`, background: humidityColorVar(weather.humidityPct) }} />
+              </i>
+              {Math.round(weather.humidityPct)} %
+            </dd>
+            <dt title="Humidade do combustível morto fino em equilíbrio com o ar: quanto mais baixa, mais depressa arde">Comb. fino</dt>
+            <dd>{weather.fineFuelMoisturePct != null ? `${weather.fineFuelMoisturePct.toFixed(1)} %` : '—'}</dd>
+            {weather.cloudCoverPct != null && weather.cloudCoverPct > 25 ? (
+              <>
+                <dt>Nuvens</dt>
+                <dd>{Math.round(weather.cloudCoverPct)} %</dd>
+              </>
+            ) : null}
+          </dl>
+          <small className={styles.hudSource}>
+            {scenarioId === 'custom' ? 'Definida no cenário' : 'ERA5 / Open-Meteo'}
+            {weather.isDay != null ? ` · ${weather.isDay ? 'dia' : 'noite'}` : ''}
+          </small>
         </div>
       ) : null}
-      {fireRiskLevel(weather) === 'extreme' ? (
-        <div className={styles.extremeAlert} title="Condições meteorológicas extremas de propagação de incêndio rural (Regra dos 30-30-30: Temp ≥ 30°C, Humidade ≤ 30%, Vento/Rajadas ≥ 30 km/h)">
-          <Icon name="alert" /> <b>RISCO EXTREMO · Regra 30-30-30</b> (T≥30°C · HR≤30% · V≥30 km/h)
-        </div>
-      ) : fireRiskLevel(weather) === 'high' ? (
-        <div className={styles.highRiskChip} title="Calor excessivo e ar seco aumentam a combustibilidade dos combustíveis finos (T ≥ 30°C · HR ≤ 30%)">
-          <Icon name="alert" /> <span>Risco Elevado · Calor e Seca</span>
-        </div>
-      ) : null}
-      <div className={styles.hudRows}>
-        <span title="Temperatura do ar do modelo meteorológico; não é a temperatura do fogo">Temp. do ar</span>
-        <b>{Math.round(weather.tempC)} °C</b>
-        <span>Humidade do ar</span>
-        <b>{Math.round(weather.humidityPct)} %</b>
-        <i className={styles.bar}>
-          <i style={{ width: `${Math.min(weather.humidityPct, 100)}%`, background: humidityColorVar(weather.humidityPct) }} />
-        </i>
-        <span title="Humidade do combustível morto fino em equilíbrio com o ar: quanto mais baixa, mais depressa arde">Comb. fino</span>
-        <b>{weather.fineFuelMoisturePct != null ? `${weather.fineFuelMoisturePct.toFixed(1)} %` : '—'}</b>
-      </div>
-      <small className={styles.hudSource}>{scenarioId === 'custom' ? 'temperatura do ar definida no cenário' : 'temperatura do ar · ERA5 / Open-Meteo'}</small>
-      </>}
     </div>
   );
 }

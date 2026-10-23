@@ -6,6 +6,24 @@
   overflow: hidden;
 }
 
+/* map-only view (key H): the map takes the whole window; bars, side panel and workspace step aside */
+.cleanView {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.cleanView > :not(.main) {
+  display: none !important;
+}
+
+.cleanView > .main {
+  grid-row: 1;
+  grid-template-columns: 1fr;
+}
+
+.cleanView > .main > :not(:first-child) {
+  display: none !important;
+}
+
 .main {
   grid-row: 3;
   position: relative;
@@ -83,6 +101,20 @@
   background: var(--panel2);
   border: 1px solid var(--line);
   color: var(--fg);
+}
+
+/* the one location on offer: a label, not a one-option picker */
+.locationName {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
 }
 
 .period {

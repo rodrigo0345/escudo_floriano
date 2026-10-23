@@ -39,6 +39,20 @@
   align-items: center;
 }
 
+.rowLink {
+  cursor: pointer;
+  margin: 0 -6px;
+  padding-left: 6px;
+  padding-right: 6px;
+  border-radius: 4px;
+}
+
+.rowLink:hover,
+.rowLink:focus-visible {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  outline: none;
+}
+
 .tag {
   padding: 1px 8px;
   border-radius: var(--radius);

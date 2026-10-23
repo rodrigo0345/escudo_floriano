@@ -81,6 +81,8 @@ export interface AppState {
   windDensity: number;
   pickIgnitionSlot: 0 | 1 | null;
   helpOpen: boolean;
+  /** Map-only view (key H): no panels, bars, cards or map icons — the terrain, the fire and the smoke. */
+  cleanView: boolean;
   origin: RescueOrigin;
   hint: string;
   banner: Banner | null;
@@ -130,6 +132,7 @@ export interface AppState {
   setWindDensity: (density: number) => void;
   setPickIgnitionSlot: (slot: 0 | 1 | null) => void;
   setHelpOpen: (open: boolean) => void;
+  setCleanView: (on: boolean) => void;
   setOrigin: (origin: RescueOrigin) => void;
   setHint: (hint: string) => void;
   showBanner: (text: string, kind?: BannerKind) => void;
@@ -175,6 +178,7 @@ export const useAppStore = create<AppState>((set) => ({
   windDensity: 50,
   pickIgnitionSlot: null,
   helpOpen: false,
+  cleanView: false,
   origin: 'fire_brigade',
   hint: '',
   banner: null,
@@ -258,6 +262,7 @@ export const useAppStore = create<AppState>((set) => ({
   setWindDensity: (windDensity: number) => set({ windDensity }),
   setPickIgnitionSlot: (pickIgnitionSlot) => set({ pickIgnitionSlot }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
+  setCleanView: (cleanView) => set({ cleanView }),
   setOrigin: (origin) => set({ origin }),
   setHint: (hint) => set({ hint }),
   showBanner: (text, kind = 'error') => set({ banner: { text, kind } }),

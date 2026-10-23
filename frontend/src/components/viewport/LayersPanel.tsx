@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { WaterPointKind } from '@/api';
+import { Icon } from '@/components/common/Icon';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
 import { useEngine, useEngineContext, useWorld } from '@/engine/EngineContext';
@@ -25,6 +26,17 @@ const VIEW_MODES: { value: ViewModeName; label: string }[] = [
 const ELEVATION_GRADIENT = 'linear-gradient(90deg,#669e66,#9ec273,#dbd68c,#cca673,#ad8c73,#ebe6e0)';
 const SMOKE_LEGEND = ['neblina', 'reduzida', 'fraca', 'densa'];
 const WIND_LEGEND = [5, 15, 30, 50].map((kmh) => ({ label: `${kmh} km/h`, color: windColorCss(kmh) }));
+
+const VISUAL_ONLY = 'Ilustrativo: não entra na simulação.';
+
+/** A small "i" that explains on hover (or focus) instead of a line of text under the control. */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className={styles.infoTip} title={text} aria-label={text} role="img" tabIndex={0}>
+      <Icon name="info" size={12} />
+    </span>
+  );
+}
 
 const OPEN_KEY = 'firetrace.layersOpen';
 
@@ -136,30 +148,40 @@ function CityBox() {
   return (
     <section className={styles.layerSection}>
       <div className={styles.sectionHead}>
-        <b className={styles.sectionTitle}>Cidade 3D</b>
-        <span className={styles.sectionMeta}>{cityEnabled ? (live ? 'ao vivo' : 'tiles locais') : 'desligada'}</span>
+        <b className={styles.sectionTitle}>
+          Cidade 3D{' '}
+          <InfoTip
+            text={
+              live
+                ? `Ao vivo: a chave não é guardada; cada ligação é uma sessão paga (~0,006 $), hoje ${budget.used}/${budget.limit}.`
+                : `${manifest?.source ?? 'Cópia local'} · ${((manifest?.bytes ?? 0) / 1e9).toFixed(1)} GB · ${manifest ? new Date(manifest.fetchedAt).toLocaleDateString('pt-PT') : ''}. Menos nítida de perto.`
+            }
+          />
+        </b>
+        <span className={styles.sectionMeta}>{cityEnabled ? (live ? 'ao vivo' : 'cópia local') : 'desligada'}</span>
       </div>
-      {manifest ? (
-        <SegmentedControl
-          options={[
-            { value: 'live', label: 'Ao vivo (Google)' },
-            { value: 'local', label: 'Cópia local' },
-          ]}
-          value={live ? 'live' : 'local'}
-          onChange={(v) => {
-            setCityEnabled(false);
-            setCitySource(v as CitySource);
-          }}
-        />
+      {manifest && !cityEnabled ? (
+        <div className={styles.citySeg}>
+          <SegmentedControl
+            options={[
+              { value: 'live', label: 'Ao vivo' },
+              { value: 'local', label: 'Cópia local' },
+            ]}
+            value={live ? 'live' : 'local'}
+            onChange={(v) => {
+              setCityEnabled(false);
+              setCitySource(v as CitySource);
+            }}
+          />
+        </div>
       ) : null}
       {cityEnabled ? (
         <>
-          <label className={styles.overlayRow}>
-            <input type="checkbox" checked onChange={() => setCityEnabled(false)} />
-            <span>Cidade 3D ligada (desligar)</span>
-          </label>
           <label className={styles.cityRow}>
-            <span className={styles.densityLabel}>Altura {trim > 0 ? '+' : ''}{trim} m</span>
+            <span className={styles.densityLabel}>
+              Altura {trim > 0 ? '+' : ''}
+              {trim} m <InfoTip text="Ajuste se os edifícios flutuam ou afundam no terreno." />
+            </span>
             <input
               type="range"
               className={styles.densitySlider}
@@ -173,36 +195,29 @@ function CityBox() {
               }}
             />
           </label>
-          <span className={styles.sectionNote}>se os edifícios flutuam ou afundam no terreno, ajuste a altura</span>
+          <button className={styles.cityButton} onClick={() => setCityEnabled(false)}>
+            Desligar
+          </button>
         </>
       ) : live ? (
-        <>
+        <div className={styles.cityConnect}>
           <input
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="Chave Google Map Tiles (não é guardada)"
+            placeholder="Chave Google Map Tiles"
             value={typedKey}
             onChange={(e) => setTypedKey(e.target.value)}
             className={styles.cityKey}
           />
           <button className="primary" disabled={!typedKey.trim() || budget.used >= budget.limit} onClick={switchOn}>
-            Ligar cidade 3D
+            Ligar
           </button>
-          <span className={styles.sectionNote}>
-            A chave fica só em memória e desaparece ao desligar ou recarregar. Cada ligação abre uma sessão paga (cerca de 0,006 $); hoje {budget.used}/{budget.limit}.
-            Os tiles carregam por zonas e ficam mais nítidos ao aproximar.
-          </span>
-        </>
+        </div>
       ) : (
-        <>
-          <button className="primary" onClick={switchOn}>
-            Ligar cidade 3D (cópia local)
-          </button>
-          <span className={styles.sectionNote}>
-            {manifest?.source} · {((manifest?.bytes ?? 0) / 1e9).toFixed(1)} GB · obtido a {manifest ? new Date(manifest.fetchedAt).toLocaleDateString('pt-PT') : ''}. Menos nítida de perto.
-          </span>
-        </>
+        <button className={`primary ${styles.cityButton}`} onClick={switchOn}>
+          Ligar cidade 3D
+        </button>
       )}
     </section>
   );
@@ -229,23 +244,22 @@ function OverlayBox() {
         <span className={styles.sectionMeta}>camadas</span>
       </div>
       <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow} title="Aproximação visual ilustrativa gerada por partículas GPU; sem massa nem dinâmica real sobre a propagação do fogo">
+        <label className={styles.overlayRow}>
           <input type="checkbox" checked={smokeEnabled} onChange={(e) => setSmokeEnabled(e.target.checked)} />
           <span>Fumo</span>
-          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
+          <InfoTip text={`${VISUAL_ONLY} Estradas sem visibilidade a castanho.`} />
         </label>
         {smokeEnabled ? (
           <div className={styles.overlayLegend}>
             <LegendDots items={SMOKE_LEGEND.map((label, i) => ({ label, color: `rgba(${190 - i * 38},${185 - i * 41},${175 - i * 41},${0.25 + i * 0.22})` }))} />
-            <span className={styles.legendNote}>estradas sem visibilidade a castanho</span>
           </div>
         ) : null}
       </div>
       <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow} title="Depois das chamas: fumo fino na floresta, brasas e fumo leve no mato, cinza levada pelo vento nos campos, colunas de fumo escuro nas casas. Desvanece com o tempo.">
+        <label className={styles.overlayRow}>
           <input type="checkbox" checked={aftermathEnabled} onChange={(e) => setAftermathEnabled(e.target.checked)} />
           <span>Rescaldo</span>
-          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
+          <InfoTip text={`Brasas, cinza e fumo depois das chamas. ${VISUAL_ONLY}`} />
         </label>
       </div>
       <div className={styles.toggleGroup}>
@@ -270,34 +284,48 @@ function OverlayBox() {
               />
               <span className={styles.densityValue}>{windDensity}%</span>
             </div>
-            <span className={styles.legendNote}>campo com concentração e deflexão junto ao fogo</span>
           </div>
         ) : null}
       </div>
       <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow} title="A faixa p10–p90 do ensemble: os cenários otimista e pessimista da propagação">
+        <div className={styles.overlayRow}>
+          <label className={styles.overlayLabel}>
+            <input type="checkbox" checked={cloudsEnabled} onChange={(e) => setCloudsEnabled(e.target.checked)} />
+            <span>Nuvens 3D</span>
+          </label>
+          {cloudsEnabled ? (
+            <button
+              type="button"
+              className={`${styles.soundToggle} ${thunderEnabled ? styles.soundToggleOn : ''}`}
+              onClick={() => setThunderEnabled(!thunderEnabled)}
+              aria-pressed={thunderEnabled}
+              title={thunderEnabled ? 'Som de trovão ligado (clique para silenciar). Começa após o primeiro clique na página.' : 'Ligar o som de trovão'}
+            >
+              <Icon name={thunderEnabled ? 'sound' : 'soundOff'} size={13} />
+              <span>Trovão</span>
+            </button>
+          ) : null}
+          <InfoTip text={`Trovoada com relâmpagos e rajadas. ${VISUAL_ONLY}`} />
+        </div>
+      </div>
+      <div className={styles.toggleGroup}>
+        <label className={styles.overlayRow}>
           <input type="checkbox" checked={ensembleEnabled} onChange={(e) => setEnsembleEnabled(e.target.checked)} />
-          <span>Incerteza (ensemble)</span>
+          <span>Melhor e pior cenário</span>
+          <InfoTip text="Até onde o fogo chega no melhor e no pior caso, entre várias simulações com pequenas variações." />
         </label>
         {ensembleEnabled ? (
           <div className={styles.overlayLegend}>
-            {/* `hasSpread` is a mutable field on the layer, so it cannot drive a re-render: keep the legend
-                descriptive instead of printing a value that would stay stale until something else renders. */}
-            <span className={styles.legendNote}>Incerteza p10–p90 · o p90 é a mancha pessimista, o p10 a otimista</span>
+            {/* the p10 (optimistic) dashed ring and the p90 (pessimistic) translucent area, in ensembleLayer's colours */}
+            <div className={styles.rangeLegend}>
+              <span>
+                <i className={styles.swatchBest} /> melhor caso
+              </span>
+              <span>
+                <i className={styles.swatchWorst} /> pior caso
+              </span>
+            </div>
           </div>
-        ) : null}
-      </div>
-      <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow} title="Uma célula de cumulonimbus desloca-se com o vento da trovoada, com um bigode de nuvem, relâmpagos e o anel de rajada do outflow à superfície">
-          <input type="checkbox" checked={cloudsEnabled} onChange={(e) => setCloudsEnabled(e.target.checked)} />
-          <span>Nuvens 3D</span>
-          <span className={styles.disclaimerTag} title="Aproximação visual (partículas GPU)">estimativa visual</span>
-        </label>
-        {cloudsEnabled ? (
-          <label className={styles.overlayRow} title="Trovão sintetizado a partir do relâmpago, com o atraso do som pela distância. Só começa depois de interagir com a página (política de autoplay do browser).">
-            <input type="checkbox" checked={thunderEnabled} onChange={(e) => setThunderEnabled(e.target.checked)} />
-            <span>Som de trovão</span>
-          </label>
         ) : null}
       </div>
     </section>
@@ -309,6 +337,7 @@ function PlanBox() {
   const world = useWorld();
   const plan = useAppStore((s) => s.activePlan);
   const [, redraw] = useState(0);
+  const [open, setOpen] = useState(false); // closed by default: the legend is long and the map is what matters
 
   useEffect(() => world?.plan.subscribe(() => redraw((n) => n + 1)), [world]);
 
@@ -316,15 +345,24 @@ function PlanBox() {
   const kinds = (Object.keys(PLAN_KINDS) as PlanKind[]).filter((k) => world.plan.counts[k]);
   if (!kinds.length) return null;
   const total = kinds.reduce((sum, k) => sum + (world.plan.counts[k] ?? 0), 0);
+  const label = open ? 'Esconder a legenda do plano' : 'Mostrar a legenda do plano';
   return (
     <section className={styles.layerSection}>
-      <div className={styles.sectionHead}>
-        <b className={styles.sectionTitle}>Plano {plan.variant ?? ''} dos agentes</b>
+      <div className={`${styles.sectionHead} ${open ? '' : styles.sectionHeadClosed}`}>
+        <b className={styles.sectionTitle}>
+          Plano {plan.variant ?? ''} dos agentes <InfoTip text="Passe o rato sobre um elemento para ver a ação e a razão do agente." />
+        </b>
         <span className={styles.sectionMeta}>{total} elementos</span>
+        <button type="button" className={styles.sectionToggle} onClick={() => setOpen(!open)} aria-expanded={open} aria-label={label} title={label}>
+          {open ? '−' : '+'}
+        </button>
       </div>
-      <label className={styles.waterKind}>
+      {open ? (
+        <>
+      <label className={styles.overlayRow}>
         <input type="checkbox" checked={world.plan.isOnlyActive()} onChange={(e) => world.plan.setOnlyActive(e.target.checked)} />
-        <span>Só o que está a decorrer no minuto da linha do tempo</span>
+        <span>Só o que decorre agora</span>
+        <InfoTip text="Mostra só as ações em curso no minuto da linha do tempo." />
       </label>
       {kinds.map((k) => (
         <label className={styles.waterKind} key={k}>
@@ -341,7 +379,8 @@ function PlanBox() {
           <small>{world.plan.counts[k]}</small>
         </label>
       ))}
-      <span className={styles.sectionNote}>passe o rato sobre um elemento para ver a ação e a razão do agente</span>
+        </>
+      ) : null}
     </section>
   );
 }
@@ -359,7 +398,6 @@ function BaseLayerLegend() {
           <b className={styles.sectionTitle}>{world?.terrain.sourceLabel ?? 'Satélite'}</b>
           <span className={styles.sectionMeta}>base</span>
         </div>
-        <span className={styles.sectionNote}>árvores, plantações, caminhos e edifícios visíveis</span>
       </section>
     );
   }
@@ -368,7 +406,9 @@ function BaseLayerLegend() {
     return (
       <section className={styles.layerSection}>
         <div className={styles.sectionHead}>
-          <b className={styles.sectionTitle}>Topografia</b>
+          <b className={styles.sectionTitle}>
+            Topografia <InfoTip text="Curvas de nível de 20 m (mestras de 100 m) e relevo sombreado." />
+          </b>
           <span className={styles.sectionMeta}>elevação</span>
         </div>
         <div className={styles.ramp} style={{ background: ELEVATION_GRADIENT }} />
@@ -376,7 +416,6 @@ function BaseLayerLegend() {
           <span>{min != null ? `${Math.round(min)} m` : ''}</span>
           <span>{max != null ? `${Math.round(max)} m` : ''}</span>
         </div>
-        <span className={styles.sectionNote}>curvas de nível de 20 m (mestras de 100 m) e relevo sombreado</span>
       </section>
     );
   }
@@ -386,7 +425,9 @@ function BaseLayerLegend() {
   return (
     <section className={styles.layerSection}>
       <div className={styles.sectionHead}>
-        <b className={styles.sectionTitle}>Vegetação</b>
+        <b className={styles.sectionTitle}>
+          Vegetação <InfoTip text="Eucaliptal estimado por fenologia (Sentinel-2): provável, sem confirmação no terreno." />
+        </b>
         <span className={styles.sectionMeta}>{rows.length} classes</span>
       </div>
       {rows.map((k) => (
@@ -396,7 +437,6 @@ function BaseLayerLegend() {
           <small>{(k.sharePct ?? 0).toFixed(1)}%</small>
         </div>
       ))}
-      <span className={styles.sectionNote}>eucaliptal por fenologia (Sentinel-2): provável, sem verdade de terreno</span>
     </section>
   );
 }
@@ -405,6 +445,7 @@ function WaterBox() {
   const world = useWorld();
   const data = useAppStore((s) => s.data);
   const [visible, setVisible] = useState<Partial<Record<WaterPointKind, boolean>>>({});
+  const [open, setOpen] = useState(false); // closed by default, like the plan's legend
 
   useEffect(() => {
     setVisible(Object.fromEntries((Object.keys(WATER_KINDS) as WaterPointKind[]).map((k) => [k, WATER_KINDS[k].on])));
@@ -417,13 +458,19 @@ function WaterBox() {
   const trucks = data.waterPoints.filter((p) => p.truckAccessible).length;
   const total = kinds.reduce((sum, k) => sum + (counts[k] ?? 0), 0);
 
+  const label = open ? 'Esconder os tipos de ponto de água' : 'Mostrar os tipos de ponto de água';
   return (
     <section className={styles.layerSection}>
-      <div className={styles.sectionHead}>
-        <b className={styles.sectionTitle}>Água para combate</b>
+      <div className={`${styles.sectionHead} ${open ? '' : styles.sectionHeadClosed}`}>
+        <b className={styles.sectionTitle}>
+          Água para combate <InfoTip text={`${trucks} acessíveis a autotanque. Passe o rato sobre um ponto para ver o detalhe.`} />
+        </b>
         <span className={styles.sectionMeta}>{total} pontos</span>
+        <button type="button" className={styles.sectionToggle} onClick={() => setOpen(!open)} aria-expanded={open} aria-label={label} title={label}>
+          {open ? '−' : '+'}
+        </button>
       </div>
-      {kinds.map((k) => (
+      {open && kinds.map((k) => (
         <label className={styles.waterKind} key={k}>
           <input
             type="checkbox"
@@ -438,7 +485,6 @@ function WaterBox() {
           <small>{counts[k]}</small>
         </label>
       ))}
-      <span className={styles.sectionNote}>{trucks} acessíveis a autotanque · passe o rato sobre um ponto para ver o detalhe</span>
     </section>
   );
 }

@@ -16,8 +16,26 @@ export function CardGrid({ children }: { children: ReactNode }) {
   return <div className={styles.cards}>{children}</div>;
 }
 
-export function Row({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={`${styles.row} ${className ?? ''}`}>{children}</div>;
+/** A label/value row; with `onClick` it is a button (keyboard too) that highlights on hover. */
+export function Row({ children, className, onClick, title }: { children: ReactNode; className?: string; onClick?: () => void; title?: string }) {
+  if (!onClick) return <div className={`${styles.row} ${className ?? ''}`}>{children}</div>;
+  return (
+    <div
+      className={`${styles.row} ${styles.rowLink} ${className ?? ''}`}
+      role="button"
+      tabIndex={0}
+      title={title}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function Tag({ kind, children }: { kind: 'bad' | 'ok' | 'warn'; children: ReactNode }) {

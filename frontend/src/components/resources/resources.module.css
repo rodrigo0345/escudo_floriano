@@ -41,6 +41,45 @@
   font-size: 11px;
 }
 
+/* "Reforços": the reinforcement groups behind one row, closed by default */
+.reinforcements {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 13px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--line);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reinforcements:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.reinforcements > span:first-child {
+  display: grid;
+  gap: 1px;
+}
+
+.reinforcements small {
+  font-size: 11px;
+  color: var(--mut);
+}
+
+.reinforcementsChevron {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  color: var(--mut);
+  transition: transform 0.15s ease;
+}
+
+.reinforcementsChevronOpen {
+  transform: rotate(180deg);
+}
+
 .org.on {
   background: rgba(59, 130, 246, 0.12);
   border-color: #3b82f6;

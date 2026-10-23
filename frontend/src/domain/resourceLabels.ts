@@ -22,6 +22,25 @@ export const ORG_TYPE_LABEL: Record<OrganizationType, string> = {
   other: 'Outra',
 };
 
+const CORE_ORG_TYPES: OrganizationType[] = ['fire_brigade', 'gnr', 'inem', 'civil_protection'];
+
+type OrgLike = { id?: string | null; type: OrganizationType; tags?: string[] | null; createdAt?: string | null };
+
+/**
+ * The four corporations of the concelho (Bombeiros, GNR, INEM, ANEPC): for each of those kinds, the oldest organization without tags (the reinforcement
+ * groups, aerial means and pre-positioned crews all carry one), else the oldest of that kind. Everything else is grouped under "Reforços", closed until the
+ * operator opens it.
+ */
+export function coreOrganizationIds(orgs: OrgLike[]): Set<string> {
+  const ids = new Set<string>();
+  for (const type of CORE_ORG_TYPES) {
+    const ofType = orgs.filter((o) => o.type === type).sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+    const pick = ofType.find((o) => !(o.tags ?? []).length) ?? ofType[0];
+    if (pick?.id) ids.add(pick.id);
+  }
+  return ids;
+}
+
 export const STATION_KIND_LABEL: Record<StationKind, string> = {
   fire_station: 'Quartel de bombeiros',
   gnr_post: 'Posto GNR',

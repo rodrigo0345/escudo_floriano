@@ -227,73 +227,247 @@
   color: #ddd;
 }
 
-/* weather HUD */
-.hud {
+/* map-only view: how to get the interface back, shown briefly then gone */
+.cleanHint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 11.5px;
+  pointer-events: none;
+  animation: cleanHintFade 3s ease forwards;
+}
+
+@keyframes cleanHintFade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* top-left column: the weather card, then the population alerts under it */
+.leftStack {
   position: absolute;
   left: 14px;
   top: 14px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  align-items: center;
-  width: 300px;
-  padding: 9px 11px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  border: 1px solid var(--line);
   z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 236px;
+  pointer-events: none;
+}
+
+.leftStack > * {
+  pointer-events: auto;
+}
+
+/* weather HUD: one line closed (the default), details below when open */
+.hud {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(6px);
+  z-index: 3;
+  overflow: hidden;
+}
+
+.hudHead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px 6px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hudHead:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 .dial {
-  width: 56px;
-  height: 56px;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
   color: var(--fg);
 }
 
-.hudMain {
+.hudWind {
   display: flex;
   flex-direction: column;
-  line-height: 1.25;
+  min-width: 0;
+  line-height: 1.15;
 }
 
-.hudMain b {
-  font-size: 20px;
+.hudWind b {
+  font-size: 17px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.hudMain small {
+.hudWind b small {
   font-size: 11px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.hudWind > small {
+  font-size: 10.5px;
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.hudQuick {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.hudQuick span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hudQuick svg {
+  opacity: 0.6;
+}
+
+.riskDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff922b;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ff922b 25%, transparent);
+}
+
+.riskDotExtreme {
+  background: #e5484d;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #e5484d 30%, transparent);
+  animation: pulseAlert 2s infinite ease-in-out;
+}
+
+.hudChevron {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--mut);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.hudHead:hover .hudChevron {
+  color: var(--fg);
+}
+
+.hudOpen .hudChevron {
+  transform: rotate(180deg);
+}
+
+.hudBody {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.hudAlert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+
+.alertExtreme {
+  background: color-mix(in srgb, #e5484d 18%, transparent);
+  border-color: color-mix(in srgb, #e5484d 55%, transparent);
+  color: #ff8589;
+}
+
+.alertHigh {
+  background: color-mix(in srgb, #ff922b 12%, transparent);
+  border-color: color-mix(in srgb, #ff922b 35%, transparent);
+  color: #ffc078;
+}
+
+.alertShift {
+  background: color-mix(in srgb, #f59f00 14%, transparent);
+  border-color: color-mix(in srgb, #f59f00 40%, transparent);
+  color: #ffe066;
+}
+
+.alertRain {
+  background: color-mix(in srgb, #3e63dd 14%, transparent);
+  border-color: color-mix(in srgb, #3e63dd 45%, transparent);
+  color: #8da4ef;
+}
+
+.alertSmoke {
+  background: color-mix(in srgb, #868e96 14%, transparent);
+  border-color: color-mix(in srgb, #868e96 45%, transparent);
+  color: #dee2e6;
+}
+
+@keyframes pulseAlert {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.3); }
+  50% { box-shadow: 0 0 8px 2px rgba(229, 72, 77, 0.5); }
 }
 
 .hudRows {
-  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
-  font-size: 12px;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin: 0;
+  font-size: 11.5px;
 }
 
-.hudRows span {
+.hudRows dt {
   color: var(--mut);
 }
 
-.hudRows b {
+.hudRows dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
   font-variant-numeric: tabular-nums;
-}
-
-.hudSource {
-  grid-column: 1 / -1;
-  font-size: 10px;
-  color: var(--mut);
-  margin-top: -3px;
 }
 
 .bar {
   display: block;
-  grid-column: 1 / -1;
+  width: 46px;
   height: 4px;
   background: var(--line);
-  border-radius: var(--radius);
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -303,83 +477,9 @@
   transition: width 0.3s;
 }
 
-.extremeAlert {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, #e5484d 22%, transparent);
-  border: 1px solid #e5484d;
-  color: #ff8589;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 5px 8px;
-  border-radius: var(--radius);
-  text-align: center;
-  animation: pulseAlert 2s infinite ease-in-out;
-}
-
-.highRiskChip {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, #ff922b 14%, transparent);
-  border: 1px solid color-mix(in srgb, #ff922b 35%, transparent);
-  color: #ffc078;
-  font-size: 10.5px;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  justify-content: center;
-}
-
-@keyframes pulseAlert {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.3); }
-  50% { box-shadow: 0 0 8px 2px rgba(229, 72, 77, 0.5); }
-}
-
-.hudPrecip {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, #3e63dd 18%, transparent);
-  border: 1px solid #3e63dd;
-  color: #8da4ef;
-  font-size: 11px;
-  padding: 3px 6px;
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.upcomingShift {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, #f59f00 20%, transparent);
-  border: 1px solid #f59f00;
-  color: #ffe066;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 7px;
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  animation: pulseAlert 2.5s infinite ease-in-out;
-}
-
-.shiftIcon {
-  font-size: 13px;
-  flex-shrink: 0;
-}
-
-.hudVisibility {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, #868e96 18%, transparent);
-  border: 1px solid #868e96;
-  color: #dee2e6;
-  font-size: 11px;
-  padding: 3px 6px;
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.hudSource {
+  font-size: 10px;
+  color: var(--mut);
 }
 
 /* right-hand stack: view mode, base layers, overlays, legends */
@@ -433,7 +533,7 @@
 }
 
 .layerSection {
-  padding: 11px 13px 12px;
+  padding: 9px 12px 10px;
   font-size: 12px;
   line-height: 1.45;
 }
@@ -451,11 +551,16 @@
 }
 
 .sectionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--fg);
+  white-space: nowrap; /* the title and its "i" stay on one line */
 }
 
 .sectionMeta {
@@ -476,8 +581,8 @@
 }
 
 .toggleGroup + .toggleGroup {
-  margin-top: 9px;
-  padding-top: 9px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px dashed var(--line);
 }
 
@@ -500,7 +605,8 @@
   cursor: pointer;
 }
 
-.overlayRow span {
+/* the label takes the row; the "i" beside it keeps its own small circle */
+.overlayRow > span:not(.infoTip) {
   flex: 1;
 }
 
@@ -550,17 +656,144 @@
   color: var(--mut);
 }
 
-.disclaimerTag {
-  display: inline-block;
-  font-size: 9px;
+/* an "i" that explains on hover, in place of a line of text */
+.infoTip {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 50%;
   color: var(--mut);
-  background: color-mix(in srgb, var(--panel) 70%, transparent);
-  border: 1px solid var(--border);
-  padding: 1px 5px;
-  border-radius: 3px;
+  vertical-align: -4px;
+  cursor: help;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.sectionTitle .infoTip {
+  margin-left: 0;
+}
+
+.infoTip:hover,
+.infoTip:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent);
+  outline: none;
+}
+
+.overlaySub {
+  margin-left: 21px;
+}
+
+/* a row with more than the checkbox (a sound switch): the label part takes the room */
+.overlayLabel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.overlayLabel input {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  accent-color: var(--acc);
+  cursor: pointer;
+}
+
+/* the thunder sound: a small speaker pill beside "Nuvens 3D", muted until switched on */
+.soundToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px 0 6px !important;
+  font-size: 10.5px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: transparent !important;
+  color: var(--mut) !important;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.soundToggle:hover {
+  color: var(--fg) !important;
+  border-color: color-mix(in srgb, var(--fg) 35%, transparent) !important;
+}
+
+.soundToggleOn {
+  color: var(--fg) !important;
+  border-color: color-mix(in srgb, var(--acc) 70%, transparent) !important;
+  background: color-mix(in srgb, var(--acc) 18%, transparent) !important;
+}
+
+/* a section folded to its title row: no gap under it */
+.sectionHeadClosed {
+  margin-bottom: 0;
+}
+
+.sectionHead .sectionMeta {
+  margin-left: auto;
+}
+
+.sectionToggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
   margin-left: 6px;
-  font-weight: 500;
-  vertical-align: middle;
+  padding: 0 !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 5px !important;
+  background: transparent !important;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  align-self: center;
+}
+
+.sectionToggle:hover {
+  border-color: var(--acc) !important;
+  color: var(--acc);
+}
+
+/* best / worst case of the ensemble: the dashed p10 ring and the translucent p90 area (ensembleLayer's colours) */
+.rangeLegend {
+  font-size: 11px;
+  color: var(--mut);
+}
+
+.rangeLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatchBest,
+.swatchWorst {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.swatchBest {
+  border: 1.5px dashed #ffd27a;
+}
+
+.swatchWorst {
+  background: rgb(255 119 51 / 0.35);
+  border: 1px solid rgb(255 119 51 / 0.7);
 }
 
 .ramp {
@@ -677,6 +910,32 @@
   margin-top: 6px;
 }
 
+/* the source switch fills the panel's width, its two halves equal */
+.citySeg > div {
+  width: 100%;
+}
+
+.citySeg button {
+  flex: 1;
+  padding: 4px 8px;
+}
+
+.cityConnect {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.cityConnect .cityKey {
+  margin: 0;
+}
+
+.cityButton {
+  width: 100%;
+  margin-top: 7px;
+}
+
 .cityKey {
   width: 100%;
   margin: 6px 0;
@@ -704,36 +963,66 @@
 }
 
 /* ---- ALERTA À POPULAÇÃO: the demo's emotional beat — big, high-contrast, impossible to miss ---- */
+/* under the weather card (in .leftStack), as wide as it: one line until hovered, then the message unfolds downward */
 .alertToastStack {
-  position: absolute;
-  left: 50%;
-  top: 96px;
-  transform: translateX(-50%);
-  z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: min(540px, calc(100% - 48px));
-  pointer-events: none;
+  gap: 6px;
 }
 
 .alertToast {
-  pointer-events: auto;
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 14px;
+  gap: 8px;
   width: 100%;
-  padding: 14px 18px 13px;
-  text-align: left;
+  padding: 7px 28px 7px 9px;
   color: #fff;
-  font-family: inherit;
   background: linear-gradient(160deg, color-mix(in srgb, var(--bad) 82%, #000), color-mix(in srgb, var(--bad) 55%, #200a0a));
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-left: 6px solid var(--warn);
-  border-radius: 6px;
-  box-shadow: 0 14px 36px rgb(0 0 0 / 0.55);
-  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-left: 4px solid var(--warn);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
   animation: alertToastIn 0.28s ease-out both;
+}
+
+.alertToastClose {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.alertToastClose:hover {
+  opacity: 1;
+  background: rgb(255 255 255 / 0.16);
+}
+
+/* message and channels: folded until the alert is hovered (or focused from the keyboard) */
+.alertToastMore {
+  display: grid;
+  gap: 3px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.22s ease;
+}
+
+.alertToast:hover .alertToastMore,
+.alertToast:focus-within .alertToastMore {
+  max-height: 220px;
+  margin-top: 4px;
+  opacity: 1;
 }
 
 .alertToastRed {
@@ -741,40 +1030,47 @@
 }
 
 .alertToastIcon {
-  font-size: 30px;
-  line-height: 1.1;
-  filter: drop-shadow(0 2px 5px rgb(0 0 0 / 0.45));
+  flex: none;
+  margin-top: 1px;
+  color: #ffd43b;
 }
 
 .alertToastBody {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
 }
 
 .alertToastTitle {
-  font-size: 16px;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .alertToastText {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 11.5px;
+  font-weight: 600;
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alertToast:hover .alertToastText,
+.alertToast:focus-within .alertToastText {
+  white-space: normal;
 }
 
 .alertToastMessage {
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.4;
   opacity: 0.94;
 }
 
 .alertToastChannels {
-  margin-top: 3px;
-  font-size: 10px;
+  font-size: 9.5px;
   font-family: var(--mono);
   letter-spacing: 0.07em;
   text-transform: uppercase;
