@@ -32,7 +32,7 @@ log = logging.getLogger("firetrace.alternatives")
 
 WIND_ERROR_DEG = 30.0  # the forecast wind is wrong by this much, either way
 CANDIDATE_PREFIX = "[lab] "  # title of a plan published only to be judged and deleted (the UI hides these)
-SAFETY_ROUNDS = 4
+SAFETY_ROUNDS = 6
 WITHDRAW_MARGIN_MIN = 5  # a crew leaves this long before the fire reaches its ground
 MIN_USEFUL_WORK_MIN = 10  # a crew that could work less than this before the fire arrives is not sent
 HOUSE_ZONES_FOR_B = 10

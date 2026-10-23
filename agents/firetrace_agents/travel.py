@@ -23,9 +23,9 @@ from .firefighter import FirefighterAgent
 from .sectors import distance_m
 from .tiers import FirefighterTier
 
-WALK_SPEED_KMH = 3.0  # = backend Routing.WalkKmh (appsettings); the contract does not expose it
+WALK_SPEED_KMH = 4.0  # = backend Routing.WalkKmh (appsettings); the contract does not expose it
 MAX_LAST_MILE_M = 500.0  # = backend Routing.MaxSnapM (appsettings): farther from a road than this the backend answers no_road_access
-DEFAULT_OFF_ROAD_KMH = 15.0
+DEFAULT_OFF_ROAD_KMH = 30.0
 DEFAULT_HELICOPTER_KMH = 180.0
 CACHE_LIMIT = 20000
 

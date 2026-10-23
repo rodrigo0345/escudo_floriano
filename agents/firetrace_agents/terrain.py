@@ -29,7 +29,7 @@ UPHILL_RUN_FACTOR = 0.8
 STEEP_FAR_FROM_ROAD_DEG = 25.0  # steeper than this and farther from a road than ROAD_FAR_M, an engine's lines do not reach: it is working from too far
 ROAD_FAR_M = 80.0
 FAR_FROM_ROAD_FACTOR = 0.7
-MIN_FACTOR = 0.15
+MIN_FACTOR = 0.30
 
 # ---- how fuel changes what a direct attack can do (keys are the backend's land-cover classes, ``GET /locations/{id}/vegetation``)
 FUEL_FACTOR: dict[str, float] = {

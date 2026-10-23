@@ -100,8 +100,16 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
         var assignments = PlanDispatches.Build(plan, limits.DefaultActionWindowMinutes, r => crews.GetValueOrDefault(r.ResourceId));
         var batch = new DispatchBatch(assignments.Select(x => ToDispatch(x.Action, x.Resource) with { ExpectedDurationMinutes = x.StayMinutes }).ToList(), $"Plano {plan.Title}");
 
+        var holders = await HoldersAsync(plan, batch, ct);
         var check = await dispatching.ValidateAsync(batch, ct);
-        if (!check.Valid) throw new ConflictException("Não é possível ativar: " + string.Join("; ", check.Issues.Where(i => i.Severity == "error").Select(i => i.Message)), "resources_unavailable");
+        // a unit busy only on the plan this one replaces is not a conflict: it is re-tasked when that plan closes, just below
+        var errors = check.Issues.Where(i => i.Severity == "error" && !(IsBusy(i) && i.ResourceId is { } r && holders.Replaced.ContainsKey(r))).ToList();
+        if (errors.Count > 0) throw new ConflictException("Não é possível ativar: " + Explain(errors, holders.Blocking), "resources_unavailable");
+        foreach (var old in holders.Replaced.Values.DistinctBy(p => p.Id))
+        {
+            await plans.SaveAsync(await CloseAsync(old, PlanStatus.Completed, ct), ct);
+            log.LogInformation("Plano {Old} encerrado: substituído pelo plano {New}, ativado sobre a mesma situação.", old.Id, plan.Id);
+        }
         var sent = (await dispatching.CreateAsync(batch, new DispatchOrigin(DispatchSource.PlanAction, plan.Id, assignments.Select(x => (string?)x.Action.Id).ToList()), ct)).Items;
 
         // all or nothing: if a closure is refused (or anything after the dispatches fails) the units go back and the closures already opened are removed,
@@ -125,6 +133,48 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
             foreach (var c in opened) await closures.DeleteAsync(c.Id, CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>
+    /// What holds the units this plan is about to dispatch, before it is checked:
+    /// <list type="bullet">
+    /// <item>an order of a plan that is not active (one whose activation failed half way, this plan's own included, or a plan since deleted) holds nothing: it is a leftover, cancelled here;</item>
+    /// <item>an order of an active plan made for the same situation (the same simulation or scenario: the operator asked the agents for a new pair and picked one) is
+    /// <c>Replaced</c>: that plan closes when this one goes out;</item>
+    /// <item>an order of an active plan for another situation is a real conflict (<c>Blocking</c>), and so is an order given by hand.</item>
+    /// </list>
+    /// </summary>
+    async Task<(Dictionary<string, Plan> Replaced, Dictionary<string, Plan> Blocking)> HoldersAsync(Plan plan, DispatchBatch batch, CancellationToken ct)
+    {
+        var wanted = batch.Dispatches.Select(d => d.ResourceId).ToHashSet();
+        var holding = await dispatches.ListAsync(d => d.IsActive && wanted.Contains(d.ResourceId), ct);
+        var planIds = holding.Select(d => d.PlanId).OfType<string>().ToHashSet();
+        var owners = (await plans.ListAsync(p => planIds.Contains(p.Id), ct)).ToDictionary(p => p.Id);
+        Dictionary<string, Plan> replaced = new(), blocking = new();
+        foreach (var d in holding)
+        {
+            if (d.PlanId is not { } pid) continue; // dispatched by hand: a real conflict, the check reports it
+            if (!owners.TryGetValue(pid, out var owner) || owner.Status != PlanStatus.Active)
+            {
+                await dispatching.CancelAsync(d, ct);
+                log.LogWarning("Despacho {Dispatch} ({Resource}) do plano {Plan}, que não está ativo, cancelado antes de ativar {New}.", d.Id, d.ResourceId, pid, plan.Id);
+            }
+            else if (owner.Id != plan.Id && owner.LocationId == plan.LocationId && SameBasis(owner, plan)) replaced[d.ResourceId] = owner;
+            else blocking[d.ResourceId] = owner;
+        }
+        return (replaced, blocking);
+    }
+
+    static bool IsBusy(ValidationIssue i) => i.Code is "vehicle_busy" or "not_enough_personnel";
+
+    /// <summary>The refusal, said once per plan that holds the units instead of once per vehicle; the other errors as they are.</summary>
+    static string Explain(List<ValidationIssue> errors, Dictionary<string, Plan> blocking)
+    {
+        var heldBy = errors.Where(i => IsBusy(i) && i.ResourceId is { } r && blocking.ContainsKey(r)).ToList();
+        var parts = heldBy.GroupBy(i => blocking[i.ResourceId!].Id)
+            .Select(g => $"{g.Count()} meios estão no plano ativo «{blocking[g.First().ResourceId!].Title}» (outra situação); encerre-o antes de ativar este")
+            .Concat(errors.Except(heldBy).Select(i => i.Message));
+        return string.Join("; ", parts);
     }
 
     /// <summary>Who a vehicle takes when the plan does not say: the crew on board, within its minimum and the seats left after casualties.</summary>

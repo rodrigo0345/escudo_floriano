@@ -23,7 +23,7 @@ from typing import Any
 
 # the drive to a fuel station and back is not asked to the backend for every engine: fuel stations are in the towns, and one refuel in a long shift is what
 # matters (an assumption, as the backend's unit simulator routes the real trip on the map)
-FUEL_STATION_DRIVE_MIN = 12.0
+FUEL_STATION_DRIVE_MIN = 7.0
 ROAD_KMH = 45.0  # to turn the minutes of a water trip into km of fuel
 
 

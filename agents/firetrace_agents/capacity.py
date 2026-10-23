@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-GROUND_RATE_M_PER_H_PER_PERSON = 30.0  # backend: Interventions.FireLineRateMPerHourPerPerson (appsettings; was 15 before main's update)
-WET_LINE_FACTOR = 2.0  # assumption: a hose line goes down faster than a hand line
+GROUND_RATE_M_PER_H_PER_PERSON = 40.0  # backend: Interventions.FireLineRateMPerHourPerPerson (appsettings; was 15 before main's update)
+WET_LINE_FACTOR = 2.5  # assumption: a hose line goes down faster than a hand line
 AERIAL_WATER_DISTANCE_KM = 5.0  # assumption (Rules.aerial.limits.maxDistanceToWaterKm is 10)
 DROP_LENGTH_M = 80.0  # assumption: the length one bucket drop covers
 MIN_LINE_M = 20.0

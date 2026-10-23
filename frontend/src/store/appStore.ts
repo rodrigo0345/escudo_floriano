@@ -201,12 +201,20 @@ export const useAppStore = create<AppState>((set) => ({
       const parsedKeyframes = run
         ? extractTimelineKeyframesFromSnapshot(run.simulation.scenarioSnapshot, run.startMs, run.durationMinutes)
         : [];
+      // A built-in scenario seeds its weather as a two-point manual curve (T+0 and T+end, ScenarioSeeder's Manual); surfacing it in
+      // the form made every launch show two "pontos-chave" the operator never created. The curve still lives in the scenario (the
+      // engine keeps using it); the form starts empty and points appear only when the operator adds one. Custom scenarios keep theirs.
+      const isBuiltin =
+        run != null &&
+        (run.simulation.scenarioId
+          ? s.data?.scenarios.find((sc) => sc.id === run.simulation.scenarioId)?.builtin
+          : s.data?.scenarios.find((sc) => sc.name === run.simulation.scenarioSnapshot.name)?.builtin) === true;
       return {
         run,
         // If the incoming run snapshot has explicit events, keep or seed them
         customEvents: parsed.length > 0 ? parsed : s.customEvents,
         // Keyframes belong to the scenario that was just loaded: an empty snapshot must clear the previous curve.
-        weatherKeyframes: parsedKeyframes,
+        weatherKeyframes: isBuiltin ? [] : parsedKeyframes,
       };
     }),
   setCustomEvents: (customEvents) => set({ customEvents }),

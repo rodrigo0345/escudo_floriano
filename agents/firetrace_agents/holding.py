@@ -25,7 +25,7 @@ from .placement import FireClock
 
 MIN_IDLE_MIN = 20  # a unit idle for less than this before the run ends just finishes
 BACKEND_DEFAULT_STAY_MIN = 30  # `Limits.DefaultActionWindowMinutes`: how long the backend's unit simulator keeps a unit on an action that states no stay
-HOLD_MARGIN_MIN = 10  # = Rules.safety.withdrawWhenFireArrivesInMinutes, the default when the backend's rules are not at hand
+HOLD_MARGIN_MIN = 15  # = Rules.safety.withdrawWhenFireArrivesInMinutes, the default when the backend's rules are not at hand
 
 
 @dataclass(frozen=True)
