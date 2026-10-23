@@ -485,6 +485,8 @@
 /* right-hand stack: view mode, base layers, overlays, legends */
 .layers {
   max-height: calc(100% - 24px);
+  /* never reach the weather card on the left (236 px + its margins): the controls wrap onto more rows instead */
+  max-width: min(470px, calc(100% - 270px));
   overflow: auto;
   position: absolute;
   right: 12px;
@@ -502,7 +504,7 @@
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-  max-width: min(470px, calc(100vw - 440px));
+  max-width: 100%; /* the width is limited by `.layers` (what the map leaves beside the weather card), not by a guess at the side panel */
 }
 
 /* the "Camadas" button: same frame as the segmented controls beside it, highlighted while the panel is open */
@@ -879,13 +881,21 @@
     bottom: 54px;
   }
 
-  .hud {
+  .leftStack {
+    width: min(236px, calc(100% - 28px));
+  }
+
+  /* the map is the whole width: the layer controls go under the (closed) weather card instead of beside it */
+  .layers {
     left: 14px;
-    bottom: 154px;
-    width: min(300px, calc(100vw - 28px));
+    right: 14px;
+    top: 62px;
+    max-width: none;
+    align-items: flex-start;
   }
 
   .layerControls {
+    justify-content: flex-start;
     max-width: calc(100vw - 32px);
   }
 

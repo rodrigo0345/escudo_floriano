@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 
-import type { WaterPointKind } from '@/api';
+import type { FacilityKind, WaterPointKind } from '@/api';
 import { Icon } from '@/components/common/Icon';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
 import { useEngine, useEngineContext, useWorld } from '@/engine/EngineContext';
+import { FACILITY_KIND_NAME, facilityColor } from '@/engine/layers/assetLayer';
 import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import type { ViewModeName } from '@/engine/viewMode';
@@ -79,6 +80,7 @@ export function LayersPanel() {
       {open ? (
         <div className={styles.layerPanel}>
           <CityBox />
+          <FacilitiesBox />
           <WaterBox />
           <OverlayBox />
           <PlanBox />
@@ -255,6 +257,7 @@ function OverlayBox() {
           </div>
         ) : null}
       </div>
+      <HousesToggle />
       <div className={styles.toggleGroup}>
         <label className={styles.overlayRow}>
           <input type="checkbox" checked={aftermathEnabled} onChange={(e) => setAftermathEnabled(e.target.checked)} />
@@ -329,6 +332,29 @@ function OverlayBox() {
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** The yellow squares: one dot per building. Turning them off only hides the dots; the plan's crowds, rings and water stay. */
+function HousesToggle() {
+  const world = useWorld();
+  const [, redraw] = useState(0);
+  if (!world) return null;
+  return (
+    <div className={styles.toggleGroup}>
+      <label className={styles.overlayRow}>
+        <input
+          type="checkbox"
+          checked={world.people.housesVisible}
+          onChange={(e) => {
+            world.people.setHousesVisible(e.target.checked);
+            redraw((n) => n + 1);
+          }}
+        />
+        <span>Casas</span>
+        <InfoTip text="Um ponto por edifício: bege intacto, laranja a arder, escuro depois de arder. Esconder não altera a simulação." />
+      </label>
+    </div>
   );
 }
 
@@ -437,6 +463,67 @@ function BaseLayerLegend() {
           <small>{(k.sharePct ?? 0).toFixed(1)}%</small>
         </div>
       ))}
+    </section>
+  );
+}
+
+/** Per-kind switches for the facility icons on the map (fire stations, schools, shelters, ...), closed by default like the water box. */
+function FacilitiesBox() {
+  const world = useWorld();
+  const data = useAppStore((s) => s.data);
+  const [, redraw] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  if (!world || !data) return null;
+  const counts = world.assets.counts;
+  const kinds = (Object.keys(FACILITY_KIND_NAME) as FacilityKind[]).filter((k) => counts[k]);
+  if (!kinds.length) return null;
+  const shown = kinds.filter((k) => world.assets.isVisible(k)).length;
+  const label = open ? 'Esconder os tipos de instalação' : 'Mostrar os tipos de instalação';
+  const setAll = (on: boolean) => {
+    kinds.forEach((k) => world.assets.setVisible(k, on));
+    redraw((n) => n + 1);
+  };
+  return (
+    <section className={styles.layerSection}>
+      <div className={`${styles.sectionHead} ${open ? '' : styles.sectionHeadClosed}`}>
+        <b className={styles.sectionTitle}>
+          Instalações <InfoTip text="Escolha que ícones aparecem no mapa. Não altera a simulação." />
+        </b>
+        <span className={styles.sectionMeta}>
+          {shown}/{kinds.length} tipos
+        </span>
+        <button type="button" className={styles.sectionToggle} onClick={() => setOpen(!open)} aria-expanded={open} aria-label={label} title={label}>
+          {open ? '−' : '+'}
+        </button>
+      </div>
+      {open ? (
+        <>
+          {kinds.map((k) => (
+            <label className={styles.waterKind} key={k}>
+              <input
+                type="checkbox"
+                checked={world.assets.isVisible(k)}
+                onChange={(e) => {
+                  world.assets.setVisible(k, e.target.checked);
+                  redraw((n) => n + 1);
+                }}
+              />
+              <i style={{ background: facilityColor(k) }} />
+              <span>{FACILITY_KIND_NAME[k]}</span>
+              <small>{counts[k]}</small>
+            </label>
+          ))}
+          <div className={styles.densityRow}>
+            <button type="button" className={styles.cityButton} onClick={() => setAll(true)}>
+              Todas
+            </button>
+            <button type="button" className={styles.cityButton} onClick={() => setAll(false)}>
+              Nenhuma
+            </button>
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

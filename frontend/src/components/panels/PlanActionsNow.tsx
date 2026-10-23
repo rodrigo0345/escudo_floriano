@@ -139,8 +139,13 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
       {orgOf(id)?.shortName ?? orgOf(id)?.name ?? id}
     </button>
   );
+  const toggleReinforcements = () => {
+    if (!extraOpen) return setShowReinforcements(true);
+    setShowReinforcements(false);
+    if (orgFilter !== null && !isCore(orgFilter)) setOrgFilter(null); // a reinforcement chosen as the filter keeps the group open: clear it so the group can close
+  };
   const reinforcementsHead = extraGroups.length ? (
-    <button type="button" className={styles.reinforcementsHead} onClick={() => setShowReinforcements(!extraOpen)} aria-expanded={extraOpen}>
+    <button type="button" className={styles.reinforcementsHead} onClick={toggleReinforcements} aria-expanded={extraOpen}>
       <b>Reforços</b>
       <small className="note">
         {extraGroups.length} {extraGroups.length === 1 ? 'corporação' : 'corporações'} · {extraActions} {extraActions === 1 ? 'ação' : 'ações'}
@@ -211,7 +216,7 @@ export function PlanActionsNow({ plan, onMap, showOnMap, busyActionId, onProgres
         <button className={orgFilter === null ? 'on' : ''} onClick={() => setOrgFilter(null)}>Todas</button>
         {coreChipIds.map(orgChip)}
         {extraIds.length ? (
-          <button className={extraOpen ? 'on' : ''} onClick={() => setShowReinforcements(!extraOpen)} aria-expanded={extraOpen} title="Grupos de reforço e outras organizações">
+          <button className={extraOpen ? 'on' : ''} onClick={toggleReinforcements} aria-expanded={extraOpen} title="Grupos de reforço e outras organizações">
             Reforços ({extraIds.length})
           </button>
         ) : null}

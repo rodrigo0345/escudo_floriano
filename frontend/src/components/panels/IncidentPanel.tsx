@@ -32,7 +32,7 @@ function IncidentSummary() {
                   {minutesLabel(r.tMin)} <small>{formatTime(r.time ?? run.startMs + r.tMin * 60000)}</small>
                 </span>
                 <span>
-                  {nf(r.areaHa)} ha · {r.headSpeedMmin ?? '—'} m/min
+                  {nf(r.areaHa)} ha · {r.headSpeedMmin ?? '-'} m/min
                 </span>
               </Row>
             ))}

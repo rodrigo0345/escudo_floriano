@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { Icon } from '@/components/common/Icon';
 import { humidityColorVar, windColorCss } from '@/domain/colors';
 import { compass } from '@/domain/georef';
 import { fireRiskLevel, findUpcomingWeatherShift, groundVisibilityFromSmoke, sampleWeatherAt } from '@/domain/weather';
-import { useEngine } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './viewport.module.css';
@@ -21,13 +20,14 @@ function readOpen(): boolean {
 }
 
 /**
- * Weather card over the map. Closed (the default) it is one line: wind arrow (rotates with the camera), speed, where it blows from,
- * air temperature and humidity, and a dot when the fire risk is high. Open, it adds the alerts (rain, a coming wind shift, smoke,
- * risk), gusts, fine-fuel moisture and the source. Values follow the playback minute; only the arrow rotation is driven per frame
- * (straight on the DOM, no React re-render).
+ * Weather card over the map. Closed (the default) it is one line: wind arrow, speed, where it blows from, air temperature and
+ * humidity, and a dot when the fire risk is high. Open, it adds the alerts (rain, a coming wind shift, smoke, risk), gusts,
+ * fine-fuel moisture and the source. Values follow the playback minute.
+ *
+ * The arrow is the WIND: it points where the wind blows, measured from the N at the top of the dial. It does not depend on how the
+ * user has turned the map (the compass rose at the bottom left is what follows the camera), so it only changes when the wind does.
  */
 export function WeatherHud() {
-  const engine = useEngine();
   const [open, setOpen] = useState(readOpen);
   const toggle = () =>
     setOpen((was) => {
@@ -42,24 +42,10 @@ export function WeatherHud() {
   const t = useAppStore((s) => s.t);
   const scenarioId = useAppStore((s) => s.scenarioId);
   const smokeInfo = useAppStore((s) => s.smokeInfo);
-  const arrow = useRef<SVGGElement>(null);
-  const north = useRef<SVGTextElement>(null);
-  const windToDeg = useRef(0);
 
   const weather = useMemo(() => (run ? sampleWeatherAt(run.weather, run.startMs, t) : null), [run, t]);
   const upcomingShift = useMemo(() => (run ? findUpcomingWeatherShift(run.weather, run.startMs, t) : null), [run, t]);
   const visibilityM = useMemo(() => groundVisibilityFromSmoke(smokeInfo), [smokeInfo]);
-  windToDeg.current = weather ? (weather.windFromDeg + 180) % 360 : 0;
-
-  useEffect(() => {
-    if (!engine) return;
-    return engine.onFrame((_ts, azimuth) => {
-      // both turn with the camera: the arrow points where the wind blows on screen, the N sits where north is on screen (kept upright)
-      arrow.current?.setAttribute('transform', `rotate(${windToDeg.current - (azimuth * 180) / Math.PI})`);
-      north.current?.setAttribute('x', (21 * Math.sin(-azimuth)).toFixed(2));
-      north.current?.setAttribute('y', (-21 * Math.cos(-azimuth) + 3).toFixed(2));
-    });
-  }, [engine]);
 
   if (!weather) return null;
   const to = (weather.windFromDeg + 180) % 360;
@@ -72,12 +58,12 @@ export function WeatherHud() {
     <div className={`${styles.hud} ${open ? styles.hudOpen : ''}`}>
       <button type="button" className={styles.hudHead} onClick={toggle} aria-expanded={open} aria-label={label} title={label}>
         <svg className={styles.dial} viewBox="-32 -32 64 64" role="img" aria-label={`Vento de ${compass(weather.windFromDeg)}, a soprar para ${compass(to)}`}>
-          <title>{`Vento a soprar para ${compass(to)}. A seta e o N rodam com o mapa: o N marca o norte no ecrã.`}</title>
+          <title>{`Seta: direção do vento. Sopra para ${compass(to)} (vem de ${compass(weather.windFromDeg)}), medido a partir do N. Não depende de como rodou o mapa.`}</title>
           <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".22" />
-          <text ref={north} y="-18" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" opacity=".75">
+          <text y="-18" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" opacity=".75">
             N
           </text>
-          <g ref={arrow} style={{ color }}>
+          <g transform={`rotate(${to})`} style={{ color }}>
             <path d="M0 -22 L9 -4 L3 -4 L3 20 L-3 20 L-3 -4 L-9 -4 Z" fill="currentColor" />
           </g>
         </svg>

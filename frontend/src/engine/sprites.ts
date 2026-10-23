@@ -45,14 +45,33 @@ export function textSprite(text: string, options: TextSpriteOptions = {}): THREE
 
 const BADGE_IMG_CACHE = new Map<string, HTMLImageElement>();
 
-/** A square badge (with official organization logo or one to three letters on a colored plate) for facilities and vehicles. */
-export function badgeSprite(code: string, color: string, logoUrl?: string | null): THREE.Sprite {
+/**
+ * A square badge (with official organization logo or one to three letters on a colored plate) for facilities and vehicles.
+ * With `glyph` (the path of a 24×24 vector icon) it is a round map-pin style badge with that icon in white instead of letters.
+ */
+export function badgeSprite(code: string, color: string, logoUrl?: string | null, glyph?: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
 
   const renderBadge = (img?: HTMLImageElement) => {
     ctx.clearRect(0, 0, 128, 128);
+    if (glyph) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(64, 64, 56, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(64 - 12 * 3.4, 64 - 12 * 3.4);
+      ctx.scale(3.4, 3.4);
+      ctx.fillStyle = '#fff';
+      ctx.fill(new Path2D(glyph));
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.roundRect(8, 8, 112, 112, 16);
@@ -67,7 +86,11 @@ export function badgeSprite(code: string, color: string, logoUrl?: string | null
       ctx.beginPath();
       ctx.roundRect(16, 16, 96, 96, 12);
       ctx.clip();
-      ctx.drawImage(img, 16, 16, 96, 96);
+      // fit the crest inside the plate without squashing it (most are taller or wider than they are square)
+      const fit = Math.min(96 / img.naturalWidth, 96 / img.naturalHeight);
+      const w = img.naturalWidth * fit;
+      const h = img.naturalHeight * fit;
+      ctx.drawImage(img, 64 - w / 2, 64 - h / 2, w, h);
       ctx.restore();
     } else {
       ctx.fillStyle = '#fff';

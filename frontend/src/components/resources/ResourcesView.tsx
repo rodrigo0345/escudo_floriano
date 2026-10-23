@@ -110,20 +110,30 @@ export function ResourcesView() {
   useEffect(() => {
     if (!loaded) void load();
   }, [loaded, load]);
-  useEffect(() => {
-    if (!orgId && organizations.length) setOrgId(organizations[0].id as string);
-  }, [organizations, orgId]);
-
-  const org = organizations.find((o) => o.id === orgId) ?? null;
   // the concelho's four corporations always; reinforcement groups and other organizations behind "Reforços", open when asked or when one is selected
   const coreIds = useMemo(() => coreOrganizationIds(organizations), [organizations]);
+  useEffect(() => {
+    // start on one of the four main corporations: starting on a reinforcement would open "Reforços" before anyone asked
+    if (!orgId && organizations.length) setOrgId((organizations.find((o) => coreIds.has(o.id as string)) ?? organizations[0]).id as string);
+  }, [organizations, orgId, coreIds]);
+
+  const org = organizations.find((o) => o.id === orgId) ?? null;
   const core = organizations.filter((o) => coreIds.has(o.id as string));
   const extras = organizations.filter((o) => !coreIds.has(o.id as string));
   const [showExtras, setShowExtras] = useState(false);
   const extrasOpen = showExtras || (!!org && !coreIds.has(org.id as string));
   const extraVehicles = vehicles.filter((v) => extras.some((o) => o.id === v.organizationId)).length;
+  const toggleExtras = () => {
+    if (!extrasOpen) return setShowExtras(true);
+    setShowExtras(false);
+    // a reinforcement on screen keeps the group open, so it could never close: step back to a main corporation first
+    if (org && !coreIds.has(org.id as string)) {
+      setOrgId((core[0]?.id ?? null) as string | null);
+      setCreatingOrg(false);
+    }
+  };
   const reinforcementsToggle = extras.length ? (
-    <button type="button" className={styles.reinforcements} onClick={() => setShowExtras(!extrasOpen)} aria-expanded={extrasOpen}>
+    <button type="button" className={styles.reinforcements} onClick={toggleExtras} aria-expanded={extrasOpen}>
       <span>
         <b>Reforços</b>
         <small>

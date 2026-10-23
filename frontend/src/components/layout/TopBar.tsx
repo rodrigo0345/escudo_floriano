@@ -46,7 +46,7 @@ export function TopBar() {
     <header className={styles.top}>
       <div className={styles.brand}>
         <img className={styles.brandLogo} src="/escudo-floriano.png" alt="Escudo Floriano" />
-        Escudo Floriano <small>Coordenação de resposta a incêndios rurais</small>
+        <span className={styles.brandName}>Escudo Floriano</span> <small>Coordenação de resposta a incêndios rurais</small>
       </div>
       <div className={styles.selects}>
         {locations.length > 1 ? (
@@ -106,7 +106,7 @@ export function TopBar() {
       </div>
       <div className={styles.actionsGroup}>
         <button className={styles.helpLink} onClick={() => setHelpOpen(true)} title="Atalhos de teclado (?)">
-          <Icon name="keyboard" /> Atalhos
+          <Icon name="keyboard" /> <span className={styles.helpText}>Atalhos</span>
         </button>
         <a className={styles.apiLink} href="/swagger" target="_blank" rel="noopener noreferrer" title="Documentação interativa da API (Swagger)">
           API ↗

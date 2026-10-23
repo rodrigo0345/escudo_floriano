@@ -57,6 +57,7 @@ export class PeopleLayer {
   readonly group = new THREE.Group();
   private houses: House[] = [];
   private housePoints: THREE.Points | null = null;
+  private showHouses = true;
   private houseState: Int8Array = new Int8Array(0);
   private ign: Int16Array | null = null;
   private crowds: Crowd[] = [];
@@ -68,6 +69,16 @@ export class PeopleLayer {
 
   constructor(private readonly geo: Georef) {
     this.group.renderOrder = 7;
+  }
+
+  /** Whether the house dots are drawn (the crowds, rings and water of the plan stay either way); kept across reloads of the house list. */
+  get housesVisible(): boolean {
+    return this.showHouses;
+  }
+
+  setHousesVisible(on: boolean): void {
+    this.showHouses = on;
+    if (this.housePoints) this.housePoints.visible = on;
   }
 
   setHouses(houses: House[]): void {
@@ -92,6 +103,7 @@ export class PeopleLayer {
     this.housePoints = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
     this.housePoints.renderOrder = 7;
     this.housePoints.frustumCulled = false;
+    this.housePoints.visible = this.showHouses;
     this.group.add(this.housePoints);
     this.houseState = new Int8Array(houses.length).fill(-1);
     this.lastMinute = Number.NaN;
