@@ -418,9 +418,12 @@ export function PlansPanel() {
     const m = metricsOf(full.get(id));
     const onMap = !!sim && showing?.id === sim.id;
     const stats = sim?.stats;
-    const tile = (label: string, value: number | undefined, baseValue: number | undefined, unit = '') => (
+    const tile = (label: string, value: number | undefined, baseValue: number | undefined, unit = '', term?: GlossaryTerm) => (
       <div className={styles.planTile}>
-        <small>{label}</small>
+        <small>
+          {label}
+          {term ? <GlossaryTip term={term} /> : null}
+        </small>
         <b>{value == null ? '—' : `${nf(Math.round(value * 10) / 10)}${unit}`}</b>
         <Delta value={value} base={baseValue} />
       </div>
@@ -442,7 +445,7 @@ export function PlansPanel() {
           <div className={styles.planTiles}>
             {tile('Área ardida', stats?.burnedHa, baseStats?.burnedHa, ' ha')}
             {tile('Edifícios', stats?.buildingsAffected, baseStats?.buildingsAffected)}
-            {tile('Feridos', stats?.crewCasualties, undefined)}
+            {tile('Feridos', stats?.crewCasualties, undefined, '', 'casualties')}
             {tile('Meios', m?.units.committed, undefined)}
           </div>
         ) : (
