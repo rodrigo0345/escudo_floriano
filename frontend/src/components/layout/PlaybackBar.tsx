@@ -15,9 +15,9 @@ import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 
 import styles from './layout.module.css';
+import { SpeedControl } from './SpeedControl';
 
 const JUMPS = [15, 30, 60, 120, 180, 360, 540, 720];
-const SPEEDS = [1, 5, 10, 30, 60, 120, 240];
 /** Hour ticks under the scrubber: every hour on short runs, every two on long ones. */
 const tickStepMin = (duration: number) => (duration > 360 ? 120 : 60);
 
@@ -71,14 +71,12 @@ export function PlaybackBar() {
   const run = useAppStore((s) => s.run);
   const t = useAppStore((s) => s.t);
   const playing = useAppStore((s) => s.playing);
-  const speed = useAppStore((s) => s.speed);
   const locationId = useAppStore((s) => s.locationId);
   const ignitions = useAppStore((s) => s.ignitions);
   const customEvents = useAppStore((s) => s.customEvents);
   const keyframes = useAppStore((s) => s.weatherKeyframes);
   const capabilities = useAppStore((s) => s.capabilities);
   const setPlaying = useAppStore((s) => s.setPlaying);
-  const setSpeed = useAppStore((s) => s.setSpeed);
   const setTime = useAppStore((s) => s.setTime);
   const setCustomEvents = useAppStore((s) => s.setCustomEvents);
   const setScenario = useAppStore((s) => s.setScenario);
@@ -764,16 +762,7 @@ export function PlaybackBar() {
         )}
       </div>
 
-      <label className="mut">
-        Velocidade{' '}
-        <select value={speed} onChange={(e) => setSpeed(+e.target.value)}>
-          {SPEEDS.map((s) => (
-            <option key={s} value={s}>
-              {s} min/s
-            </option>
-          ))}
-        </select>
-      </label>
+      <SpeedControl />
     </footer>
   );
 }

@@ -451,6 +451,76 @@
   white-space: nowrap;
 }
 
+/* the welcome card shown once per session (WelcomeDialog), on the shortcut help's backdrop */
+.welcome {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 28px 20px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+
+.welcomeLogo {
+  height: 96px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+}
+
+.welcome h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.welcomeTag {
+  color: var(--acc);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.welcome p {
+  margin: 6px 0 8px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.welcome p.welcomeMotto {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+  font-style: italic;
+  color: var(--acc);
+}
+
+.welcomeStart {
+  min-width: 160px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  font-weight: 600;
+}
+
+.welcome kbd {
+  font: inherit;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
 .bar {
   grid-row: 4;
   display: flex;
@@ -944,6 +1014,142 @@
 
 .btnDelete:hover {
   background: rgba(239, 68, 68, 0.3);
+}
+
+/* playback speed: a button that opens a video-player style panel above the bar */
+.speed {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.speedButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.speedButton b {
+  display: inline-block;
+  min-width: 9ch; /* the longest label, "240 min/s", is 9 monospaced characters: "30 s/s" takes the same room and the button never grows */
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.speedPanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 14px);
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding: 12px 14px;
+  background: #111827;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.75);
+  color: #f3f4f6;
+  font-size: 12px;
+  z-index: 99;
+}
+
+.speedValue {
+  display: block;
+  margin: 2px 0 10px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.speedSlider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.speedSlider button {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.speedTrack {
+  flex: 1;
+  min-width: 0;
+}
+
+.speedTrack input[type='range'] {
+  display: block;
+  width: 100%;
+  margin: 0;
+  accent-color: #0284c7; /* the same blue as the active chip */
+  cursor: pointer;
+}
+
+/* the steps under the slider; the side padding is half the knob, so each mark sits under the knob's centre at that step */
+.speedTicks {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 7px 0;
+}
+
+.speedTicks i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.speedTicks i.speedTickOn {
+  background: #38bdf8;
+}
+
+.speedChipActive {
+  background: #0284c7 !important;
+  border-color: #38bdf8 !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.speedKeys {
+  display: block;
+  text-align: center;
+}
+
+.speedKeys kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  color: #e5e7eb;
+}
+
+.speedChips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.speedChips button {
+  padding: 5px 2px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {
