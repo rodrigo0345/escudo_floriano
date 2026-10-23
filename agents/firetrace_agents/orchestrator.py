@@ -75,12 +75,12 @@ MAX_CREWS_PER_SPOT = 6  # a task force: a real commander does not put a dozen en
 AIR_LEAD_MIN = 10  # an aircraft drops this long before the crews it supports arrive
 AIR_SPACING_M = 180.0  # two aircraft do not prepare the same stretch (about one work zone apart)
 MIN_USEFUL_WORK_MIN = 5  # a unit that would work less than this before the run ends is not sent (it stays free)
-DIRECT_ATTACK_KWM = 2500.0  # = the engines' head-on test in firefighter.py: past this (or the rules' noEffectFromKwm, if lower) they attack indirectly
-DIRECT_ATTACK_SPEED_MMIN = 8.0  # ... or when the head runs faster than this
+DIRECT_ATTACK_KWM = 12000.0  # DEMO BOOST (realistic 2500)  # = the engines' head-on test in firefighter.py: past this (or the rules' noEffectFromKwm, if lower) they attack indirectly
+DIRECT_ATTACK_SPEED_MMIN = 25.0  # DEMO BOOST (realistic 8)  # ... or when the head runs faster than this
 AIR_MIN_DAYLIGHT_MIN = 15  # an aircraft that would have less daylight than this left on arrival is not sent
 AIR_DROP_WET_MIN = 30.0  # = firefighter.AIR_DROP_WET_MIN: how long one water drop keeps the ground wet
 DEFAULT_AIR_WATER_KM = 5.0  # a helicopter's dip when no water point is known (farther = a longer rotation = weaker drops)
-EARLY_AIR_KWM = 2500.0  # = Rules.suppression.fullEffectUpToKwm when /rules has none: past it before the crews arrive, the aircraft go at once
+EARLY_AIR_KWM = 12000.0  # DEMO BOOST (realistic 2500)  # = Rules.suppression.fullEffectUpToKwm when /rules has none: past it before the crews arrive, the aircraft go at once
 WORKABLE_EDGE_SHARE = 0.5  # a fire whose head is past direct attack is still attacked on its flanks while at least this share of its edge can be worked
 MAX_ADVICE_SECTOR_CALLS = 4  # an advisor is asked about the sectors for at most this many groups of units per cycle (each group is a different picture of the fire); the rest follow the rules
 COMBAT_EFFECTS = frozenset({"crew_deployment", "fire_line", "aerial_drop", "structure_protection", "fuel_removal"})
