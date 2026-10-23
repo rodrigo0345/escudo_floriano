@@ -7,18 +7,40 @@ A commander does not do that: a crew that has finished stays out, engine running
 So every ground unit of the fire service whose last action ends well before the run ends gets a ``stage_resources`` action from that minute: it holds at the
 spot of its last job when the forecast fire does not reach it, else on the road it came by, as far forward as is still safe. The plan says so and why.
 A standing reserve (``stage_resources`` with no stated stay) is held to the end of the run too, instead of the backend's 30 minute default.
+
+The holds are added after the judge has made the plan safe, so they are held to the same standard here instead (``HoldingClock``): a spot is used only when
+none of the fires the plan was judged on (its forecast what-if and the wrong-wind ones) reaches it or the cells around it before the run ends plus the
+safety margin. A holding crew does no suppression, so those fires are the ones it would face. Without them, nobody holds: the unit goes home, as before.
 """
 from __future__ import annotations
 
 import math
 import re
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
 
 from .adaptation import _where
-from .placement import FireClock
+from .placement import BURNED_OUT_MIN, FireClock
 
 MIN_IDLE_MIN = 20  # a unit idle for less than this before the run ends just finishes
 BACKEND_DEFAULT_STAY_MIN = 30  # `Limits.DefaultActionWindowMinutes`: how long the backend's unit simulator keeps a unit on an action that states no stay
+HOLD_MARGIN_MIN = 10  # = Rules.safety.withdrawWhenFireArrivesInMinutes, the default when the backend's rules are not at hand
+
+
+@dataclass(frozen=True)
+class HoldingClock:
+    """Every fire a holding spot must stay clear of: the plan's forecast what-if and its wrong-wind runs (the judge's runs)."""
+
+    clocks: Sequence[FireClock]
+    margin_min: float = HOLD_MARGIN_MIN
+
+    def safe(self, lat: float, lon: float, start: float, end: float) -> bool:
+        """Free of fire, in every run, in its cell and the 8 around it from ``start`` to ``end`` plus the margin (burned out before, or reached after)."""
+        for clock in self.clocks:
+            reached = clock.reached_around(lat, lon)
+            if reached is not None and not (reached + BURNED_OUT_MIN <= start or reached > end + self.margin_min):
+                return False
+        return True
 
 
 def backend_end(action: dict[str, Any], unit: str) -> float:
@@ -56,9 +78,11 @@ def drop_unreachable_holds(plan: dict[str, Any], validation: dict[str, Any]) -> 
     return len(bad)
 
 
-def hold_idle_units(plan: dict[str, Any], clock: FireClock | None, run_minutes: int, ground_units: Mapping[str, Any], why: dict[str, int] | None = None,
+def hold_idle_units(plan: dict[str, Any], clock: FireClock | HoldingClock | None, run_minutes: int, ground_units: Mapping[str, Any], why: dict[str, int] | None = None,
                     routes: Mapping[str, Any] | None = None) -> int:
-    """Add the holding actions to ``plan`` (in place); returns how many units now hold. ``ground_units`` maps a unit id to its agent (fire engines and crews on foot)."""
+    """Add the holding actions to ``plan`` (in place); returns how many units now hold. ``ground_units`` maps a unit id to its agent (fire engines and crews on foot).
+
+    ``clock`` is where the fire goes; with none, no unit is held (a spot nobody can show is safe is not used) and only the standing reserves are extended."""
     if run_minutes <= 0:
         return 0
     held = 0
@@ -68,6 +92,9 @@ def hold_idle_units(plan: dict[str, Any], clock: FireClock | None, run_minutes: 
             start = float(((action.get("trigger") or {}).get("at") or {}).get("offsetMinutes") or 0) + max((float(r.get("etaMinutes") or 0) for r in action.get("resources") or []), default=0.0)
             action["expectedDurationMinutes"] = max(int(run_minutes - start), 30)
             action["holdUntil"] = {"offsetMinutes": int(run_minutes)}
+    if clock is None:
+        why["no fire data"] = why.get("no fire data", 0) + 1
+        return 0
 
     last: dict[str, tuple[float, dict[str, Any]]] = {}
     for action in plan["actions"]:
@@ -93,7 +120,7 @@ def hold_idle_units(plan: dict[str, Any], clock: FireClock | None, run_minutes: 
             continue
         stay = run_minutes - end
         origin = "do local da última tarefa"
-        if clock is not None and not clock.safe(spot["lat"], spot["lon"], end, run_minutes):
+        if not clock.safe(spot["lat"], spot["lon"], end, run_minutes):
             # the fire comes to that spot: wait on the road it drove in by, at the last point (towards the station) where it is safe for the rest of the run
             spot = next(({"lat": lat, "lon": lon} for lat, lon in _route_points(action, unit, routes) if clock.safe(lat, lon, end, run_minutes)), None)
             origin = "na estrada por onde chegou, fora do alcance do fogo previsto"

@@ -153,7 +153,7 @@ export function PlanRequestBox({ baseId, onPlans }: { baseId: string; onPlans: (
           <button className={styles.primaryButton} disabled={sending} onClick={() => void ask()}>
             {sending ? 'A enviar…' : 'Pedir novo plano aos agentes'}
           </button>
-          <small className="note">{t > 0 ? `Decide a partir de T+${Math.round(t)} min (o minuto no ecrã).` : 'Decide a partir do início.'} Substitui os planos anteriores.</small>
+          <small className="note">{t > 0 ? `Decide a partir de T+${Math.round(t)} min (o minuto no ecrã).` : 'Decide a partir do início.'} Substitui os planos propostos; o plano escolhido ou em execução fica.</small>
           {current?.status === 'failed' ? <small className="note">Último pedido falhou: {current.error}</small> : null}
         </>
       )}

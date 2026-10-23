@@ -45,7 +45,7 @@ const EVENT_TYPE_LABEL: Record<CustomWeatherEventType, string> = {
   wind_scale: 'Vento ×',
   wind_set: 'Vento fixo',
   gust_burst: 'Rajada',
-  front_passage: 'Frente',
+  front_passage: 'Vento',
   temperature_shift: 'Temperatura',
   humidity_shift: 'Humidade',
   heat_dry: 'Calor',
@@ -461,29 +461,11 @@ export function SimulationForm() {
             <button
               type="button"
               className={styles.quickAddBtn}
-              onClick={() => addCustomRangeEvent('wind_shift')}
-              disabled={!!capNote('wind_shift')}
-              title={capNote('wind_shift') ?? 'Adicionar rotação do vento'}
-            >
-              <Icon name="wind" /> Vento
-            </button>
-            <button
-              type="button"
-              className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('heat_dry')}
               disabled={!!capNote('heat_dry')}
               title={capNote('heat_dry') ?? 'Adicionar calor e seca'}
             >
               <Icon name="sun" /> Calor
-            </button>
-            <button
-              type="button"
-              className={styles.quickAddBtn}
-              onClick={() => addCustomRangeEvent('wind_set')}
-              disabled={!!capNote('wind_set')}
-              title={capNote('wind_set') ?? 'Fixar vento e rumo numa janela'}
-            >
-              <Icon name="wind" /> Vento fixo
             </button>
             <button
               type="button"
@@ -499,9 +481,9 @@ export function SimulationForm() {
               className={styles.quickAddBtn}
               onClick={() => addCustomRangeEvent('front_passage')}
               disabled={!!capNote('front_passage')}
-              title={capNote('front_passage') ?? 'Adicionar passagem de frente (vento, temperatura, humidade e chuva)'}
+              title={capNote('front_passage') ?? 'Adicionar mudança de vento (rumo e velocidade, com temperatura, humidade e chuva)'}
             >
-              <Icon name="front" /> Frente
+              <Icon name="wind" /> Vento
             </button>
             <button
               type="button"

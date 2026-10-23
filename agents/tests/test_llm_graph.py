@@ -75,7 +75,7 @@ def test_a_valid_answer_is_used_and_its_reason_kept() -> None:
     assert llm.drain_notes() == []  # drained
     assert llm.calls == 1 and llm.tokens == {"input": 100, "output": 20}
     system, human = model.calls[0][1], model.calls[0][2]
-    assert "LACES" in system and "encosta" in system and "Usa APENAS os ids" in system  # the doctrine and the answer rules are in the instructions
+    assert "LACES" in system and "slope" in system and "Use ONLY the ids" in system  # the doctrine and the answer rules are in the instructions
     assert json.loads(human.split("\n", 1)[1])["sectors"][0]["id"] == "S1"  # and the briefing is the JSON it was given
 
 
@@ -95,7 +95,7 @@ def test_each_organization_has_its_own_agent_with_its_own_instructions() -> None
     assert llm.review({}) == "Plano ofensivo.\n- A confirmar: terreno a norte"
     prompts = {name: system for name, system, _human in model.calls}
     assert len(set(prompts.values())) == 5  # five different agents
-    assert "Proteção Civil" in prompts["EvacuationOrder"] and "GNR" in prompts["ClosureDecision"] and "INEM" in prompts["StandbyDecision"]
+    assert "Civil Protection" in prompts["EvacuationOrder"] and "GNR" in prompts["ClosureDecision"] and "INEM" in prompts["StandbyDecision"]
     assert {n["agent"] for n in llm.drain_notes()} == {"Proteção Civil", "GNR", "INEM", "Comando"}
 
 
@@ -105,7 +105,7 @@ def test_an_answer_that_breaks_a_rule_is_sent_back_with_what_was_wrong_and_the_s
     llm, model = advisor({BombeirosDecision: [bad, good]})
     assert llm.assign_sectors(BRIEF_SECTORS) == {"sq1": "S2"}
     assert len(model.calls) == 2 and llm.calls == 1
-    assert "problemas" in model.calls[1][2] and "S9" in model.calls[1][2]  # the second call carries the feedback
+    assert "problems" in model.calls[1][2] and "S9" in model.calls[1][2]  # the second call carries the feedback
 
 
 def test_a_crew_on_foot_is_never_sent_up_a_steep_slope_the_fire_is_running_up() -> None:
@@ -201,9 +201,9 @@ def test_a_crew_on_foot_is_never_sent_into_fire_too_intense_for_hand_tools() -> 
 
 def test_each_agent_gets_only_its_own_doctrine() -> None:
     from firetrace_agents.llm.prompts import PROMPTS
-    assert "kW/m" in PROMPTS["bombeiros"] and "Ancorar" in PROMPTS["bombeiros"]
-    assert "Ancorar" not in PROMPTS["gnr"] and "Ancorar" not in PROMPTS["inem"]  # no fire tactics in the other agents' prompts
-    assert all("Usa APENAS os ids" in p for p in PROMPTS.values())
+    assert "kW/m" in PROMPTS["bombeiros"] and "Anchor" in PROMPTS["bombeiros"]
+    assert "Anchor" not in PROMPTS["gnr"] and "Anchor" not in PROMPTS["inem"]  # no fire tactics in the other agents' prompts
+    assert all("Use ONLY the ids" in p for p in PROMPTS.values())
     assert max(len(p) for p in PROMPTS.values()) < 3200  # short prompts: tokens are paid on every call
 
 

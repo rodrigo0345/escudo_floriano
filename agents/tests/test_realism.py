@@ -51,6 +51,25 @@ def test_a_crew_whose_spot_the_fire_reaches_waits_on_the_road_it_came_by() -> No
     assert spot != {"lat": 0.9995, "lon": 0.0005}  # not where the fire comes
 
 
+def test_a_holding_spot_must_be_clear_of_every_fire_the_plan_was_judged_on() -> None:
+    from firetrace_agents.holding import HoldingClock
+
+    action = attack("a1", "u1", at=0, stay=60, where=(0.0005, 0.9995))
+    action["resources"][0]["route"] = {"type": "LineString", "coordinates": [[0.0095, 0.9005], [0.0005, 0.9995]]}  # station -> job
+    forecast, wrong_wind = clock({}), clock({(1, 1): 400})  # only the wrong-wind fire comes, to the cell beside the job
+    plan = {"actions": [action]}
+    assert hold_idle_units(plan, HoldingClock([forecast, wrong_wind]), 720, {"u1": agent("u1")}) == 1
+    spot = next(a for a in plan["actions"] if a["id"] == "hold-u1")["stagingArea"]["position"]
+    assert spot != {"lat": 0.9995, "lon": 0.0005}  # the forecast alone would have kept it there
+
+
+def test_without_fire_data_nobody_holds() -> None:
+    plan = {"actions": [attack("a1", "u1", at=0, stay=60)]}
+    why: dict[str, int] = {}
+    assert hold_idle_units(plan, None, 720, {"u1": agent("u1")}, why) == 0 and why == {"no fire data": 1}
+    assert [a["id"] for a in plan["actions"]] == ["a1"]  # it goes home, as the backend sends it
+
+
 def test_stage_resources_are_held_to_the_end_of_the_run_not_the_backends_30_minutes() -> None:
     plan = {"actions": [{"id": "reserve-0", "type": "stage_resources", "resources": [{"resourceId": "u9", "etaMinutes": 15}], "trigger": {"kind": "at_time", "at": {"offsetMinutes": 5}}}]}
     hold_idle_units(plan, None, 720, {})

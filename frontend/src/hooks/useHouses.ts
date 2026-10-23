@@ -28,7 +28,7 @@ export function useHouses(): House[] {
     }
     let cancelled = false;
     void locationsApi
-      .buildings(locationId, { limit: 30000, minBuildings: 1 })
+      .buildings(locationId, { limit: 20000, minBuildings: 1 }) // 20000: the contract's maximum (`listBuildings`)
       .then((collection) => {
         const list: House[] = [];
         for (const f of (collection as unknown as { features?: { geometry?: { coordinates?: number[] } }[] }).features ?? []) {

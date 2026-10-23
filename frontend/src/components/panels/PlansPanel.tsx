@@ -57,8 +57,22 @@ function latestPair(plans: PlanSummary[]): PlanSummary[] {
   return plans.length ? [plans.reduce(newest)] : [];
 }
 
+/** The plans the operator is offered: the ones they chose or are running (always, whatever the agents publish later), then the newest A and B still to decide on. */
+function plansShown(plans: PlanSummary[]): PlanSummary[] {
+  const rank = (p: PlanSummary) => (p.status === 'active' ? 0 : 1);
+  const pinned = plans
+    .filter((p) => p.status === 'active' || p.status === 'selected')
+    .sort((a, b) => rank(a) - rank(b) || String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  const fresh = latestPair(plans.filter((p) => p.status === 'proposed' || p.status === 'discarded'));
+  const shown = [...pinned, ...fresh];
+  return shown.length ? shown : latestPair(plans); // only closed plans left (completed, cancelled): show the newest pair as history
+}
+
 /** The operator's path for a plan (`POST /select`, `POST /activate`, `PATCH status=completed`), as the steps the card shows. */
 const PLAN_FLOW: PlanStatus[] = ['proposed', 'selected', 'active', 'completed'];
+
+/** What the backend lets the operator delete (`PlanPolicy`): a plan that is or was in execution stays as history. */
+const DELETABLE: PlanStatus[] = ['proposed', 'selected', 'discarded'];
 
 /** What a plan commits when it is put into execution: the backend dispatches every vehicle and crew and opens every road closure. */
 function commitmentOf(plan: Plan | undefined): { units: number; closures: number } {
@@ -262,7 +276,7 @@ export function PlansPanel() {
       const listed = bySim.length > 0
         ? bySim
         : (baseline.scenarioId ? await plansApi.all({ locationId: locationId ?? undefined, scenarioId: baseline.scenarioId }) : []);
-      const ordered = latestPair(listed); // only the newest A and the newest B: older plans are never offered
+      const ordered = plansShown(listed); // the plan being run or chosen, then the newest A and B: older plans are never offered
       setBase(baseline);
       setPlans(ordered);
       setOlder(listed.filter((p) => !ordered.includes(p)).sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))));
@@ -387,14 +401,12 @@ export function PlansPanel() {
     }
   };
 
-  /** Deletes a plan once the operator confirms it in its button (it cannot be undone): old plans need not pile up. */
+  /** Deletes a plan once the operator confirms it in its button (it cannot be undone): old plans need not pile up. Only DELETABLE ones are offered. */
   const removePlan = async (plan: PlanSummary) => {
     const id = plan.id as string;
     const name = `${plan.variant ? `${plan.variant} ` : ''}«${plan.title}»`;
-    const active = plan.status === 'active';
     setBusy(`del:${id}`);
     try {
-      if (active) await plansApi.patch(id, { status: 'completed' }); // a plan under way cannot be deleted: close it first
       await plansApi.delete(id);
       if (open?.id === id) {
         setOpen(null);
@@ -449,11 +461,15 @@ export function PlansPanel() {
     const onMap = !!sim && showing?.id === sim.id;
     const stats = sim?.stats;
     const { units, closures } = commitmentOf(full.get(id));
-    const other = plans.find((p) => p.id !== id)?.variant;
+    // choosing this plan discards the other plans still proposed (the backend leaves a chosen or running one alone)
+    const others = plans.filter((p) => p.id !== id && p.status === 'proposed').map((p) => p.variant).filter(Boolean);
+    const other = others.length > 1 ? `Os planos ${others.join(' e ')} ficam descartados.` : others.length === 1 ? `O plano ${others[0]} fica descartado.` : '';
+    // the plan being run or chosen stays on top, whatever the agents publish later: full width when new plans are proposed beside it
+    const pinned = status === 'active' || status === 'selected';
     // the one next step of this plan, said with what it does
     const next =
       status === 'proposed'
-        ? { step: 'select' as const, label: 'Escolher este plano', hint: `${other ? `O plano ${other} fica descartado. ` : ''}Ainda não se envia nenhum meio: pode editar e simular antes.` }
+        ? { step: 'select' as const, label: 'Escolher este plano', hint: `${other ? `${other} ` : ''}Ainda não se envia nenhum meio: pode editar e simular antes.` }
         : status === 'selected'
           ? {
               step: 'activate' as const,
@@ -476,7 +492,7 @@ export function PlansPanel() {
     return (
       <div
         key={id}
-        className={`${styles.planCard} ${onMap ? styles.planCardOn : ''} ${variant === 'B' ? styles.planCardB : ''} ${closedNote ? styles.planCardClosed : ''}`}
+        className={`${styles.planCard} ${onMap ? styles.planCardOn : ''} ${variant === 'B' ? styles.planCardB : ''} ${closedNote ? styles.planCardClosed : ''} ${pinned ? styles.planCardPinned : ''} ${pinned && plans.length > 2 ? styles.planCardWide : ''}`}
         title={plan.title}
       >
         <div className={styles.planCardHead}>
@@ -556,15 +572,17 @@ export function PlansPanel() {
               {editingId === id ? 'A editar…' : 'Editar'}
             </button>
           ) : null}
-          <ConfirmButton
-            className={styles.dangerButton}
-            disabled={busy === `del:${id}`}
-            yes="Sim, apagar"
-            detail={status === 'active' ? 'Está em execução: primeiro é encerrado (os meios regressam). Não se pode desfazer.' : 'Não se pode desfazer.'}
-            onConfirm={() => void removePlan(plan)}
-          >
-            {busy === `del:${id}` ? 'A apagar…' : 'Apagar'}
-          </ConfirmButton>
+          {DELETABLE.includes(status) ? (
+            <ConfirmButton
+              className={styles.dangerButton}
+              disabled={busy === `del:${id}`}
+              yes="Sim, apagar"
+              detail="Não se pode desfazer."
+              onConfirm={() => void removePlan(plan)}
+            >
+              {busy === `del:${id}` ? 'A apagar…' : 'Apagar'}
+            </ConfirmButton>
+          ) : null}
         </div>
       </div>
     );
@@ -654,7 +672,9 @@ export function PlansPanel() {
           {older.length ? (
             <div className={`${styles.group} ${styles.spaced}`}>
               <b>Planos anteriores ({older.length})</b>
-              <small className="note">Já não são propostos (há um A e um B mais recentes). Apague os que não interessam.</small>
+              <small className="note">
+                Já não são propostos (há um A e um B mais recentes). Apague os que não interessam; os que estiveram em execução ficam como histórico.
+              </small>
               {older.map((plan) => (
                 <Row key={plan.id as string}>
                   <span className={styles.actionText}>
@@ -665,9 +685,13 @@ export function PlansPanel() {
                       {plan.createdAt ? ` · ${new Date(plan.createdAt).toLocaleString('pt-PT')}` : ''}
                     </small>
                   </span>
-                  <ConfirmButton className={styles.dangerButton} yes="Sim, apagar" disabled={busy === `del:${plan.id as string}`} onConfirm={() => void removePlan(plan)}>
-                    {busy === `del:${plan.id as string}` ? '…' : 'Apagar'}
-                  </ConfirmButton>
+                  {DELETABLE.includes((plan.status ?? 'proposed') as PlanStatus) ? (
+                    <ConfirmButton className={styles.dangerButton} yes="Sim, apagar" disabled={busy === `del:${plan.id as string}`} onConfirm={() => void removePlan(plan)}>
+                      {busy === `del:${plan.id as string}` ? '…' : 'Apagar'}
+                    </ConfirmButton>
+                  ) : (
+                    <small className="note">histórico</small>
+                  )}
                 </Row>
               ))}
             </div>

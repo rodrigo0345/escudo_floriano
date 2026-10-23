@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 # The spec's server base is `/api/v1` (`servers[0].url`): the real backend answers 404 on unprefixed paths.
 DEFAULT_BASE_URL = "http://localhost:8080/api/v1"
 
-
 class ApiProblem(Exception):
     """The server answered ``application/problem+json``."""
 
@@ -345,8 +344,11 @@ class FiretraceClient:
             simulation = self.wait_for_simulation(simulation["id"], timeout_seconds=timeout_seconds)
         return simulation
 
-    def list_simulations(self, *, kind: str | None = None, status: str | None = None, updated_after: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        """``GET /simulations`` (all pages): filter by ``kind``, ``status`` (comma list) and ``updatedAfter`` (RFC 3339)."""
+    def list_simulations(
+        self, *, kind: str | None = None, status: str | None = None, updated_after: str | None = None, scenario_id: str | None = None, plan_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """``GET /simulations`` (all pages): filter by ``kind``, ``status`` (comma list), ``updatedAfter`` (RFC 3339), ``scenarioId`` and ``planId``."""
         params: dict[str, Any] = {"limit": limit}
         if kind:
             params["kind"] = kind
@@ -354,6 +356,10 @@ class FiretraceClient:
             params["status"] = status
         if updated_after:
             params["updatedAfter"] = updated_after
+        if scenario_id:
+            params["scenarioId"] = scenario_id
+        if plan_id:
+            params["planId"] = plan_id
         page = self._request("GET", "/simulations", params=params)
         items: list[dict[str, Any]] = list(page.get("items", []))
         cursor = page.get("nextCursor")
@@ -415,27 +421,6 @@ class FiretraceClient:
             items.extend(page.get("items", []))
             cursor = page.get("nextCursor")
         return items
-
-    def list_all_plans(self) -> list[dict[str, Any]]:
-        """``GET /plans`` (every page): every plan the backend holds, whatever baseline it belongs to."""
-        items: list[dict[str, Any]] = []
-        cursor: str | None = None
-        while True:
-            params: dict[str, Any] = {"limit": 200}
-            if cursor:
-                params["cursor"] = cursor
-            page = self._request("GET", "/plans", params=params)
-            items.extend(page.get("items", []))
-            cursor = page.get("nextCursor")
-            if not cursor:
-                return items
-
-    def close_plan(self, plan_id: str) -> None:
-        """``PATCH /plans/{id}`` to ``completed``: an active plan has to be closed before it can be deleted."""
-        response = self._http.patch(self._fill("/plans/{planId}", planId=plan_id), content=json.dumps({"status": "completed"}), headers={"Content-Type": "application/merge-patch+json"})
-        if response.status_code >= 400:
-            content_type = response.headers.get("content-type", "")
-            raise ApiProblem(response.status_code, response.json() if "application/problem+json" in content_type else {"code": "http_error", "title": response.text[:400]})
 
     def delete_simulation(self, simulation_id: str) -> None:
         """``DELETE /simulations/{id}``: a what-if run nobody needs any more (a missing one is fine)."""

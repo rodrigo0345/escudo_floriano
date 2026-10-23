@@ -74,7 +74,7 @@ export const WEATHER_EVENT_ICON: Record<string, IconName> = {
   wind_scale: 'gust',
   wind_set: 'wind',
   gust_burst: 'gust',
-  front_passage: 'front',
+  front_passage: 'wind', // shown to the operator as "Vento"
   temperature_shift: 'thermometer',
   humidity_shift: 'humidity',
   heat_dry: 'sun',

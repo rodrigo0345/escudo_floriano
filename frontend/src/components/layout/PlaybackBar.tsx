@@ -34,21 +34,19 @@ const EVENT_LABEL: Record<string, string> = {
   gust_burst: 'Rajada forte',
   humidity_shift: 'Humidade muda',
   temperature_shift: 'Temperatura muda',
-  front_passage: 'Frente passa',
+  front_passage: 'Vento muda',
   precipitation: 'Chuva',
   custom_series: 'Série própria',
 };
 
-/** The popover's event-type pills, in display order — also the G6 capability-gating list. */
+/** The popover's event-type pills, in display order — also the G6 capability-gating list. Wind is set through the front ("Vento": wind, temperature,
+ * humidity and rain together); the separate rotation, multiplier and fixed-wind events are not offered (existing ones still show and can be removed). */
 const TYPE_PILLS: { type: CustomWeatherEventType; icon: IconName; label: string }[] = [
   { type: 'rain', icon: 'rain', label: 'Chuva' },
   { type: 'storm', icon: 'storm', label: 'Trovoada' },
   { type: 'clouds', icon: 'cloud', label: 'Nuvens' },
-  { type: 'wind_shift', icon: 'wind', label: 'Vento' },
-  { type: 'wind_scale', icon: 'gust', label: 'Vento ×' },
-  { type: 'wind_set', icon: 'wind', label: 'Vento fixo' },
   { type: 'gust_burst', icon: 'gust', label: 'Rajada' },
-  { type: 'front_passage', icon: 'front', label: 'Frente' },
+  { type: 'front_passage', icon: 'wind', label: 'Vento' },
   { type: 'temperature_shift', icon: 'thermometer', label: 'Temp.' },
   { type: 'humidity_shift', icon: 'humidity', label: 'Humidade' },
   { type: 'heat_dry', icon: 'sun', label: 'Calor' },
@@ -295,6 +293,7 @@ export function PlaybackBar() {
   // Open popover to edit an existing custom event
   const handleOpenEditEvent = (ev: TimelineRangeEvent, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!TYPE_PILLS.some((pill) => pill.type === ev.type)) return; // a kind no longer offered: it shows and can be removed, not edited
     setKeyframeEditId(null);
     setSelection({
       startMin: ev.startMinute,
@@ -363,7 +362,7 @@ export function PlaybackBar() {
         label = `Rajada ${popoverPeakGustKmh} km/h (T+${startMin}–${endMin})`;
         break;
       case 'front_passage':
-        label = `Frente ${compass(popoverWindDeg)} ${popoverWindKmh} km/h · ${popoverRainMmH} mm/h (T+${startMin}–${endMin})`;
+        label = `Vento ${compass(popoverWindDeg)} ${popoverWindKmh} km/h · ${popoverRainMmH} mm/h (T+${startMin}–${endMin})`;
         break;
       case 'temperature_shift':
         label = popoverSetMode

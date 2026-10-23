@@ -290,7 +290,7 @@ class Watcher:
                                                     "progress": {"phase": "simulating", "percent": 80, "message": f"Planos {variants} publicados; a correr o what-if de cada um"}})
             self._simulate(sim_id, published, progress=report)
             if self.settings.keep_only_latest:
-                self.prune_to(plan_ids)
+                self.prune_to(sim_id, plan_ids)
             self._close(req_id, "done", plan_ids=plan_ids, message=f"Planos {variants} prontos para comparar")
             return True
         except Exception as error:  # noqa: BLE001 — the operator must hear why, not wait for a request that never ends
@@ -298,36 +298,41 @@ class Watcher:
             self._close(req_id, "failed", error=f"{type(error).__name__}: {error}"[:2000])
             return False
 
-    def prune_to(self, keep_plan_ids: list[str]) -> tuple[int, int]:
-        """Delete every plan except ``keep_plan_ids`` and every what-if run that is not one of theirs (the baselines stay): the operator sees the latest pair only.
+    PRUNABLE = ("proposed", "discarded")  # what a new pair replaces; selected, active, completed and cancelled plans are the operator's execution history
 
-        An active plan is closed first (a plan under way cannot be deleted). Returns ``(plans, runs)`` deleted. Whatever cannot be deleted is left and logged.
+    def prune_to(self, simulation_id: str, keep_plan_ids: list[str]) -> tuple[int, int]:
+        """Delete the plans a request replaced, so the operator sees the latest pair: the older ``proposed``/``discarded`` plans of the same scenario (of this
+        baseline alone when it has no scenario) and their what-if runs. Other scenarios, the baselines and the execution history stay.
+
+        Runs only once every kept plan has a succeeded what-if run (a pair that cannot be compared does not replace the previous one). Returns ``(plans, runs)``
+        deleted; whatever cannot be deleted is left and logged, and a failed cleanup never fails the request.
         """
         keep = set(keep_plan_ids)
         plans_gone = runs_gone = 0
         try:
-            for plan in self.client.list_all_plans():
-                plan_id = str(plan["id"])
-                if plan_id in keep:
-                    continue
-                try:
-                    if plan.get("status") == "active":
-                        self.client.close_plan(plan_id)
-                    self.client.delete_plan(plan_id)
-                    plans_gone += 1
-                except ApiProblem as error:
-                    log.warning("prune: plan %s kept [%s]: %s", plan_id, error.code, error)
-            for run in self.client.list_simulations(kind="what_if", limit=200):
-                if str(run.get("planId") or "") in keep:
-                    continue
-                try:
-                    self.client.delete_simulation(str(run["id"]))
-                    runs_gone += 1
-                except ApiProblem as error:
-                    log.warning("prune: run %s kept [%s]: %s", run.get("id"), error.code, error)
-        except ApiProblem as error:
-            log.warning("prune: %s", error)
-        log.info("prune: %d old plans and %d old what-if runs deleted; %d plans kept", plans_gone, runs_gone, len(keep))
+            if not all(self.client.list_simulations(kind="what_if", plan_id=plan_id, status="succeeded") for plan_id in keep):
+                log.info("prune: skipped, the new pair's what-if runs did not all succeed")
+                return 0, 0
+            scenario_id = self.client.get_simulation(simulation_id).get("scenarioId")
+            baselines = [str(s["id"]) for s in self.client.list_simulations(kind="baseline", scenario_id=str(scenario_id))] if scenario_id else []
+            if simulation_id not in baselines:
+                baselines.append(simulation_id)
+            for baseline_id in baselines:
+                for plan in self.client.list_plans(baseline_id):
+                    plan_id = str(plan["id"])
+                    if plan_id in keep or plan.get("status") not in self.PRUNABLE:
+                        continue
+                    try:
+                        self.client.delete_plan(plan_id)
+                        plans_gone += 1
+                        for run in self.client.list_simulations(kind="what_if", plan_id=plan_id):
+                            self.client.delete_simulation(str(run["id"]))
+                            runs_gone += 1
+                    except ApiProblem as error:
+                        log.warning("prune: plan %s kept [%s]: %s", plan_id, error.code, error)
+        except Exception as error:  # noqa: BLE001 — the pair is ready: a cleanup that fails is logged, not reported as a failed request
+            log.warning("prune: %s: %s", type(error).__name__, error)
+        log.info("prune: %d replaced plans and %d of their what-if runs deleted; %d plans kept", plans_gone, runs_gone, len(keep))
         return plans_gone, runs_gone
 
     def _close(self, req_id: str, status: str, *, plan_ids: list[str] | None = None, error: str | None = None, message: str | None = None) -> None:
