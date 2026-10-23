@@ -39,7 +39,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from .client import ApiProblem, FiretraceClient
 from .contracts import UNSAFE_ON_WIRE, validate_against_spec
-from .firefighter import ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
+from .firefighter import HANDLINE_BUILD_MIN, WET_LINE_BUILD_MIN, ActionProposal, DecisionMessage, FirefighterAgent, Situation, situation_from_simulation
 from .advisor import (
     Advisor, AdvisorLog, NullAdvisor, evacuation_brief, sector_brief, sector_id, unit_brief, valid_closures, valid_evacuation_order, valid_sector_choice, valid_shelters,
     valid_standby,
@@ -52,7 +52,7 @@ from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, GnrPlan, closure_a
 from .capacity import front_need_m, line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
 from .joint import link_organizations
-from .placement import FireClock, black_site, edge_site, stay_ahead, route_in_fire
+from .placement import FireClock, black_site, defend_window, edge_site, stay_ahead, route_in_fire, wait_before
 from .support import STANDBY_AMBULANCES, SupportAgents, SupportPlan
 from .terrain import TerrainReader, apply_to_effect as apply_terrain_effect
 from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, line_across, outline_sectors, plan_sectors, slot_shift, with_preferences, zone_around
@@ -70,17 +70,17 @@ FRONT_LOOKAHEAD_MIN = 30  # crews are placed on the front the fire will have thi
 FORCE_RADIUS_M = 900.0  # crews within this of each other are one group (a "grupo de combate")
 FORCE_MIN_CREWS = 3  # a group this big gets an ambulance post of its own
 FORWARD_POSTS = 2
-SPOT_SPACING_M = 220.0  # crews closer than this are "in the same place"
-MAX_CREWS_PER_SPOT = 3  # a task force: a real commander does not put a dozen engines on one spot while the rest of the edge burns; the others wait for the next wave
+SPOT_SPACING_M = 50.0  # crews closer than this are "in the same place"
+MAX_CREWS_PER_SPOT = 6  # a task force: a real commander does not put a dozen engines on one spot while the rest of the edge burns; the others wait for the next wave
 AIR_LEAD_MIN = 10  # an aircraft drops this long before the crews it supports arrive
 AIR_SPACING_M = 180.0  # two aircraft do not prepare the same stretch (about one work zone apart)
-MIN_USEFUL_WORK_MIN = 20  # a unit that would work less than this before the run ends is not sent (it stays free)
+MIN_USEFUL_WORK_MIN = 5  # a unit that would work less than this before the run ends is not sent (it stays free)
 DIRECT_ATTACK_KWM = 2500.0  # = the engines' head-on test in firefighter.py: past this (or the rules' noEffectFromKwm, if lower) they attack indirectly
 DIRECT_ATTACK_SPEED_MMIN = 8.0  # ... or when the head runs faster than this
 AIR_MIN_DAYLIGHT_MIN = 15  # an aircraft that would have less daylight than this left on arrival is not sent
-AIR_DROP_WET_MIN = 20.0  # = firefighter.AIR_DROP_WET_MIN: how long one water drop keeps the ground wet
-DEFAULT_AIR_WATER_KM = 5.0  # a helicopter's dip when no water point is known
-EARLY_AIR_KWM = 1700.0  # = Rules.suppression.fullEffectUpToKwm when /rules has none: past it before the crews arrive, the aircraft go at once
+AIR_DROP_WET_MIN = 30.0  # = firefighter.AIR_DROP_WET_MIN: how long one water drop keeps the ground wet
+DEFAULT_AIR_WATER_KM = 5.0  # a helicopter's dip when no water point is known (farther = a longer rotation = weaker drops)
+EARLY_AIR_KWM = 2500.0  # = Rules.suppression.fullEffectUpToKwm when /rules has none: past it before the crews arrive, the aircraft go at once
 WORKABLE_EDGE_SHARE = 0.5  # a fire whose head is past direct attack is still attacked on its flanks while at least this share of its edge can be worked
 MAX_ADVICE_SECTOR_CALLS = 4  # an advisor is asked about the sectors for at most this many groups of units per cycle (each group is a different picture of the fire); the rest follow the rules
 COMBAT_EFFECTS = frozenset({"crew_deployment", "fire_line", "aerial_drop", "structure_protection", "fuel_removal"})
@@ -529,14 +529,30 @@ class OrchestratorAgent:
             return []
         decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
         unsafe: list[str] = []
+        planner: TravelPlanner | None = None
         for agent in self.agents:
             assignment = result.assignments.get(agent.agent_id)
             eta = self._arrival.get(agent.agent_id)
+            houses = assignment is not None and assignment.place is not None and assignment.place.get("position") and assignment.place.get("assetType") == "building_zone"
+            if houses and agent.tier is not FirefighterTier.HELICOPTER:
+                # timed on its own road to the houses, not on the drive to the fire (which a unit sent from the field may not even have)
+                planner = planner or TravelPlanner(self.client, location_id=location_id, simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules,
+                                                   cache=self._routes, avoid_fire=True, origins=self.origins)
+                route = planner.eta(agent, assignment.place["position"])
+                eta = float(route.arrival_minutes) if route.reachable and route.arrival_minutes is not None else eta
             if agent.tier is FirefighterTier.HELICOPTER or assignment is None or eta is None:
                 continue
             arrive = decided_at + eta
+            if houses:
+                # a patch of houses: the engine gets there in time to prepare it, not hours before the fire (nor after it has burned), and leaves before the fire arrives
+                fire_in = (assignment.place.get("arrivalMinute") or {}).get("p50")
+                stay, wait = defend_window(clock, assignment.place["position"], arrive, decided_at + float(fire_in) if fire_in is not None else None)
+                result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay, start_after=eta + wait if wait >= 1 else None)
+                if stay == 0:
+                    unsafe.append(agent.agent_id)
+                continue
             if assignment.place is not None and assignment.place.get("position"):
-                # defending houses or evacuating a place: the crew prepares it and leaves before the fire gets there (a crew that would arrive too late is not sent)
+                # evacuating a place: the crew goes at once and leaves before the fire gets there (a crew that would arrive too late is not sent)
                 stay = stay_ahead(clock, assignment.place["position"], arrive, situation.work_minutes if situation.initial_attack else AHEAD_STAY_MIN * 2)
                 result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay)
                 if stay == 0:
@@ -559,7 +575,15 @@ class OrchestratorAgent:
                     continue
                 assignment = replace(assignment, reserve=True)  # no burned ground within its reach yet: it works ahead of the fire, while that is safe
             stay = stay_ahead(clock, assignment.sector.position, arrive, AHEAD_STAY_MIN)
-            result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay)
+            direct = agent.tier is FirefighterTier.TRUCK and not self._too_strong(situation, assignment.sector)
+            build = None if direct else (WET_LINE_BUILD_MIN if agent.tier is FirefighterTier.TRUCK else HANDLINE_BUILD_MIN)  # its line (firefighter.py's fallback)
+            if build is not None and stay < build:
+                stay = 0  # it would leave before its line is finished: an unfinished line holds nothing, and the fire gets to it first
+            if build is not None and (burned := clock.reached(assignment.sector.lat, assignment.sector.lon)) is not None and burned <= arrive:
+                stay = 0  # a line on ground the fire has already burned holds nothing (stay_ahead counts burned-out ground as safe to stand on, which it is)
+            # a direct attack works only while the crew is there: it sets off so as to be working when the fire comes, not an hour before it
+            wait = wait_before(clock, assignment.sector.position, arrive, stay) if stay and direct else 0.0
+            result.assignments[agent.agent_id] = replace(assignment, stay_minutes=stay, start_after=eta + wait if wait >= 1 else assignment.start_after)
             if stay == 0:
                 unsafe.append(agent.agent_id)
         return unsafe
@@ -704,13 +728,15 @@ class OrchestratorAgent:
         if early and aircraft and first_ground is not None and self._early_air_attack(situation, result, aircraft, first_ground + AIR_LEAD_MIN):
             return
         if not result.initial_attack:
-            return  # no crews on the outline to prepare the ground for: the aircraft keep their own sectors
+            self._air_off_the_head(result, situation, aircraft)  # no crews on the outline to prepare the ground for: the aircraft keep their own sectors, where drops still work
+            return
         targets: list[tuple[float, Sector]] = []
         for eta, assignment in crews:  # one stretch per aircraft, in the order the crews arrive
             if all(distance_m(assignment.sector.lat, assignment.sector.lon, s.lat, s.lon) > 2 * AIR_SPACING_M for _e, s in targets):
                 targets.append((eta, assignment.sector))
         if not targets and result.assignments:
-            active = [a.sector for a in result.assignments.values() if a.sector is not None]
+            limit = self._no_effect_kwm(situation)
+            active = [a.sector for a in result.assignments.values() if a.sector is not None and a.sector.intensity_kwm < limit]
             for s in active:
                 if all(distance_m(s.lat, s.lon, other.lat, other.lon) > 2 * AIR_SPACING_M for _e, other in targets):
                     targets.append((0.0, s))
@@ -730,6 +756,57 @@ class OrchestratorAgent:
                     start_after=max(eta - AIR_LEAD_MIN + stagger, 0.0),
                     slot=slot,
                 )
+
+    @staticmethod
+    def _no_effect_kwm(situation: Situation) -> float:
+        """``Rules.suppression.noEffectFromKwm``: past it the backend gives direct attack (crews and drops) no effect at all."""
+        return float((((situation.rules or {}).get("suppression") or {}).get("noEffectFromKwm")) or DEFAULT_NO_EFFECT_KWM)
+
+    @staticmethod
+    def _air_lead(aircraft: list[FirefighterAgent], target: dict[str, Any], planner: TravelPlanner) -> float:
+        """Median minutes until the aircraft are over ``target`` (0 when none can say)."""
+        etas = [float(r.arrival_minutes) for a in aircraft if (r := planner.eta(a, target)).reachable and r.arrival_minutes is not None]
+        return float(statistics.median(etas)) if etas else 0.0
+
+    def _air_workable(self, situation: Situation, minute: float) -> list[Sector]:
+        """The stretches of the fire's edge at ``minute`` that drops can still hold: burning below ``noEffectFromKwm`` in their own direction (a flank faces a
+        fraction of what the head burns at), the most dangerous first and about one work zone apart. Empty when there is none, or no vectors."""
+        limit = self._no_effect_kwm(situation)
+        try:
+            vectors = self.client.get_vectors(situation.simulation_id, t_min=int(round(minute)))
+        except ApiProblem:
+            return []
+        sectors = self._with_outline(situation, plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, limit=50), int(round(minute)))
+        picked: list[Sector] = []
+        for sector in sorted((s for s in sectors if s.intensity_kwm < limit), key=lambda s: s.danger, reverse=True):
+            if all(distance_m(sector.lat, sector.lon, other.lat, other.lon) > 2 * AIR_SPACING_M for other in picked):
+                picked.append(sector)
+        return picked
+
+    def _air_off_the_head(self, result: CycleResult, situation: Situation, aircraft: list[FirefighterAgent]) -> None:
+        """The aircraft whose own sector (the most dangerous third, ``sectors.HELICOPTER_SHARE``) burns past ``noEffectFromKwm`` drop on the workable flanks and
+        back instead, two to a stretch: water on a crown run does nothing, on its flanks it narrows the fire."""
+        limit = self._no_effect_kwm(situation)
+        moving = [a for a in aircraft if (s := result.assignments[a.agent_id].sector) is not None and s.intensity_kwm >= limit]
+        if not moving:
+            return
+        try:
+            anchor = situation.anchor
+        except ValueError:
+            return
+        decided_at = float(situation.at_minute if situation.at_minute is not None else (situation.latest_milestone.get("tMin") or 0))
+        planner = TravelPlanner(self.client, location_id=str(self._location_id), simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules,
+                                cache=self._routes, avoid_fire=False, origins=self.origins)
+        workable = self._air_workable(situation, decided_at + self._air_lead(moving, anchor, planner))
+        if not workable:
+            return
+        for idx, agent in enumerate(moving):
+            sector, slot = workable[(idx // 2) % len(workable)], idx % 2
+            result.assignments[agent.agent_id] = replace(
+                result.assignments[agent.agent_id], sector=sector, site={"lat": sector.lat, "lon": sector.lon},
+                air_line=line_across(sector.lat, sector.lon, sector.bearing_deg, situation.zone_radius_m, slot), air_corridor=None, slot=slot,
+            )
+        result.issues.append(AgentIssue("orchestrator", "meios aéreos", f"{len(moving)} aircraft drop on the flanks and back ({len(workable)} stretches below {limit:.0f} kW/m): the head burns past what water can stop."))
 
     def _air_rotation(self, unit: FirefighterAgent, target: dict[str, Any] | None, situation: Situation) -> tuple[float, float]:
         """An aircraft's rotation, as the rules count it (``Rules.aerial.cycleTime``: 2 × distance(water → target) / speed + load + drop), and that distance in km.
@@ -789,6 +866,12 @@ class OrchestratorAgent:
         planner = TravelPlanner(self.client, location_id=str(self._location_id), simulation_id=situation.simulation_id, at=situation.snapshot_time, rules=situation.rules,
                                 cache=self._routes, avoid_fire=False, origins=self.origins)
         early = sum(1 for a in aircraft if (planner.eta(a, start).arrival_minutes or math.inf) <= crown_at)
+        # the aircraft drop on the edge the fire has when they get there (the decision's picture is minutes old by then, and a young fire's only stretch is a point
+        # it leaves at once), and only where water still stops it: a drop on a stretch burning past noEffectFromKwm does nothing (the backend fades direct attack,
+        # drops included, to zero there), so with the head past it they hold the flanks and the back
+        workable = self._air_workable(situation, decided_at + self._air_lead(aircraft, start, planner))
+        if workable:
+            current_sectors = workable
 
         # Distribute aircraft across active fire sectors (max 2 per sector, with staggered rotation timing)
         num_sectors = len(current_sectors)
@@ -1013,7 +1096,7 @@ class OrchestratorAgent:
                 evacuators.append(Evacuator.on_foot(agent.agent_id, obs.crew_onboard))
             elif obs.passenger_capacity > 0 and obs.capabilities & {"evacuation_transport", "traffic_control", "perimeter_security"}:
                 evacuators.append(Evacuator.by_vehicle(agent.agent_id, obs.passenger_capacity))
-        margin = float((((situation.rules or {}).get("safety") or {}).get("withdrawWhenFireArrivesInMinutes")) or 10.0)
+        margin = float((((situation.rules or {}).get("safety") or {}).get("withdrawWhenFireArrivesInMinutes")) or 15.0)
         plan = plan_life(items, evacuators, now=now, margin_min=margin, order=self._advised_evacuation_order(items, len(evacuators), now, margin))
         by_id = {d.item.id: d for d in plan.decisions}
         for decision in plan.decisions:
@@ -1725,13 +1808,18 @@ class OrchestratorAgent:
                 # The backend ignores `trigger`/`dependsOn` when it simulates a plan: it only reads each effect's own
                 # `start`. So "attack after the evacuation" has to be written into the effect's start time too.
                 intervention["start"] = {"offsetMinutes": _follow_up_delay(by_id.get(proposal.trigger.get("actionId")))}
+            depart = proposal.delay_minutes
             if proposal.eta_minutes is not None and isinstance(intervention.get("start"), dict):
                 # nothing works before the unit is there: the backend applies the effect from its `start`, and a missing ETA would put crews on the fire at once
                 begin = intervention["start"].get("offsetMinutes") or 0
                 intervention["start"] = {**intervention["start"], "offsetMinutes": max(begin, math.ceil(proposal.delay_minutes + proposal.eta_minutes))}
-            if proposal.delay_minutes and "trigger" not in action:
-                # a reinforcement sets off from its entry point when it gets there: the backend times its departure (and its track on the map) from the trigger
-                action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": int(math.ceil(proposal.delay_minutes))}}
+                if proposal.action_type in ("fire_attack", "structure_protection") and begin > proposal.delay_minutes + proposal.eta_minutes + 1:
+                    # its work starts later (it is timed to the fire's arrival): it sets off then, instead of waiting on the spot where nothing burns yet
+                    depart = max(proposal.delay_minutes, begin - proposal.eta_minutes)
+            if depart and "trigger" not in action:
+                # a reinforcement sets off from its entry point when it gets there, a unit timed to the fire when it is needed: the backend times its departure
+                # (and its track on the map) from the trigger
+                action["trigger"] = {"kind": "at_time", "at": {"offsetMinutes": int(math.ceil(depart))}}
             decided_at = int(situation.at_minute or 0)
             if decided_at:
                 # the backend honours `start`: offsets count from the scenario start, so a decision taken at T+N begins at N (+ its own delay)

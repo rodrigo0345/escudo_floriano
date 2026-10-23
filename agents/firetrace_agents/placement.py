@@ -21,8 +21,9 @@ from typing import Any
 from .sectors import Sector, destination, distance_m
 
 BURNED_OUT_MIN = 25  # a cell this long after the fire reached it has burned out (backend BurnMinutes ≤ 18, plus margin)
-MARGIN_MIN = 10  # a crew working ahead of the fire leaves this long before it arrives
+MARGIN_MIN = 10  # a crew working ahead of the fire leaves this long before it arrives (the judge still trims any crew the what-if catches)
 MIN_STAY_MIN = 15  # less useful work than this and the crew is not sent
+HOUSE_PREP_MIN = 45  # an engine prepares a patch of houses (wets them, clears what burns against them) for this long before the fire comes
 STEP_M = 30.0  # search step inside the burned area (about a cell)
 
 
@@ -160,3 +161,36 @@ def stay_ahead(clock: FireClock, position: dict[str, float], arrive: float, want
         return int(wanted)
     room = reached - MARGIN_MIN - arrive
     return int(min(wanted, room)) if room >= MIN_STAY_MIN else 0
+
+
+def wait_before(clock: FireClock, position: dict[str, float], arrive: float, stay: float) -> float:
+    """How long a crew that works ``stay`` minutes ahead of the fire at ``position`` waits before it sets off, so that its work ends ``MARGIN_MIN`` before the
+    fire gets to the block around it, not an hour before.
+
+    A crew sent at once to ground the fire reaches much later stands where nothing burns and leaves before the fire comes: a direct attack (an effect that
+    lasts only while the crew is there) never meets the fire. 0 when the fire is not coming, or is there already.
+    """
+    reached = clock.reached_around(float(position["lat"]), float(position["lon"]))
+    if reached is None or reached <= arrive:
+        return 0.0
+    return max(0.0, reached - MARGIN_MIN - stay - arrive)
+
+
+def defend_window(clock: FireClock, position: dict[str, float], arrive: float, fire_at: float | None = None, prep: float = HOUSE_PREP_MIN) -> tuple[int, float]:
+    """(stay, wait) for an engine defending a patch of houses at ``position``: it gets there ``prep`` + ``MARGIN_MIN`` before the fire (not hours before, when
+    it could still be fighting), prepares the houses and withdraws ``MARGIN_MIN`` before the fire arrives. ``fire_at`` is the earliest minute the fire reaches
+    any house of the patch, when known.
+
+    (0, 0) when it would get there with under ``MIN_STAY_MIN`` of preparation left, or after the fire: houses that have already burned are not defended
+    (the old rule counted burned-out ground as a safe place to stand, and sent engines to "protect" houses the fire had already passed).
+    """
+    reached = clock.reached_around(float(position["lat"]), float(position["lon"]))
+    if fire_at is not None:
+        reached = fire_at if reached is None else min(reached, fire_at)
+    if reached is None:
+        return 0, 0.0  # the patches come from the forecast's own arrival times: no fire there, nothing to defend
+    room = reached - MARGIN_MIN - arrive
+    if room < MIN_STAY_MIN:
+        return 0, 0.0
+    stay = int(min(prep, room))
+    return stay, float(room - stay)

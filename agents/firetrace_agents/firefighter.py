@@ -43,6 +43,9 @@ LINE_FACTOR = {FirefighterTier.HELICOPTER: 0.5, FirefighterTier.TRUCK: 0.5, Fire
 AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.5, 0.6, 0.7
 AIR_SORTIE_MIN = 45
 AIR_DROP_WET_MIN = 20
+WET_LINE_BUILD_MIN = 40  # the engines' line on a flank, when the orchestrator found no measured one (``fuel_strip``) for them
+HANDLINE_BUILD_MIN = 60  # the same for a crew on foot
+
 """Half-length of the line a tier makes, in work-zone radii: an aircraft lays a long curtain, a crew on foot a short line."""
 
 PROTECT_LIFE = "protect_life"
@@ -394,6 +397,10 @@ class FirefighterAgent:
             elif self._assignment.place is not None and self._assignment.stay_minutes:
                 # defending houses or evacuating: the crew prepares the place and leaves before the fire reaches it (the backend counts it there for this long)
                 proposal.extra_action_fields["expectedDurationMinutes"] = int(self._assignment.stay_minutes)
+                if self._assignment.start_after is not None and proposal.action_type == "structure_protection":
+                    # timed to the fire: it gets to the houses a while before the fire does, not hours before (see `placement.defend_window`)
+                    begin = int((proposal.intervention.get("start") or {}).get("offsetMinutes") or 0)
+                    proposal.intervention["start"] = {"offsetMinutes": max(begin, int(self._assignment.start_after))}
                 if proposal.intervention.get("type") == "crew_deployment" and proposal.intervention.get("durationMinutes"):
                     proposal.intervention["durationMinutes"] = int(min(int(proposal.intervention["durationMinutes"]), self._assignment.stay_minutes))
         return DecisionMessage(
@@ -830,7 +837,7 @@ class FirefighterAgent:
                     "label": "Linha molhada flanco",
                     "start": {"offsetMinutes": 0},
                     "geometry": self._line(situation),
-                    "constructionMinutes": 40,
+                    "constructionMinutes": WET_LINE_BUILD_MIN,
                     "effectiveness": 0.8,
                     "method": "wet_line",
                 },
@@ -904,7 +911,7 @@ class FirefighterAgent:
                     "label": "Handline flanco",
                     "start": {"offsetMinutes": 0},
                     "geometry": self._line(situation),
-                    "constructionMinutes": 60,
+                    "constructionMinutes": HANDLINE_BUILD_MIN,
                     "effectiveness": 0.7,
                     "method": "handline",
                 },
