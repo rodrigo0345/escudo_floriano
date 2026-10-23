@@ -35,7 +35,23 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
         var (prepared, issues) = await PrepareAsync(batch.Dispatches, ct);
         if (issues.Any(i => i.Severity == "error")) throw new ValidationException(issues);
 
+        // all or nothing: a batch that fails half way (an error, or the request aborted) takes back what it sent, or its units stay "dispatched" on orders nobody
+        // owns and the next try of the same batch finds them all busy
         var created = new List<Dispatch>();
+        try
+        {
+            await CreateAllAsync(batch, origin, prepared, created, ct);
+        }
+        catch
+        {
+            foreach (var d in created) await CancelAsync(d, CancellationToken.None);
+            throw;
+        }
+        return new DispatchResult(created, issues);
+    }
+
+    async Task CreateAllAsync(DispatchBatch batch, DispatchOrigin origin, List<Prepared> prepared, List<Dispatch> created, CancellationToken ct)
+    {
         for (int i = 0; i < prepared.Count; i++)
         {
             var (input, dispatcher, subject, eta, route) = prepared[i];
@@ -49,10 +65,9 @@ public sealed class DispatchService(CrudService<Dispatch> dispatches, IEnumerabl
                 CrewOnboard = input.ResourceType == ResourceType.Vehicle ? input.Personnel : null, Source = origin.Source, PlanId = origin.PlanId,
                 ActionId = origin.ActionIds is { } ids && i < ids.Count ? ids[i] : null, Reason = batch.Reason,
             }, ct);
+            created.Add(dispatch); // before assigning: if the assignment fails, the rollback still takes this one back
             await dispatcher.AssignAsync(dispatch, ct);
-            created.Add(dispatch);
         }
-        return new DispatchResult(created, issues);
     }
 
     async Task<(List<Prepared> Prepared, List<ValidationIssue> Issues)> PrepareAsync(IReadOnlyList<DispatchInput> inputs, CancellationToken ct)
