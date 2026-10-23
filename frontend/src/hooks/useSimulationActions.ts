@@ -198,10 +198,19 @@ export function useSimulationActions() {
       store.setScenario(scenarioId);
       if (scenarioId === 'custom' || !store.data || !world) {
         store.setTab('incident');
+        if (scenarioId === 'custom') {
+          // a custom scenario starts by saying where the fire is: the same as pressing "Mover" on the first outbreak, so the user is told to click on the map
+          store.setPickIgnitionSlot(0);
+          store.setHint('Clique no terreno para escolher onde começa o fogo');
+        }
         return;
       }
       const scenario = store.data.scenarios.find((s) => s.id === scenarioId);
       if (!scenario) return;
+      if (store.pickIgnitionSlot != null) {
+        store.setPickIgnitionSlot(null); // a built-in scenario has its own fire: no pending "click to place it"
+        store.setHint('');
+      }
       const points = scenario.ignitions.map((ig, i) => ({ ...ig, label: ig.label ?? `Foco ${i + 1}` }));
       store.setIgnitions(points);
       world.fire.setIgnitions(points);
