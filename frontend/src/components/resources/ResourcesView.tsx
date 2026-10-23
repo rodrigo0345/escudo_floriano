@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
   equipmentApi,
@@ -18,11 +18,13 @@ import {
   type VehicleCapability,
   type VehicleInput,
 } from '@/api';
+import { Icon } from '@/components/common/Icon';
 import { CardGrid, StatCard } from '@/components/common/StatCard';
 import {
   CAPABILITY_LABEL,
   EQUIPMENT_LABEL,
   ORG_COLOR,
+  coreOrganizationIds,
   ORG_TYPE_LABEL,
   ROLE_LABEL,
   STATION_KIND_LABEL,
@@ -113,6 +115,26 @@ export function ResourcesView() {
   }, [organizations, orgId]);
 
   const org = organizations.find((o) => o.id === orgId) ?? null;
+  // the concelho's four corporations always; reinforcement groups and other organizations behind "Reforços", open when asked or when one is selected
+  const coreIds = useMemo(() => coreOrganizationIds(organizations), [organizations]);
+  const core = organizations.filter((o) => coreIds.has(o.id as string));
+  const extras = organizations.filter((o) => !coreIds.has(o.id as string));
+  const [showExtras, setShowExtras] = useState(false);
+  const extrasOpen = showExtras || (!!org && !coreIds.has(org.id as string));
+  const extraVehicles = vehicles.filter((v) => extras.some((o) => o.id === v.organizationId)).length;
+  const reinforcementsToggle = extras.length ? (
+    <button type="button" className={styles.reinforcements} onClick={() => setShowExtras(!extrasOpen)} aria-expanded={extrasOpen}>
+      <span>
+        <b>Reforços</b>
+        <small>
+          {extras.length} {extras.length === 1 ? 'grupo' : 'grupos'} · {extraVehicles} veículos
+        </small>
+      </span>
+      <span className={`${styles.reinforcementsChevron} ${extrasOpen ? styles.reinforcementsChevronOpen : ''}`} aria-hidden="true">
+        <Icon name="chevron" size={14} />
+      </span>
+    </button>
+  ) : null;
   const own = useMemo(
     () => ({
       vehicles: vehicles.filter((v) => v.organizationId === orgId),
@@ -144,12 +166,13 @@ export function ResourcesView() {
     <div className={styles.view}>
       <div className={styles.side}>
         <h3>Corporações</h3>
-        {organizations.map((o) => {
+        {[...core, ...(extrasOpen ? extras : [])].map((o, index) => {
           const vCount = vehicles.filter((v) => v.organizationId === o.id).length;
           const pCount = pools.filter((p) => p.organizationId === o.id).reduce((sum, p) => sum + p.available, 0);
           return (
+            <Fragment key={o.id}>
+            {index === core.length ? reinforcementsToggle : null}
             <button
-              key={o.id}
               className={`${styles.org} ${o.id === orgId && !creatingOrg ? styles.on : ''}`}
               onClick={() => {
                 setOrgId(o.id as string);
@@ -168,8 +191,10 @@ export function ResourcesView() {
                 </div>
               </div>
             </button>
+            </Fragment>
           );
         })}
+        {!extrasOpen ? reinforcementsToggle : null}
         <button className="primary" onClick={() => setCreatingOrg(true)}>
           + Nova corporação
         </button>

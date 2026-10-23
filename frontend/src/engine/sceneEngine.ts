@@ -133,20 +133,22 @@ export class SceneEngine {
           this.sunLight.intensity = this.baseSunIntensity;
           this.hemiLight.intensity = this.baseHemiIntensity;
         } else {
-          // Multi-pulse lightning envelope
+          // Multi-pulse lightning envelope. Seen from above in daylight a strike barely brightens the land: the scene only nudges up
+          // (the storm layer lights the ground under the strike itself); at night the sky-wide flash is what you see, so it is stronger.
           const p = this.lightningFlashProgress;
-          let boost = 0;
+          let pulse = 0;
           if (p < 0.3) {
-            boost = Math.sin((p / 0.3) * Math.PI) * 3.8;
+            pulse = Math.sin((p / 0.3) * Math.PI);
           } else if (p < 0.5) {
-            boost = 0.9;
+            pulse = 0.25;
           } else if (p < 0.85) {
-            boost = Math.sin(((p - 0.5) / 0.35) * Math.PI) * 4.6;
+            pulse = Math.sin(((p - 0.5) / 0.35) * Math.PI) * 0.8;
           } else {
-            boost = (1 - (p - 0.85) / 0.15) * 1.6;
+            pulse = (1 - (p - 0.85) / 0.15) * 0.3;
           }
+          const boost = pulse * (this.isNightTime ? 1.4 : 0.45);
           this.sunLight.intensity = this.baseSunIntensity + boost;
-          this.hemiLight.intensity = this.baseHemiIntensity + boost * 0.75;
+          this.hemiLight.intensity = this.baseHemiIntensity + boost * 0.9;
         }
       }
 

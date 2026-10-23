@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { Action } from '@/api';
+import { Icon } from '@/components/common/Icon';
 import { alertStartMinute } from '@/domain/planEdit';
 import { useAppStore } from '@/store/appStore';
 
@@ -26,6 +27,7 @@ type Toast = {
 };
 
 const DISMISS_MS = 12_000;
+const RESUME_MS = 4_000;
 const MAX_VISIBLE = 2;
 
 export function AlertToast() {
@@ -98,32 +100,51 @@ export function AlertToast() {
     timers.current.set(toast.key, timer);
   }, [t, activePlan, run, data]);
 
+  const stopTimer = (key: string) => {
+    const pending = timers.current.get(key);
+    if (pending !== undefined) {
+      window.clearTimeout(pending);
+      timers.current.delete(key);
+    }
+  };
+  const dismiss = (key: string) => {
+    stopTimer(key);
+    setToasts((current) => current.filter((x) => x.key !== key));
+  };
+  /** After the operator has read it (the pointer leaves), the alert goes away a few seconds later. */
+  const resumeTimer = (key: string) => {
+    stopTimer(key);
+    timers.current.set(key, window.setTimeout(() => dismiss(key), RESUME_MS));
+  };
+
   if (!toasts.length) return null;
   return (
     <div className={styles.alertToastStack}>
       {toasts.map((toast) => (
-        <button
-          type="button"
+        <div
           key={toast.key}
+          role="alert"
+          tabIndex={0}
           className={`${styles.alertToast} ${toast.severity === 'red' ? styles.alertToastRed : ''}`}
-          onClick={() => {
-            const pending = timers.current.get(toast.key);
-            if (pending !== undefined) {
-              window.clearTimeout(pending);
-              timers.current.delete(toast.key);
-            }
-            setToasts((current) => current.filter((x) => x.key !== toast.key));
-          }}
-          title="Clique para fechar o aviso"
+          onMouseEnter={() => stopTimer(toast.key)}
+          onMouseLeave={() => resumeTimer(toast.key)}
+          title="Passe o rato para ler o aviso"
         >
-          <span className={styles.alertToastIcon}>⚠</span>
-          <span className={styles.alertToastBody}>
-            <strong className={styles.alertToastTitle}>ALERTA À POPULAÇÃO</strong>
-            <span className={styles.alertToastText}>{toast.title}</span>
-            {toast.message ? <span className={styles.alertToastMessage}>{toast.message}</span> : null}
-            {toast.channels.length ? <span className={styles.alertToastChannels}>Via {toast.channels.join(', ')}</span> : null}
+          <span className={styles.alertToastIcon}>
+            <Icon name="alert" size={15} />
           </span>
-        </button>
+          <span className={styles.alertToastBody}>
+            <strong className={styles.alertToastTitle}>Alerta à população</strong>
+            <span className={styles.alertToastText}>{toast.title}</span>
+            <span className={styles.alertToastMore}>
+              {toast.message ? <span className={styles.alertToastMessage}>{toast.message}</span> : null}
+              {toast.channels.length ? <span className={styles.alertToastChannels}>Via {toast.channels.join(', ')}</span> : null}
+            </span>
+          </span>
+          <button type="button" className={styles.alertToastClose} onClick={() => dismiss(toast.key)} aria-label="Fechar o alerta" title="Fechar">
+            <Icon name="close" size={12} />
+          </button>
+        </div>
       ))}
     </div>
   );

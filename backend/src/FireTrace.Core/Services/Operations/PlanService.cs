@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FireTrace.Core.Configuration;
 using FireTrace.Core.Domain.Dispatches;
 using FireTrace.Core.Domain.Errors;
 using FireTrace.Core.Domain.Interventions;
@@ -22,7 +23,8 @@ namespace FireTrace.Core.Services.Operations;
 /// Também guarda a execução de cada ação por quem as cumpre.
 /// </summary>
 public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator, DispatchService dispatching, CrudService<Dispatch> dispatches, CrudService<RoadClosure> closures,
-    PlanRouter router, PlanInterventions interventions, SimulationService simulations, IDocumentStore<Simulation> simulationStore, TimeProvider clock, ILogger<PlanService> log)
+    PlanRouter router, PlanInterventions interventions, SimulationService simulations, IDocumentStore<Simulation> simulationStore, IDocumentStore<Vehicle> vehicleStore,
+    LimitsSettings limits, TimeProvider clock, ILogger<PlanService> log)
 {
     // ===================================================================================================== criar e alterar
     public Task<PlanValidation> ValidateAsync(Plan input, CancellationToken ct = default) => validator.ValidateAsync(input, ct);
@@ -85,20 +87,51 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
     static bool SameBasis(Plan a, Plan b) =>
         a.Basis?.SimulationId is { } s ? s == b.Basis?.SimulationId : a.Basis?.ScenarioId is { } sc && sc == b.Basis?.ScenarioId;
 
-    /// <summary>Ativa o plano: um despacho por cada viatura e grupo de pessoal, um corte por cada ação de fecho de estrada. Tudo ou nada.</summary>
+    /// <summary>
+    /// Ativa o plano: um despacho por cada viatura e grupo de pessoal (as tarefas que um meio encadeia são o mesmo despacho, ver <see cref="PlanDispatches"/>),
+    /// um corte por cada ação de fecho de estrada. Tudo ou nada.
+    /// </summary>
     public async Task<Plan> ActivateAsync(string id, CancellationToken ct = default)
     {
         var plan = await Require(id, PlanStatus.Selected, ct);
-        var assignments = plan.Actions.SelectMany(a => (a.Resources ?? new()).Where(r => r.ResourceType != ResourceType.Equipment).Select(r => (Action: a, Resource: r))).ToList();
-        var batch = new DispatchBatch(assignments.Select(x => ToDispatch(x.Action, x.Resource)).ToList(), $"Plano {plan.Title}");
+        var crews = new Dictionary<string, int?>();
+        foreach (var r in plan.Actions.SelectMany(a => a.Resources ?? new()).Where(r => r.ResourceType == ResourceType.Vehicle && r.Personnel is null))
+            crews[r.ResourceId] = await vehicleStore.GetAsync(r.ResourceId, ct) is { } v ? CrewOnboard(v) : null;
+        var assignments = PlanDispatches.Build(plan, limits.DefaultActionWindowMinutes, r => crews.GetValueOrDefault(r.ResourceId));
+        var batch = new DispatchBatch(assignments.Select(x => ToDispatch(x.Action, x.Resource) with { ExpectedDurationMinutes = x.StayMinutes }).ToList(), $"Plano {plan.Title}");
 
         var check = await dispatching.ValidateAsync(batch, ct);
         if (!check.Valid) throw new ConflictException("Não é possível ativar: " + string.Join("; ", check.Issues.Where(i => i.Severity == "error").Select(i => i.Message)), "resources_unavailable");
-        await dispatching.CreateAsync(batch, new DispatchOrigin(DispatchSource.PlanAction, plan.Id, assignments.Select(x => (string?)x.Action.Id).ToList()), ct);
+        var sent = (await dispatching.CreateAsync(batch, new DispatchOrigin(DispatchSource.PlanAction, plan.Id, assignments.Select(x => (string?)x.Action.Id).ToList()), ct)).Items;
 
-        var actions = new List<PlanAction>();
-        foreach (var a in plan.Actions) actions.Add(a is RoadClosureAction c ? c with { ClosureId = (await OpenClosure(plan, c, ct)).Id } : a);
-        return await plans.SaveAsync(Transition(plan with { Actions = actions, ActivatedAt = clock.GetUtcNow() }, PlanStatus.Active), ct);
+        // all or nothing: if a closure is refused (or anything after the dispatches fails) the units go back and the closures already opened are removed,
+        // otherwise the plan stays "selected" with its vehicles out on dispatches nobody can see, and the next activation finds them all busy
+        var opened = new List<RoadClosure>();
+        try
+        {
+            var actions = new List<PlanAction>();
+            foreach (var a in plan.Actions)
+            {
+                if (a is not RoadClosureAction c) { actions.Add(a); continue; }
+                var closure = await OpenClosure(plan, c, ct);
+                opened.Add(closure);
+                actions.Add(c with { ClosureId = closure.Id });
+            }
+            return await plans.SaveAsync(Transition(plan with { Actions = actions, ActivatedAt = clock.GetUtcNow() }, PlanStatus.Active), ct);
+        }
+        catch
+        {
+            foreach (var d in sent) await dispatching.CancelAsync(d, CancellationToken.None);
+            foreach (var c in opened) await closures.DeleteAsync(c.Id, CancellationToken.None);
+            throw;
+        }
+    }
+
+    /// <summary>Who a vehicle takes when the plan does not say: the crew on board, within its minimum and the seats left after casualties.</summary>
+    static int CrewOnboard(Vehicle v)
+    {
+        int fit = Math.Max(1, v.CrewCapacity - (v.State.Crew?.Casualties ?? 0)), least = Math.Min(v.MinimumCrew ?? 1, fit);
+        return Math.Clamp(v.State.CrewOnboard ?? fit, least, fit);
     }
 
     static DispatchInput ToDispatch(PlanAction action, ResourceAssignment r) => new(r.ResourceType, r.ResourceId, r.Personnel ?? 1, r.Responsibility ?? DefaultResponsibility(action),
@@ -122,12 +155,27 @@ public sealed class PlanService(CrudService<Plan> plans, PlanValidator validator
         _ => new Target(Label: a.Title),
     };
 
-    async Task<RoadClosure> OpenClosure(Plan plan, RoadClosureAction c, CancellationToken ct) => await closures.CreateAsync(new RoadClosure
+    async Task<RoadClosure> OpenClosure(Plan plan, RoadClosureAction c, CancellationToken ct)
     {
-        LocationId = plan.LocationId, RoadIds = c.RoadIds, Geometry = c.Geometry, Kind = c.Kind, Reason = c.Reason, Status = ClosureStatus.Active, Start = clock.GetUtcNow(),
-        End = c.Until?.Resolve(plan.Basis?.SituationAsOf ?? clock.GetUtcNow()), Detour = c.Detour, Checkpoints = c.Checkpoints, Exemptions = c.Exemptions, ResponsibleOrganizationId = c.OrganizationId,
-        Source = "plan_action", PlanActionRef = new PlanActionRef(plan.Id, c.Id),
-    }, ct);
+        var now = clock.GetUtcNow();
+        return await closures.CreateAsync(new RoadClosure
+        {
+            LocationId = plan.LocationId, RoadIds = c.RoadIds, Geometry = c.Geometry, Kind = c.Kind, Reason = c.Reason, Status = ClosureStatus.Active, Start = now,
+            End = ClosureEnd(plan, c, now), Detour = c.Detour, Checkpoints = c.Checkpoints, Exemptions = c.Exemptions, ResponsibleOrganizationId = c.OrganizationId,
+            Source = "plan_action", PlanActionRef = new PlanActionRef(plan.Id, c.Id),
+        }, ct);
+    }
+
+    /// <summary>
+    /// When a closure opened now lifts. `until` counts from the plan's start (an offset, or an instant of the plan's own clock, often a scenario day months ago),
+    /// and the closure starts at activation, so the same span is laid from now: resolving it against the scenario's clock put the end before the start.
+    /// </summary>
+    static DateTimeOffset? ClosureEnd(Plan plan, RoadClosureAction c, DateTimeOffset now)
+    {
+        if (c.Until is not { } until) return null;
+        double minutes = until.OffsetMinutes ?? (until.Time is { } at && (plan.Horizon?.Start ?? plan.Basis?.SituationAsOf) is { } planStart ? (at - planStart).TotalMinutes : 0);
+        return minutes > 0 ? now.AddMinutes(minutes) : null;
+    }
 
     /// <summary>Fecha o plano: cancela os despachos que criou e levanta os cortes de estrada.</summary>
     async Task<Plan> CloseAsync(Plan plan, PlanStatus status, CancellationToken ct)

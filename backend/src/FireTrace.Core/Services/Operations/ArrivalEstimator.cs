@@ -29,8 +29,22 @@ public sealed class ArrivalEstimator(RoutingService routing, IMapReader map, IDo
         return v.StationId is { } home ? (await stations.GetAsync(home, ct))?.Position : null;
     }
 
-    /// <summary>O local que contém o ponto (o indicado, se houver, ou o primeiro que o cobre).</summary>
-    public string? LocationOf(LatLon p, string? locationId = null) => locationId ?? map.Locations.All.FirstOrDefault(l => l.Spec.CellAt(p.Lat, p.Lon) >= 0)?.Id;
+    /// <summary>
+    /// O local que contém o ponto: o indicado, se o cobre, senão o primeiro que o cobre. O indicado é muitas vezes o do posto do meio, e um posto do detalhe da Penha
+    /// manda viaturas para todo o concelho: fora do mapa do detalhe não há estradas, e o alvo parecia "a mais de 500 m de qualquer estrada".
+    /// </summary>
+    public string? LocationOf(LatLon p, string? locationId = null) => LocationOf(new[] { p }, locationId);
+
+    /// <summary>O local cujo mapa tem todos os pontos (a partida e o alvo de uma viagem), com preferência pelo indicado; senão o que tem o último (o alvo).</summary>
+    string? LocationOf(IReadOnlyList<LatLon> points, string? locationId)
+    {
+        bool Covers(LocationDefinition l, LatLon p) => l.Spec.CellAt(p.Lat, p.Lon) >= 0;
+        var given = locationId is null ? null : map.Locations.Find(locationId);
+        if (locationId is not null && given is null) return locationId; // a location this server does not know: the caller's stands, as before
+        if (given is not null && points.All(p => Covers(given, p))) return given.Id;
+        return map.Locations.All.FirstOrDefault(l => points.All(p => Covers(l, p)))?.Id
+            ?? (given is not null && Covers(given, points[^1]) ? given.Id : map.Locations.All.FirstOrDefault(l => Covers(l, points[^1]))?.Id);
+    }
 
     /// <summary>
     /// Minutos até ao ponto: por estrada (cortes ativos, tipo de viatura) mais o que falta a pé até ao ponto, ou em linha reta se for um meio aéreo.
@@ -44,7 +58,7 @@ public sealed class ArrivalEstimator(RoutingService routing, IMapReader map, IDo
             return new Arrival(Math.Round(RoadGeometry.DistanceM(from.Lat, from.Lon, to.Lat, to.Lon) / (kmh * 1000 / 60), 1), null, null);
         }
 
-        var location = LocationOf(to, locationId);
+        var location = LocationOf(new[] { from, to }, locationId); // a map with both ends: the trip starts at the station and ends at the target
         if (location is null) return new Arrival(null, null, new("warning", "outside_locations", "O alvo está fora dos locais conhecidos; sem chegada estimada.", "/target"));
         var access = await routing.RouteWithAccessAsync(new RouteRequest(location, to, from, At: at,
             Vehicle: new VehicleProfile(v?.Type, v?.HeightM, v?.WidthM, v?.WeightT, v?.OffRoad, v?.CruiseSpeedKmh, v?.MaxSlopePercent)), ct);

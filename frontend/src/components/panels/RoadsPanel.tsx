@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import { CardGrid, Row, StatCard, Tag } from '@/components/common/StatCard';
+import { lineStringCoordinates } from '@/domain/geojson';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useWorld } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
@@ -19,6 +20,7 @@ const ORIGINS: { value: RescueOrigin; label: string }[] = [
 export function RoadsPanel() {
   const world = useWorld();
   const run = useAppStore((s) => s.run);
+  const data = useAppStore((s) => s.data);
   const t = useAppStore((s) => s.t);
   const origin = useAppStore((s) => s.origin);
   const setOrigin = useAppStore((s) => s.setOrigin);
@@ -28,11 +30,11 @@ export function RoadsPanel() {
     if (!world || !run?.impact) return null;
     const state = run.impact.at(t);
     const features = world.roads.features;
-    const groups = new Map<string, { count: number; highway: string; prob: number }>();
+    const groups = new Map<string, { count: number; highway: string; prob: number; first: number }>();
     state.cut.forEach((i) => {
       const props = features[i].properties;
       const name = props?.name ?? 'sem nome';
-      const g = groups.get(name) ?? { count: 0, highway: props?.class ?? '', prob: 0 };
+      const g = groups.get(name) ?? { count: 0, highway: props?.class ?? '', prob: 0, first: i };
       g.count++;
       groups.set(name, g);
     });
@@ -51,6 +53,16 @@ export function RoadsPanel() {
 
   if (!view) return <p className="note">Sem simulação.</p>;
   const { state, features, rows, places, noAccess } = view;
+  /** Fly the map to the middle of a cut stretch of road. */
+  const showRoad = (index: number) => {
+    const line = lineStringCoordinates(features[index]?.geometry);
+    const [lon, lat] = line[Math.floor(line.length / 2)] ?? [];
+    if (world && lat != null && lon != null) world.focusOnLatLon(lat, lon);
+  };
+  const showPlace = (placeId: string) => {
+    const at = data?.places.find((p) => p.id === placeId)?.position;
+    if (world && at) world.focusOnLatLon(at.lat, at.lon);
+  };
 
   return (
     <>
@@ -78,7 +90,7 @@ export function RoadsPanel() {
       <h3>Estradas cortadas · T+{t} min</h3>
       {rows.length ? (
         rows.slice(0, MAX_ROWS).map(([name, g]) => (
-          <Row key={name}>
+          <Row key={name} onClick={() => showRoad(g.first)} title="Mostrar no mapa">
             <span>
               {name} <small>{g.highway}{g.count > 1 ? ` · ${g.count} troços` : ''}</small>
             </span>
@@ -93,7 +105,7 @@ export function RoadsPanel() {
       <h3>Acesso das localidades</h3>
       {places.length ? (
         places.slice(0, MAX_ROWS).map((x) => (
-          <Row key={x.placeId}>
+          <Row key={x.placeId} onClick={() => showPlace(x.placeId)} title={`Mostrar no mapa · ${x.iso}% de probabilidade de ficar isolada (várias simulações)`}>
             <span>
               {x.name} <small>{x.population} hab.</small>
             </span>
@@ -105,7 +117,7 @@ export function RoadsPanel() {
       ) : (
         <p className="note">Todas as localidades acessíveis sem atraso relevante.</p>
       )}
-      <p className="note">A percentagem é a probabilidade, no conjunto de simulações com meteorologia perturbada (ensemble).</p>
+      <p className="note">Clique numa estrada ou localidade para a ver no mapa · % = probabilidade entre várias simulações.</p>
     </>
   );
 }

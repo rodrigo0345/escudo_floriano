@@ -1,50 +1,76 @@
+import { useState } from 'react';
+
 import type { Facility, FacilityKind, WaterPoint, WaterPointKind } from '@/api';
+import { Icon } from '@/components/common/Icon';
 import { Row } from '@/components/common/StatCard';
 import { OrgLogo } from '@/domain/organizationLogos';
 import { FACILITY_KIND_NAME } from '@/engine/layers/assetLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
 import { useAppStore } from '@/store/appStore';
 
-const ALWAYS_LISTED: FacilityKind[] = ['fire_station', 'gnr', 'civil_protection', 'inem', 'hospital'];
+import styles from './panels.module.css';
+
+/** The concelho's four corporations: always listed (with a note when there is no data); every other kind of facility waits behind "Outras instalações". */
+const CORE_KINDS: FacilityKind[] = ['fire_station', 'gnr', 'inem', 'civil_protection'];
 const formatArea = (m2: number) => (m2 >= 10000 ? `${(m2 / 10000).toFixed(1)} ha` : `${Math.round(m2)} m²`);
 
-/** The "Meios" tab: facilities grouped by kind, then a water-points summary. */
+/** The "Meios" tab: the four corporations' facilities, the other kinds behind one closed row, then a water-points summary. */
 export function AssetsPanel() {
   const facilities = useAppStore((s) => s.data?.facilities ?? []);
   const waterPoints = useAppStore((s) => s.data?.waterPoints ?? []);
+  const [showOthers, setShowOthers] = useState(false);
 
   const byKind = new Map<FacilityKind, Facility[]>();
   facilities.forEach((f) => byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f]));
-  const order = (Object.keys(FACILITY_KIND_NAME) as FacilityKind[]).filter((k) => byKind.has(k) || ALWAYS_LISTED.includes(k));
+  const kinds = Object.keys(FACILITY_KIND_NAME) as FacilityKind[];
+  const core = kinds.filter((k) => CORE_KINDS.includes(k));
+  const others = kinds.filter((k) => !CORE_KINDS.includes(k) && byKind.has(k));
+  const otherCount = others.reduce((sum, k) => sum + (byKind.get(k)?.length ?? 0), 0);
+
+  const section = (kind: FacilityKind) => {
+    const list = byKind.get(kind) ?? [];
+    return (
+      <section key={kind}>
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <OrgLogo kind={kind} size={20} inline />
+          <span>
+            {FACILITY_KIND_NAME[kind]} ({list.length})
+          </span>
+        </h3>
+        {list.length ? (
+          list.map((f) => (
+            <Row key={f.id}>
+              <span>{f.name}</span>
+              <small>
+                {f.source}
+                {f.confidence && f.confidence !== 'high' ? ` · confiança ${f.confidence}` : ''}
+              </small>
+            </Row>
+          ))
+        ) : (
+          <p className="note">
+            Sem dados. Pode acrescentar em <code>curatedFacilities</code> no ficheiro do local (o OSM cobre mal esta categoria).
+          </p>
+        )}
+      </section>
+    );
+  };
 
   return (
     <>
-      {order.map((kind) => {
-        const list = byKind.get(kind) ?? [];
-        return (
-          <section key={kind}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <OrgLogo kind={kind} size={20} inline />
-              <span>{FACILITY_KIND_NAME[kind]} ({list.length})</span>
-            </h3>
-            {list.length ? (
-              list.map((f) => (
-                <Row key={f.id}>
-                  <span>{f.name}</span>
-                  <small>
-                    {f.source}
-                    {f.confidence && f.confidence !== 'high' ? ` · confiança ${f.confidence}` : ''}
-                  </small>
-                </Row>
-              ))
-            ) : (
-              <p className="note">
-                Sem dados. Pode acrescentar em <code>curatedFacilities</code> no ficheiro do local (o OSM cobre mal esta categoria).
-              </p>
-            )}
-          </section>
-        );
-      })}
+      {core.map(section)}
+      {others.length ? (
+        <button type="button" className={styles.reinforcementsHead} onClick={() => setShowOthers(!showOthers)} aria-expanded={showOthers}>
+          <b>Outras instalações</b>
+          <small className="note">
+            {others.length} tipos · {otherCount}
+          </small>
+          <span className={`${styles.reinforcementsChevron} ${showOthers ? styles.reinforcementsChevronOpen : ''}`} aria-hidden="true">
+            <Icon name="chevron" size={14} />
+          </span>
+        </button>
+      ) : null}
+      {showOthers ? others.map(section) : null}
       <WaterSummary list={waterPoints} />
     </>
   );
