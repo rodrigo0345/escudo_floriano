@@ -110,6 +110,13 @@ too intense to attack head-on gets its crews working ahead of it instead, while 
 A 254 → 301 ha, B 340 → 424 ha.) A crew registered to its organization and not to a station (the generic pool) leaves from the organization's station nearest the target, and in a
 re-plan a crew that has finished a job leaves from where it is (`RouteRequest.from`).
 
+**The nearest units attack first, on the flanks and the back.** The backend sums its spread vectors over blocks of cells, so a young fire shows only its head; the first
+engines (BV Braga, 16 min from Falperra) were all sent to a head past direct attack, found no safe spot and stayed at the station while engines 90 min out took the flanks
+later. Now the flanks and the back the vectors miss are read from the outline (`sectors.outline_sectors`: the elliptical fire of Anderson/Alexander gives their spread
+rate, Byram their intensity); with no black yet a crew attacks a weak edge from just ahead of it while its own cell is safe (`placement.edge_site`); within a group the
+units nearest in time take the front (`assign_units(rank=)`), and the ones it has no room for join the next group instead of staying home. Units that cannot reach
+the fire wait 300 m to 6.4 km out, the nearest point the forecast fire never reaches.
+
 ## How a plan is made
 
 1. `GET /simulations/{id}/threatened`, `/summary`, `/vectors` and `GET /rules` give the situation (never a guessed position).

@@ -120,6 +120,31 @@ def black_site(clock: FireClock, sector: Sector, arrive: float, stay: float, rea
     return None
 
 
+def edge_site(clock: FireClock, sector: Sector, arrive: float, wanted: float, reach_m: float) -> tuple[dict[str, float], int] | None:
+    """A spot just ahead of ``sector``'s edge from which a crew attacks it directly, and how long it may stay: ``None`` if there is none within ``reach_m``.
+
+    A young fire has no black yet (nothing has burned out when the first crews arrive), but its back and weak flanks are attacked at the edge itself: the crew
+    stands on the unburned side, within reach of the flames, and leaves ``MARGIN_MIN`` before the fire gets to its cell (the backend's ``CrewSafety`` looks at
+    that cell only; ``stay_ahead`` also keeps clear of the cells around, which on a 60 m grid leaves no spot within reach of a young fire's edge). The search
+    goes out from the edge along the stretch's own bearing, a step at a time, and a step to either side; the nearest spot with at least ``MIN_STAY_MIN`` of work
+    is it.
+    """
+    distance = STEP_M
+    while distance <= reach_m:
+        for side in (0.0, -STEP_M * 2, STEP_M * 2):
+            lat, lon = destination(sector.lat, sector.lon, sector.bearing_deg, distance)
+            if side:
+                lat, lon = destination(lat, lon, (sector.bearing_deg + 90.0) % 360.0, side)
+            reached = clock.reached(lat, lon)
+            if reached is not None and reached <= arrive:
+                continue  # burning, or not yet burned out, when the crew gets there
+            stay = int(min(wanted, reached - MARGIN_MIN - arrive)) if reached is not None else int(wanted)
+            if stay >= MIN_STAY_MIN:
+                return {"lat": lat, "lon": lon}, stay
+        distance += STEP_M
+    return None
+
+
 def stay_ahead(clock: FireClock, position: dict[str, float], arrive: float, wanted: float) -> int:
     """How long a crew arriving at ``arrive`` can work at ``position`` ahead of the fire: up to ``wanted``, ending ``MARGIN_MIN`` before the fire gets there.
 
