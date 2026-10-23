@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { GuidedTour } from '@/components/layout/GuidedTour';
 import { KeyboardShortcuts } from '@/components/layout/KeyboardShortcuts';
 import { PlaybackBar } from '@/components/layout/PlaybackBar';
 import { TopBar } from '@/components/layout/TopBar';
@@ -64,6 +65,7 @@ export function App() {
       <Controllers />
       <KeyboardShortcuts />
       <WelcomeDialog />
+      <GuidedTour />
     </EngineProvider>
   );
 }

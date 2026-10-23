@@ -43,20 +43,32 @@ class FireClock:
         minute = int(self.ignition[row * width + col])
         return None if minute < 0 else minute
 
-    def reached_around(self, lat: float, lon: float) -> int | None:
-        """The earliest minute the fire reaches the cell of the point or any of the 8 around it (``None`` if it reaches none).
+    def block_ignitions(self, lat: float, lon: float) -> list[int]:
+        """The minute the fire reaches each cell of the 3×3 block around the point (its own cell included); the cells it never reaches are left out.
 
-        A crew is not caught only when its own cell burns: fire at the next cell is flames and heat on top of it, and it cuts the way out. Working ahead of the fire, a
-        crew leaves before the fire gets to the block around it, not to the cell it stands on.
+        A crew is not caught only when its own cell burns: fire at the next cell is flames and heat on top of it, and it cuts the way out. So the whole block counts,
+        **each cell on its own clock**: a fire leaves islands that burn long after their neighbours (a cell that went at T+69 next to one that goes at T+135).
         """
         width, height = int(self.grid["width"]), int(self.grid["height"])
         col = int((lon - float(self.grid["lonWest"])) / float(self.grid["dLon"]))
         row = int((float(self.grid["latNorth"]) - lat) / float(self.grid["dLat"]))
         if not (0 <= col < width and 0 <= row < height):
-            return None
-        soonest = [int(self.ignition[r * width + c]) for r in range(max(0, row - 1), min(height, row + 2)) for c in range(max(0, col - 1), min(width, col + 2))]
-        soonest = [m for m in soonest if m >= 0]
-        return min(soonest) if soonest else None
+            return []
+        cells = [int(self.ignition[r * width + c]) for r in range(max(0, row - 1), min(height, row + 2)) for c in range(max(0, col - 1), min(width, col + 2))]
+        return [m for m in cells if m >= 0]
+
+    def reached_around(self, lat: float, lon: float) -> int | None:
+        """The earliest minute the fire reaches the cell of the point or any of the 8 around it (``None`` if it reaches none).
+
+        Only the *first* contact with the block: whether the block is burned out or clear later needs every cell (``clear_around``, ``stay_ahead``), because the
+        earliest cell says nothing about the others.
+        """
+        cells = self.block_ignitions(lat, lon)
+        return min(cells) if cells else None
+
+    def clear_around(self, lat: float, lon: float, start: float, end: float) -> bool:
+        """Is every cell of the block around the point free of fire from ``start`` to ``end``: burned out before ``start``, or reached only after ``end``?"""
+        return all(m + BURNED_OUT_MIN <= start or m > end for m in self.block_ignitions(lat, lon))
 
     def safe(self, lat: float, lon: float, start: float, end: float) -> bool:
         """Is the point free of fire from ``start`` to ``end`` (burned out before, or reached after)?"""
@@ -153,10 +165,10 @@ def stay_ahead(clock: FireClock, position: dict[str, float], arrive: float, want
     here = clock.reached(float(position["lat"]), float(position["lon"]))
     if here is not None and here + BURNED_OUT_MIN <= arrive:
         return int(wanted)  # already burned out: nothing left to burn there
-    reached = clock.reached_around(float(position["lat"]), float(position["lon"]))  # the block around the crew, not only its own cell
-    if reached is None:
+    # the block around the crew, not only its own cell, and each cell on its own clock: the cells that have burned out by then no longer count, the first of the
+    # others (burning, or still to burn) sets when the crew must leave (the earliest cell of all said nothing of a cell that burns later, after its neighbours)
+    ahead = [m for m in clock.block_ignitions(float(position["lat"]), float(position["lon"])) if m + BURNED_OUT_MIN > arrive]
+    if not ahead:
         return int(wanted)
-    if reached + BURNED_OUT_MIN <= arrive:
-        return int(wanted)
-    room = reached - MARGIN_MIN - arrive
+    room = min(ahead) - MARGIN_MIN - arrive
     return int(min(wanted, room)) if room >= MIN_STAY_MIN else 0

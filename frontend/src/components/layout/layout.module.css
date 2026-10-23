@@ -502,6 +502,86 @@
   color: var(--acc);
 }
 
+/* the guided tour: the lit part is a hole in a big shadow, the card sits beside it */
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+}
+
+.tourDim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 12, 0.62);
+}
+
+.tourSpot {
+  position: absolute;
+  border-radius: 8px;
+  box-shadow: 0 0 0 100vmax rgba(4, 8, 12, 0.62);
+  outline: 2px solid var(--acc);
+  outline-offset: -2px;
+  pointer-events: none;
+}
+
+.tourCard {
+  position: absolute;
+  padding: 14px 16px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+}
+
+.tourCard b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.tourCard p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mut);
+}
+
+.tourFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tourFoot > * {
+  white-space: nowrap;
+}
+
+.tourSkip {
+  margin-right: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--mut);
+  font-size: 12px;
+}
+
+.tourCount {
+  font-size: 12px;
+  color: var(--mut);
+}
+
+.tourNext {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  font-weight: 600;
+}
+
+.welcomeButtons {
+  display: flex;
+  gap: 10px;
+}
+
 .welcomeStart {
   min-width: 160px;
   height: 36px;

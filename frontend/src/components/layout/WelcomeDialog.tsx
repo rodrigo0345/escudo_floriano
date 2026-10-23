@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { START_TOUR_EVENT } from './GuidedTour';
 import styles from './layout.module.css';
 
 const SEEN_KEY = 'firetrace.welcomeSeen';
@@ -53,9 +54,20 @@ export function WelcomeDialog() {
           plataforma. Prevê a evolução dos incêndios e permite testar estratégias de atuação antes de as pôr em prática.
         </p>
         <p className={styles.welcomeMotto}>«Proteger quem nos protege.»</p>
-        <button ref={start} type="button" className={styles.welcomeStart} onClick={close}>
-          Começar
-        </button>
+        <div className={styles.welcomeButtons}>
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              window.dispatchEvent(new Event(START_TOUR_EVENT));
+            }}
+          >
+            Fazer visita (1 min)
+          </button>
+          <button ref={start} type="button" className={styles.welcomeStart} onClick={close}>
+            Começar
+          </button>
+        </div>
         <small className="mut">
           Carregue em <kbd>?</kbd> para ver os atalhos de teclado.
         </small>

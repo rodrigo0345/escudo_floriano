@@ -129,3 +129,52 @@
   font-size: 11px;
   color: var(--mut);
 }
+
+/* the «i» that explains a technical term (GlossaryTip): small, quiet until hovered */
+.glossaryTip {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  border: 1px solid var(--mut);
+  border-radius: 50%;
+  color: var(--mut);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 1px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: help;
+}
+
+.glossaryTip:hover,
+.glossaryTip:focus-visible {
+  color: var(--fg);
+  border-color: var(--fg);
+  outline: none;
+}
+
+.glossaryPop {
+  position: fixed;
+  z-index: 200;
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.glossaryPop span {
+  color: var(--mut);
+}

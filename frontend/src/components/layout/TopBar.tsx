@@ -79,7 +79,7 @@ export function TopBar() {
       </div>
       <nav className={styles.tabs}>
         {TABS.map((t) => (
-          <button key={t.value} className={tab === t.value ? 'on' : ''} onClick={() => setTab(t.value)}>
+          <button key={t.value} className={tab === t.value ? 'on' : ''} onClick={() => setTab(t.value)} data-tour={`tab-${t.value}`}>
             {t.label}
             {badge(t.value) !== null ? <span className={styles.badge}>{badge(t.value)}</span> : null}
           </button>

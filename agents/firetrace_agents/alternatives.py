@@ -359,7 +359,7 @@ def build_alternatives(
     decided_at = int(cycle.get("at_minute") or 0)
     # The safety rule (see judge.py): a plan is judged on the forecast and on a wrong wind, the crews caught are cut short or not sent, and a plan that still
     # predicts a casualty is not published.
-    from .holding import HOLD_MARGIN_MIN, HoldingClock, drop_unreachable_holds, hold_idle_units  # noqa: PLC0415 — holding builds on adaptation, which builds on this module
+    from .holding import HOLD_MARGIN_MIN, HoldingClock, drop_holds_in_fire, drop_unreachable_holds, hold_idle_units  # noqa: PLC0415 — holding builds on adaptation, which builds on this module
     from .judge import Judge  # noqa: PLC0415 — judge builds on this module
 
     issues: list[str] = []
@@ -532,6 +532,37 @@ def build_alternatives(
             holding = hold_idle_units(plan, clock, run_end, ground, reasons, orchestrator.unit_routes)
             log.info("baseline %s: plan %s: %d units hold in the field after their job instead of going home (not held: %s; %d ground units known)", simulation_id, variant, holding, reasons or "-", len(ground))
 
+    # The holds came after the judge, so the engine has not seen them: it judges the plan once more, with them, and a hold whose crew the fire catches is taken out
+    # (that unit goes home). A plan that still predicts a casualty then is not published: the rule has no exception for standby crews.
+    if judge is not None:
+        held_plans = [(variant, plan) for variant, plan in (("A", plan_a), ("B", plan_b)) if variant not in out.unsafe and any(str(a["id"]).startswith("hold-") for a in plan["actions"])]
+        if held_plans:
+            report("judging", 70, "O motor confirma que as equipas em prontidão no terreno não ficam apanhadas pelo fogo")
+
+            def check_holds(plan: dict[str, Any]) -> tuple[int, int]:
+                # the backend's own validation first: it names the holds whose unit cannot drive to the spot (an error, which would also refuse the what-if below) and the
+                # ones whose crew the forecast fire catches; then the engine's what-if has the last word
+                validation = client.validate_plan(plan)
+                dropped = drop_holds_in_fire(plan, validation)
+                if validation.get("valid") is False:
+                    dropped += drop_unreachable_holds(plan, validation)
+                taken, casualties = judge.keep_holds_safe(plan, decided_at)
+                return dropped + taken, casualties
+
+            with ThreadPoolExecutor(max_workers=max(1, len(held_plans))) as pool:
+                checking = {variant: pool.submit(check_holds, plan) for variant, plan in held_plans}
+            for variant, future in checking.items():
+                try:
+                    dropped, casualties = future.result()
+                except ApiProblem as error:
+                    out.unsafe.add(variant)
+                    out.issues.append(f"plan {variant} not published: the engine could not confirm the standby crews are safe [{error.code}]: {error}")
+                    continue
+                log.info("baseline %s: plan %s: %d standby crews taken out after the engine's check; %d casualties left", simulation_id, variant, dropped, casualties)
+                if casualties:
+                    out.unsafe.add(variant)
+                    out.issues.append(f"plan {variant} not published: the engine still predicts {casualties} crew casualties once the standby crews are in")
+
     for plan, evaluation in ((plan_a, out.eval_a), (plan_b, out.eval_b)):
         if evaluation is not None:
             plan["summary"] = f"### Resultado simulado pelo motor\n- {evaluation.line()}\n\n" + plan.get("summary", "")
@@ -566,6 +597,9 @@ def build_alternatives(
             if variant in out.unsafe:
                 continue
             validation = client.validate_plan(plan)
+            if (in_fire := drop_holds_in_fire(plan, validation)):  # the backend warns that the fire catches a holding crew: that unit goes home instead
+                log.info("baseline %s: plan %s: %d holding actions dropped (the validation says the forecast fire catches their crew)", simulation_id, variant, in_fire)
+                validation = client.validate_plan(plan)
             if validation.get("valid") is False and (dropped := drop_unreachable_holds(plan, validation)):
                 log.info("baseline %s: plan %s: %d holding actions dropped (their unit cannot drive to the waiting spot)", simulation_id, variant, dropped)
                 validation = client.validate_plan(plan)

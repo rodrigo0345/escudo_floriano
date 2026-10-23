@@ -34,7 +34,7 @@ export function SpeedControl() {
 
   const index = speedIndex(speed);
   return (
-    <div className={styles.speed} ref={box}>
+    <div className={styles.speed} ref={box} data-tour="speed">
       <button type="button" className={styles.speedButton} onClick={() => setOpen(!open)} aria-expanded={open} title="Velocidade de reprodução (J mais lenta, K mais rápida)">
         <span className="mut">Velocidade</span> <b>{speedLabel(speed)}</b>
         <Icon name="chevron" size={12} />

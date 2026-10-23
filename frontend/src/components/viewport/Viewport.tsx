@@ -59,7 +59,7 @@ export function Viewport() {
   }
 
   return (
-    <div className={styles.view}>
+    <div className={styles.view} data-tour="map">
       <div ref={host} className={styles.canvasHost} />
       <LayersPanel />
       <Compass />

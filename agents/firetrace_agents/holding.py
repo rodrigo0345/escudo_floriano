@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .adaptation import _where
-from .placement import BURNED_OUT_MIN, FireClock
+from .alternatives import drop_actions
+from .placement import FireClock
 
 MIN_IDLE_MIN = 20  # a unit idle for less than this before the run ends just finishes
 BACKEND_DEFAULT_STAY_MIN = 30  # `Limits.DefaultActionWindowMinutes`: how long the backend's unit simulator keeps a unit on an action that states no stay
@@ -35,12 +36,20 @@ class HoldingClock:
     margin_min: float = HOLD_MARGIN_MIN
 
     def safe(self, lat: float, lon: float, start: float, end: float) -> bool:
-        """Free of fire, in every run, in its cell and the 8 around it from ``start`` to ``end`` plus the margin (burned out before, or reached after)."""
-        for clock in self.clocks:
-            reached = clock.reached_around(lat, lon)
-            if reached is not None and not (reached + BURNED_OUT_MIN <= start or reached > end + self.margin_min):
-                return False
-        return True
+        """Free of fire, in every run, in its cell and the 8 around it from ``start`` to ``end`` plus the margin: **each** of the nine burned out before, or reached after.
+
+        (Not "the earliest of the nine": a block whose first cell went at T+69 is not burned out if another goes at T+135, and a crew held there is caught.)"""
+        return all(clock.clear_around(lat, lon, start, end + self.margin_min) for clock in self.clocks)
+
+
+def drop_holds_in_fire(plan: dict[str, Any], validation: dict[str, Any]) -> int:
+    """Take out the holding actions the backend's validation warns about (``crew_in_fire``: the forecast fire catches the crew holding there). Returns how many.
+
+    The backend checks the plan against the baseline fire, with the crews' own routes: a unit that goes home instead is no casualty. Only holds are touched: they are
+    the standby the agents add after the judge, and the other actions were judged on the engine's what-if.
+    """
+    caught = {str(i.get("actionId")) for i in validation.get("issues") or [] if i.get("code") == "crew_in_fire" and str(i.get("actionId") or "").startswith("hold-")}
+    return drop_actions(plan, caught) if caught else 0
 
 
 def backend_end(action: dict[str, Any], unit: str) -> float:
