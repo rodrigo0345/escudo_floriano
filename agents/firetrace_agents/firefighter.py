@@ -40,7 +40,8 @@ EVACUATION_CAPABILITIES = frozenset({"evacuation_transport", "traffic_control", 
 LINE_FACTOR = {FirefighterTier.HELICOPTER: 0.5, FirefighterTier.TRUCK: 0.5, FirefighterTier.SQUAD: 0.4}  # half a zone each side of the unit: an operation the size of one work zone, not a 1 km curtain (was 1.5 / 1.0 / 0.8)
 # Aircraft: how hard one drop hits by what it carries (a light helicopter's ~1 000 L, a Fire Boss' ~3 000 L, a heavy helicopter's or a Canadair's 4 500–6 000 L),
 # how long a sortie lasts before the next re-plan sends it elsewhere, and how long a water drop keeps the ground wet (the rotation is weighed against it).
-AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.5, 0.6, 0.7
+AIR_STRENGTH_LIGHT, AIR_STRENGTH_MEDIUM, AIR_STRENGTH_HEAVY = 0.75, 0.85, 0.95  # DEMO BOOST (realistic: 0.5, 0.6, 0.7)
+DIRECT_ATTACK_MAX_KWM, DIRECT_ATTACK_MAX_MMIN = 12000.0, 25.0  # DEMO BOOST (realistic: 2500 kW/m, 8 m/min): engines attack head-on up to this
 AIR_SORTIE_MIN = 45
 AIR_DROP_WET_MIN = 20
 WET_LINE_BUILD_MIN = 40  # the engines' line on a flank, when the orchestrator found no measured one (``fuel_strip``) for them
@@ -751,7 +752,7 @@ class FirefighterAgent:
             ]
         # A sortie: it drops, flies to refill and comes back for ``AIR_SORTIE_MIN`` (until the next re-plan sends it where the fire has gone); the orchestrator
         # weighs the effect by how much of that time a drop is still wet on the ground (its rotation, see ``_air_rotation``) and ends it at nightfall.
-        if situation.max_intensity_kwm >= 1500:
+        if situation.max_intensity_kwm >= DIRECT_ATTACK_MAX_KWM:  # DEMO BOOST (realistic: 1500)
             strength = round(strength * 0.75, 2)
         geom = self._assignment.air_line or self._line(situation, target_pos)
         return [
@@ -778,7 +779,7 @@ class FirefighterAgent:
         ]
 
     def _truck_suppression(self, situation: Situation) -> list[ActionProposal]:
-        if situation.initial_attack or (situation.head_speed_mmin <= 8 and situation.max_intensity_kwm <= 2500):
+        if situation.initial_attack or (situation.head_speed_mmin <= DIRECT_ATTACK_MAX_MMIN and situation.max_intensity_kwm <= DIRECT_ATTACK_MAX_KWM):
             return [
                 ActionProposal(
                     action_type="fire_attack",

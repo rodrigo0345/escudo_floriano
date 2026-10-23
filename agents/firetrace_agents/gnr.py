@@ -35,7 +35,7 @@ ACCESS_LEAD_MINUTES = 30  # an access closes earlier: it only stops traffic goin
 MAX_CLOSURES = 60  # all the roads the fire reaches, most urgent first; a plan of more than this is not one an operator reads
 MAX_CLOSURE_M = 1500.0  # a closure is a stretch two patrols can mind: longer roads are cut into pieces of at most this length
 MAX_CUT_SPREAD_MIN = 30.0  # ...and pieces whose segments the fire cuts more than this far apart in time are separate closures
-DEFAULT_NO_EFFECT_KWM = 4000.0
+DEFAULT_NO_EFFECT_KWM = 35000.0  # DEMO BOOST (realistic 4000)
 CHECKPOINT_PERSONNEL = 2
 UNIT_CANDIDATES = 3  # nearest units tried per checkpoint before giving up on it
 # the cordon (assumptions, to calibrate with the GNR)
