@@ -59,13 +59,13 @@ flowchart LR
         UI["Operator console<br/>React + three.js"]
     end
     subgraph "docker compose"
-        NGINX["frontend<br/>nginx :8081"]
-        API["backend<br/>.NET 10 API :8080"]
-        DB[("db<br/>PostgreSQL + PostGIS<br/>:5440")]
-        ENG["engine<br/>Python + ELMFIRE :9000<br/>optional provider"]
+        NGINX["frontend<br/>nginx"]
+        API["backend<br/>.NET 10 API"]
+        DB[("db<br/>PostgreSQL + PostGIS")]
+        ENG["engine<br/>fire engine worker<br/>(optional)"]
         AG["agents<br/>Python planning agents"]
         ING["ingest<br/>(CLI, on demand)"]
-        FILES[("./data<br/>runs, engine-cache, jobs,<br/>imagery, tiles3d, logs")]
+        FILES[("./data<br/>runs, caches, jobs,<br/>imagery, tiles3d, logs")]
     end
     EXT["Third-party data<br/>OpenStreetMap, Open-Meteo,<br/>terrain, land cover, imagery"]
     LLM["OpenAI-compatible LLM<br/>(optional)"]
@@ -73,7 +73,7 @@ flowchart LR
     UI -->|"/api/v1, /swagger"| NGINX
     NGINX -->|proxy| API
     API <--> DB
-    API <-->|"files in /jobs/id"| ENG
+    API <-->|"simulation jobs"| ENG
     API <--> FILES
     AG -->|"REST, same contract"| API
     AG -.->|"only if AGENTS_COMMANDER=llm"| LLM
@@ -371,14 +371,14 @@ Run it with `docker compose --profile ingest run --rm ingest --location guimarae
 
 ```mermaid
 stateDiagram-v2
-    [*] --> proposed: agents publish A and B
-    proposed --> selected: operator chooses
-    proposed --> discarded: another plan chosen
-    selected --> active: activate
-    active --> completed: close
-    proposed --> cancelled: PATCH status
-    selected --> cancelled: PATCH status
-    active --> cancelled: PATCH status
+    [*] --> proposed: the agents publish A and B (POST /plans)
+    proposed --> selected: the operator selects it (POST /select)
+    proposed --> discarded: the operator selects the other plan
+    selected --> active: the operator activates it (POST /activate)
+    active --> completed: the operator closes it (PATCH completed)
+    proposed --> cancelled: the operator cancels it (PATCH cancelled)
+    selected --> cancelled: the operator cancels it (PATCH cancelled)
+    active --> cancelled: the operator cancels it (PATCH cancelled)
     completed --> [*]
 ```
 
@@ -439,7 +439,7 @@ A Python package (`firetrace_agents`) that is **only a client of the API**. It r
 | Agent | Module | Decides |
 |---|---|---|
 | **Orchestrator** (command) | `orchestrator.py` | Builds the team, ranks the fire-front **sectors**, guards every proposal (tier matrix, `/capabilities`, resource conflicts), validates, publishes. |
-| **Firefighters** (squad, fire engine, helicopter) | `firefighter.py`, `sectors.py`, `placement.py`, `capacity.py`, `duty.py`, `terrain.py`, `fuelbreak.py` | Which stretch of the front each unit works, where it stands safely (burned side of the edge, leave before the fire comes), how much it delivers given water and fatigue, and how slope and fuel change its effect. |
+| **Firefighters** | `firefighter.py`, `sectors.py`, `placement.py`, `capacity.py`, `duty.py`, `terrain.py`, `fuelbreak.py` | Which stretch of the front each unit works (the nearest units first, on the flanks and the back of a young fire as well as its head), where it stands safely (burned side of the edge, or just ahead of a weak edge while its own cell is safe; leave before the fire comes), how much it delivers given water and fatigue, and how slope and fuel change its effect. |
 | **Proteção Civil** | `support.py`, `life.py` | Evacuate in time or shelter in place (vulnerable people first), shelters and routes, public alerts, the command post. |
 | **GNR** | `gnr.py` | Closes the roads the fire cuts, **only with a patrol at every end** (a closure nobody enforces is no closure); emergency vehicles always pass. |
 | **INEM** | `support.py` | Ambulances on standby behind the crews, hospitals on alert. |
@@ -460,7 +460,7 @@ Both follow the same priorities: **1. lives (crews and people evacuated), 2. hou
 - **Re-planning** (`adaptation.py`): every `AGENTS_REPLAN_MINUTES` (45) the agents read the plan's what-if; if the fire is not under control they decide again with the free units, keeping a wave only if the engine says it helps and keeps zero casualties.
 - **Holding** (`holding.py`): units that finish their job stay in the field (`stage_resources`) at a spot clear of every judged fire, instead of being sent home by the unit simulator.
 - **Revisions** (`revision.py`): when the operator selects or edits a plan, the agents re-check it and revise it with `PATCH`.
-- **Travel** (`travel.py`): each unit's arrival comes from `POST /routing/route`; a unit with no route is not assigned; units that cannot reach the fire go as near as is safe and wait.
+- **Travel** (`travel.py`): each unit's arrival comes from `POST /routing/route`; a unit with no route is not assigned; units that cannot reach the fire go as near as is safe (300 m to 6.4 km out) and wait.
 - **Campaigns** (`campaign.py`): rolling-horizon forecast → plan → execute → next state, used by the experiment scripts.
 
 ### 10.5 The LLM option
