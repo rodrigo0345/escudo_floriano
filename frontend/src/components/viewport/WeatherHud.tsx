@@ -67,6 +67,8 @@ export function WeatherHud() {
   if (!weather) return null;
   const to = (weather.windFromDeg + 180) % 360;
   const color = windColorCss(weather.windKmh);
+  // the arrow is the wind, not a compass needle: the map's own orientation is the compass rose at the bottom left
+  const windHint = `Seta: direção do vento. O vento sopra para ${compass(to)} (vem de ${compass(weather.windFromDeg)}). Não é a orientação geográfica do mapa: para isso use a bússola.`;
 
   const risk = fireRiskLevel(weather);
   return (
@@ -79,7 +81,8 @@ export function WeatherHud() {
       >
         {collapsed ? '▸' : '◂'}
       </button>
-      <svg className={styles.dial} viewBox="-32 -32 64 64" aria-hidden="true">
+      <svg className={styles.dial} viewBox="-32 -32 64 64" role="img" aria-label={windHint}>
+        <title>{windHint}</title>
         <circle r="29" fill="none" stroke="currentColor" strokeOpacity=".25" />
         <text y="-19" textAnchor="middle" fontSize="8" fill="currentColor" opacity=".7">
           N
