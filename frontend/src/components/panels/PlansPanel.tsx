@@ -11,7 +11,9 @@ import {
   type PlanStatus,
   type Simulation,
 } from '@/api';
+import { GlossaryTip } from '@/components/common/GlossaryTip';
 import { Row, Tag } from '@/components/common/StatCard';
+import type { GlossaryTerm } from '@/domain/glossary';
 import { useSimulationActions } from '@/hooks/useSimulationActions';
 import { useAppStore } from '@/store/appStore';
 import { useResourcesStore } from '@/store/resourcesStore';
@@ -62,12 +64,12 @@ const PLAN_STYLE: Record<string, { name: string; hint: string }> = {
 };
 
 type Stats = NonNullable<Simulation['stats']>;
-const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed' | 'crewCasualties'; label: string; unit: string }[] = [
+const METRICS: { key: 'burnedHa' | 'crownFireHa' | 'buildingsAffected' | 'populationExposed' | 'crewCasualties'; label: string; unit: string; term?: GlossaryTerm }[] = [
   { key: 'burnedHa', label: 'Área ardida', unit: ' ha' },
-  { key: 'crownFireHa', label: 'Fogo de copas', unit: ' ha' },
+  { key: 'crownFireHa', label: 'Fogo de copas', unit: ' ha', term: 'crownFire' },
   { key: 'buildingsAffected', label: 'Edifícios atingidos', unit: '' },
   { key: 'populationExposed', label: 'População exposta', unit: '' },
-  { key: 'crewCasualties', label: 'Baixas de equipas', unit: '' }, // only a plan's what-if has it: the cost of the plan in people
+  { key: 'crewCasualties', label: 'Feridos nas equipas', unit: '', term: 'casualties' }, // only a plan's what-if has it: the cost of the plan in people
 ];
 
 /** `-26%` against the baseline; green when the plan did better (lower is better for every metric here). */
@@ -77,15 +79,15 @@ function Delta({ value, base }: { value?: number; base?: number }) {
   return <Tag kind={pct <= 0 ? 'ok' : 'bad'}>{`${pct > 0 ? '+' : ''}${pct.toFixed(0)}%`}</Tag>;
 }
 
-type CompareRow = { label: string; unit?: string; value: (sim?: Simulation) => number | undefined };
+type CompareRow = { label: string; unit?: string; term?: GlossaryTerm; value: (sim?: Simulation) => number | undefined };
 
 const COMPARE_ROWS: CompareRow[] = [
   { label: 'Área ardida', unit: ' ha', value: (s) => s?.stats?.burnedHa },
-  { label: 'Fogo de copas', unit: ' ha', value: (s) => s?.stats?.crownFireHa },
+  { label: 'Fogo de copas', unit: ' ha', term: 'crownFire', value: (s) => s?.stats?.crownFireHa },
   { label: 'Edifícios atingidos', value: (s) => s?.stats?.buildingsAffected },
   { label: 'População exposta', value: (s) => s?.stats?.populationExposed },
-  { label: 'Pessoal em zona de fogo', value: (s) => s?.crewExposures?.reduce((sum, e) => sum + e.personnel, 0) },
-  { label: 'Baixas de pessoal', value: (s) => s?.stats?.crewCasualties },
+  { label: 'Pessoal em zona de fogo', term: 'crewExposure', value: (s) => s?.crewExposures?.reduce((sum, e) => sum + e.personnel, 0) },
+  { label: 'Feridos nas equipas', term: 'casualties', value: (s) => s?.stats?.crewCasualties },
   { label: 'Estradas cortadas', value: (s) => s?.stats?.roadsCut },
 ];
 
@@ -115,7 +117,10 @@ function CompareTable({ base, plans, runs, edited }: { base?: Simulation; plans:
               const baseline = row.value(base);
               return (
                 <tr key={row.label}>
-                  <td>{row.label}</td>
+                  <td>
+                    {row.label}
+                    {row.term ? <GlossaryTip term={row.term} /> : null}
+                  </td>
                   <td>
                     <b>{baseline == null ? '—' : `${nf(baseline)}${row.unit ?? ''}`}</b>
                   </td>
@@ -144,7 +149,10 @@ function StatsRows({ stats, base }: { stats?: Stats; base?: Stats }) {
     <>
       {METRICS.filter((m) => stats[m.key] != null).map((m) => (
         <Row key={m.key}>
-          <span>{m.label}</span>
+          <span>
+            {m.label}
+            {m.term ? <GlossaryTip term={m.term} /> : null}
+          </span>
           <span>
             {nf(stats[m.key] as number)}
             {m.unit} {base ? <Delta value={stats[m.key]} base={base[m.key]} /> : null}
@@ -205,7 +213,13 @@ function AgentRows({ m }: { m: AgentMetrics | null }) {
       <Row>
         <span>Meios</span>
         <span>
-          {m.units.committed} no terreno{m.units.forwardReserve ? ` · ${m.units.forwardReserve} em reserva avançada` : ''}
+          {m.units.committed} no terreno
+          {m.units.forwardReserve ? (
+            <>
+              {` · ${m.units.forwardReserve} em reserva avançada`}
+              <GlossaryTip term="forwardReserve" />
+            </>
+          ) : null}
           {m.units.noSafeSpot ? ` · ${m.units.noSafeSpot} sem posição segura` : ''}
         </span>
       </Row>
@@ -428,7 +442,7 @@ export function PlansPanel() {
           <div className={styles.planTiles}>
             {tile('Área ardida', stats?.burnedHa, baseStats?.burnedHa, ' ha')}
             {tile('Edifícios', stats?.buildingsAffected, baseStats?.buildingsAffected)}
-            {tile('Baixas', stats?.crewCasualties, undefined)}
+            {tile('Feridos', stats?.crewCasualties, undefined)}
             {tile('Meios', m?.units.committed, undefined)}
           </div>
         ) : (

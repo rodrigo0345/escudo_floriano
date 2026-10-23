@@ -222,8 +222,8 @@ export class StatusTag {
     if (state.water !== undefined) bar(state.water, '#3fa9ff', 'água');
     if (state.fuel !== undefined) bar(state.fuel, state.fuel < 0.25 ? '#ff5d5d' : '#f0b429', 'comb.');
     if (state.casualties) {
-      // a red pill: "N baixas"
-      const text = `${state.casualties} baixa${state.casualties > 1 ? 's' : ''}`;
+      // a red pill: "N feridos"
+      const text = `${state.casualties} ferido${state.casualties > 1 ? 's' : ''}`;
       ctx.font = '800 18px system-ui, sans-serif';
       const tw = ctx.measureText(text).width;
       ctx.fillStyle = '#d4504c';
