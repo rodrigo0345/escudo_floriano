@@ -16,12 +16,17 @@ import styles from './viewport.module.css';
  */
 const COLLAPSED_KEY = 'firetrace.weatherHud.collapsed';
 
+/** On a phone the card starts folded: there is no room beside the layer controls. */
+const PHONE_WIDTH_PX = 700;
+
 /** The collapsed state is a per-viewer convenience: it is remembered when the browser lets it, and the card works without it. */
 function readCollapsed(): boolean {
+  const smallScreen = window.innerWidth <= PHONE_WIDTH_PX;
   try {
-    return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+    const saved = window.localStorage.getItem(COLLAPSED_KEY);
+    return saved === null ? smallScreen : saved === '1';
   } catch {
-    return false;
+    return smallScreen;
   }
 }
 

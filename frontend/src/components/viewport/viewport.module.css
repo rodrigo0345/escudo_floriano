@@ -244,6 +244,46 @@
   z-index: 3;
 }
 
+.hudCollapsed {
+  width: auto;
+  max-width: 300px;
+  padding: 5px 30px 5px 8px;
+  gap: 4px 8px;
+}
+
+.hudCollapsed .dial {
+  width: 30px;
+  height: 30px;
+}
+
+/* the card's fold/unfold button: a small corner control, not a grid cell */
+.hudToggle {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.7;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.hudToggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.hudChip {
+  font-weight: 400;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
 .dial {
   width: 56px;
   height: 56px;
@@ -385,6 +425,8 @@
 /* right-hand stack: view mode, base layers, overlays, legends */
 .layers {
   max-height: calc(100% - 24px);
+  /* never reach the weather card on the left (300 px + its margins): the controls wrap onto more rows instead */
+  max-width: min(470px, calc(100% - 340px));
   overflow: auto;
   position: absolute;
   right: 12px;
@@ -402,7 +444,7 @@
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-  max-width: min(470px, calc(100vw - 440px));
+  max-width: 100%; /* the width is limited by `.layers` (what the map leaves beside the weather card), not by a guess at the side panel */
 }
 
 /* the "Camadas" button: same frame as the segmented controls beside it, highlighted while the panel is open */
@@ -648,8 +690,18 @@
 
   .hud {
     left: 14px;
+    top: auto; /* the base rule pins it to the top: without this it stretched from the top down to `bottom` */
     bottom: 154px;
     width: min(300px, calc(100vw - 28px));
+  }
+
+  .hudCollapsed {
+    width: auto;
+  }
+
+  /* the controls have the whole width up here: the weather card is at the bottom on a phone */
+  .layers {
+    max-width: calc(100% - 24px);
   }
 
   .layerControls {
