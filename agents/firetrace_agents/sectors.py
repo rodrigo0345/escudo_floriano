@@ -159,6 +159,80 @@ def plan_sectors(vectors: dict[str, Any], *, zone_radius_m: float = 180.0, limit
     return kept[:limit]
 
 
+FLANK_OFFSETS_DEG = (90.0, -90.0, 180.0)  # the two flanks and the back (heel) of a fire, from its head's bearing
+OUTLINE_SAMPLE_M = 30.0  # the outline is walked about every cell
+OUTLINE_CONE_DEG = 35.0  # a stretch of outline belongs to a flank (or the back) within this angle of it, seen from where the fire started
+LENGTH_TO_BREADTH = (1.5, 6.0)  # the fire's length over its width, as the outline gives it, kept within what a wind-driven fire has (a coarse young outline can say anything)
+
+
+def outline_sectors(perimeters: dict[str, Any], origin: dict[str, Any] | None, sectors: Sequence[Sector], *, near_m: float,
+                    workability_of: Callable[[Sector], float] | None = None) -> list[Sector]:
+    """The flanks and the back of the fire, read from its outline, for the directions the spread vectors leave empty.
+
+    The backend sums the vectors over blocks of cells: a young fire fits in one or two of them, so the vectors show its head only, and every crew that arrived
+    early was sent to a head burning past direct attack (and then kept away from it). The doctrine for that fire is to anchor at the back and work up the
+    flanks from the burned side. Each flank (and the back) is the point of the outline farthest from where the fire started in that direction.
+
+    How fast they spread comes from the elliptical fire (Anderson 1983, Alexander 1985, as FARSITE and BehavePlus use it): with the head's rate R and the
+    fire's length-to-breadth ratio L (from the outline, along and across the head's bearing), the back spreads at R / HB with HB = (L + √(L²−1)) / (L − √(L²−1))
+    and the flanks at (R + R/HB) / 2L. Each faces the head's intensity scaled by its rate (Byram: intensity is proportional to the spread rate, as in
+    ``plan_sectors``; the engine too fights each cell with the intensity in the direction the fire enters it, "a flank is far weaker than the head").
+    A direction that already has a vector, or whose point is within ``near_m`` of a stretch already kept, adds nothing.
+    """
+    head = max(sectors, key=lambda s: s.speed_mmin, default=None)
+    if head is None or origin is None or head.speed_mmin <= 0:
+        return []
+    lat0, lon0 = float(origin["lat"]), float(origin["lon"])
+    points: list[tuple[float, float]] = []
+    for feature in (perimeters or {}).get("features") or []:
+        geometry = feature.get("geometry") or {}
+        polygons = geometry.get("coordinates") or []
+        for polygon in polygons if geometry.get("type") == "MultiPolygon" else [polygons]:
+            ring = polygon[0] if polygon else []
+            for a, b in zip(ring, ring[1:]):
+                steps = max(1, math.ceil(distance_m(a[1], a[0], b[1], b[0]) / OUTLINE_SAMPLE_M))
+                points.extend((a[1] + (b[1] - a[1]) * k / steps, a[0] + (b[0] - a[0]) * k / steps) for k in range(steps))
+    if not points:
+        return []
+    # the outline in metres, along (u) and across (v) the head's bearing
+    to_m = 2.0 * math.pi * EARTH_RADIUS_M / 360.0
+    sin_b, cos_b = math.sin(math.radians(head.bearing_deg)), math.cos(math.radians(head.bearing_deg))
+    along, across = [], []
+    for lat, lon in points:
+        x, y = (lon - lon0) * to_m * math.cos(math.radians(lat0)), (lat - lat0) * to_m
+        along.append(x * sin_b + y * cos_b)
+        across.append(x * cos_b - y * sin_b)
+    width = max(across) - min(across)
+    ratio = (max(along) - min(along)) / width if width > 0 else LENGTH_TO_BREADTH[1]
+    ratio = max(LENGTH_TO_BREADTH[0], min(LENGTH_TO_BREADTH[1], ratio))
+    root = math.sqrt(ratio * ratio - 1.0)
+    back_mmin = head.speed_mmin * (ratio - root) / (ratio + root)
+    rate = {180.0: back_mmin, 90.0: (head.speed_mmin + back_mmin) / (2.0 * ratio), -90.0: (head.speed_mmin + back_mmin) / (2.0 * ratio)}
+    head_kwm = head.head_intensity_kwm or head.intensity_kwm
+
+    def off(bearing: float, want: float) -> float:
+        return abs((bearing - want + 180.0) % 360.0 - 180.0)
+
+    added: list[Sector] = []
+    for offset in FLANK_OFFSETS_DEG:
+        want = (head.bearing_deg + offset) % 360.0
+        if any(off(bearing_to(lat0, lon0, s.lat, s.lon), want) <= OUTLINE_CONE_DEG for s in sectors if distance_m(lat0, lon0, s.lat, s.lon) > 1.0):
+            continue  # the vectors already see this side of the fire
+        best, reach = None, 0.0
+        for lat, lon in points:
+            d = distance_m(lat0, lon0, lat, lon)
+            if d > reach and off(bearing_to(lat0, lon0, lat, lon), want) <= OUTLINE_CONE_DEG:
+                best, reach = (lat, lon), d
+        if best is None or any(distance_m(best[0], best[1], s.lat, s.lon) < near_m for s in [*sectors, *added]):
+            continue
+        share = rate[offset] / head.speed_mmin
+        sector = Sector(best[0], best[1], want, rate[offset], head_kwm * share, crown=False, head_intensity_kwm=head_kwm)
+        if workability_of is not None:
+            sector = replace(sector, workability=max(0.0, min(1.0, workability_of(sector))))
+        added.append(sector)
+    return added
+
+
 MAX_SLOT_SHIFT_M = 600.0  # a unit's place along the front never moves more than this from its sector: further out it is no longer on the fire
 
 
@@ -183,6 +257,7 @@ def assign_units(
     budgets: dict[str, float] | None = None,
     concentration: int | None = None,
     need_m_of: Callable[[Sector], float] | None = None,
+    rank: dict[str, float] | None = None,
 ) -> dict[str, Assignment]:
     """``units`` are ``(agent_id, tier)``; helicopters pick first, then trucks, then squads (stable by id).
 
@@ -193,10 +268,13 @@ def assign_units(
     metres are spent on the ``concentration`` most dangerous sectors, in proportion to their danger, and the units of a sector
     are laid end to end as **one barrier** instead of piled up in parallel. ``need_m_of`` (metres per sector) caps that: a sector
     takes units only until its line is as long as it needs, and the rest are not sent.
+
+    ``rank`` (smaller first, e.g. minutes to arrive) orders the units within a tier before their id: the nearest units take the front, the farthest are the
+    ones left over.
     """
     if budgets is not None and concentration:
-        return _assign_barriers(units, sectors, places, budgets, concentration, need_m_of)
-    assigned = _assign_by_tier(units, sectors, places)
+        return _assign_barriers(units, sectors, places, budgets, concentration, need_m_of, rank)
+    assigned = _assign_by_tier(units, sectors, places, rank)
     if budgets is None:
         return assigned
     return {
@@ -253,9 +331,9 @@ def with_preferences(
 
 
 def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], budgets: dict[str, float], concentration: int,
-                     need_m_of: Callable[[Sector], float] | None = None) -> dict[str, Assignment]:
+                     need_m_of: Callable[[Sector], float] | None = None, rank: dict[str, float] | None = None) -> dict[str, Assignment]:
     order = {"helicopter": 0, "truck": 1, "squad": 2}
-    ranked = sorted(units, key=lambda u: (order.get(u[1], 9), u[0]))
+    ranked = sorted(units, key=lambda u: (order.get(u[1], 9), (rank or {}).get(u[0], math.inf), u[0]))
     top = list(sectors[: max(1, concentration)])
     out: dict[str, Assignment] = {}
     dealt: dict[str, int] = {}
@@ -294,7 +372,7 @@ def _assign_barriers(units: Sequence[tuple[str, str]], sectors: Sequence[Sector]
     return out
 
 
-def _assign_by_tier(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]]) -> dict[str, Assignment]:
+def _assign_by_tier(units: Sequence[tuple[str, str]], sectors: Sequence[Sector], places: Sequence[dict[str, Any]], rank: dict[str, float] | None = None) -> dict[str, Assignment]:
     n = len(sectors)
     pools: dict[str, Sequence[Sector]] = {
         "helicopter": sectors[: max(1, math.ceil(n * HELICOPTER_SHARE))],
@@ -305,7 +383,7 @@ def _assign_by_tier(units: Sequence[tuple[str, str]], sectors: Sequence[Sector],
     dealt: dict[str, int] = {}
     order = {"helicopter": 0, "truck": 1, "squad": 2}
     out: dict[str, Assignment] = {}
-    for agent_id, tier in sorted(units, key=lambda u: (order.get(u[1], 9), u[0])):
+    for agent_id, tier in sorted(units, key=lambda u: (order.get(u[1], 9), (rank or {}).get(u[0], math.inf), u[0])):
         sector, slot = None, 0
         pool = pools.get(tier) or sectors
         if pool:

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { speedLabel, stepSpeed } from '@/domain/playbackSpeed';
 import { useEngine } from '@/engine/EngineContext';
 import { useAppStore } from '@/store/appStore';
 import type { PanelTab } from '@/store/types';
@@ -16,6 +17,7 @@ const isTypingTarget = (target: EventTarget | null): boolean => {
 const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Espaço', action: 'Reproduzir / pausar' },
   { keys: '[  ]', action: 'Recuar / avançar 1 minuto' },
+  { keys: 'J  K', action: 'Velocidade mais lenta / mais rápida (até 30 s/s, para seguir os meios)' },
   { keys: '1 – 6', action: 'Abrir separador Incidente, Planos, Estradas, Meios, Meteo ou Recursos' },
   { keys: 'V', action: 'Alternar vista 3D / 2D' },
   { keys: 'R ou N', action: 'Norte para cima' },
@@ -38,6 +40,7 @@ export function KeyboardShortcuts() {
   const setHelpOpen = useAppStore((s) => s.setHelpOpen);
 
   useEffect(() => {
+    let hintTimer = 0; // the speed set with J/K shows for a moment on the map
     const onKey = (e: KeyboardEvent) => {
       const s = useAppStore.getState();
       if (e.key === 'Escape') {
@@ -101,6 +104,17 @@ export function KeyboardShortcuts() {
         case 'h':
           s.setCleanView(!s.cleanView);
           break;
+        case 'j':
+        case 'k': {
+          const speed = stepSpeed(s.speed, e.key.toLowerCase() === 'j' ? -1 : 1);
+          s.setSpeed(speed);
+          s.setHint(`Velocidade ${speedLabel(speed)}`);
+          window.clearTimeout(hintTimer);
+          hintTimer = window.setTimeout(() => {
+            if (useAppStore.getState().hint === `Velocidade ${speedLabel(speed)}`) useAppStore.getState().setHint('');
+          }, 1200);
+          break;
+        }
         default:
           return;
       }
@@ -108,7 +122,10 @@ export function KeyboardShortcuts() {
     };
 
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.clearTimeout(hintTimer);
+    };
   }, [engine]);
 
   if (!helpOpen) return null;

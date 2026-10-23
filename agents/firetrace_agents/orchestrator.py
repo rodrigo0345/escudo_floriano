@@ -52,17 +52,17 @@ from .gnr import CHECKPOINT_PERSONNEL, DEFAULT_NO_EFFECT_KWM, GnrPlan, closure_a
 from .capacity import front_need_m, line_budget_m
 from .life import DEFENDERS_PER_ITEM, ASSUMED_PEOPLE_UNKNOWN_FACILITY, AtRisk, Evacuator, LifePlan, plan_life
 from .joint import link_organizations
-from .placement import FireClock, black_site, stay_ahead, route_in_fire
+from .placement import FireClock, black_site, edge_site, stay_ahead, route_in_fire
 from .support import STANDBY_AMBULANCES, SupportAgents, SupportPlan
 from .terrain import TerrainReader, apply_to_effect as apply_terrain_effect
-from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, line_across, plan_sectors, slot_shift, with_preferences, zone_around
+from .sectors import Assignment, Sector, assign_units, bearing_to, destination, distance_m, line_across, outline_sectors, plan_sectors, slot_shift, with_preferences, zone_around
 from .tiers import ORCHESTRATOR_ONLY, FirefighterTier, can_execute, explain_denial
 from .travel import TravelPlanner, centroid
 
 
 log = logging.getLogger("firetrace.orchestrator")
 
-STAGING_DISTANCES_M = (800.0, 1600.0, 3200.0, 6400.0)  # how far from the fire a unit that cannot reach it waits, nearest first
+STAGING_DISTANCES_M = (300.0, 500.0, 800.0, 1600.0, 3200.0, 6400.0)  # how far from the fire a unit that cannot reach it waits, nearest first (each checked safe for the whole run)
 ARRIVAL_STEP_MIN = 15  # units arriving within this of each other are placed on the same picture of the fire
 AHEAD_STAY_MIN = 60  # how long a crew working ahead of the fire stays, at most (it leaves sooner if the fire comes sooner)
 HOUSE_ZONE_RADIUS_M = 80.0  # a patch of houses the engines defend: about a street of houses across
@@ -302,8 +302,18 @@ class OrchestratorAgent:
         if groups:
             everyone = {a.agent_id for a in self.agents}
             result.assignments = {}
+            carried: set[str] = set()
+            placed: list[tuple[set[str], float]] = []
             for ids, lead in groups:  # the units that arrive together are placed on the fire where it will be when they get there
-                result.assignments.update(self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=(everyone - ids) | set(reserved), lead=lead))
+                members = ids | carried
+                given = self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=(everyone - members) | set(reserved), lead=lead)
+                result.assignments.update(given)
+                # a unit the front had no room for when it arrived is still there, and nearer than the next group: it takes the front with them, before them
+                carried = {i for i in members if (a := given.get(i)) is None or (a.sector is None and a.place is None)}
+                placed.append((members - carried, lead))
+            if carried:
+                placed[-1] = (placed[-1][0] | carried, placed[-1][1])
+            groups = placed
         else:
             result.assignments = self._assign_sectors(situation, simulation, stage_minutes, concentration, exclude=set(reserved), lead=result.attack_lead if result.initial_attack else None)
         result.life = self._plan_life(situation, location_id, result.assignments, exclude=set(reserved), zones=result.zones)
@@ -433,6 +443,7 @@ class OrchestratorAgent:
         except ApiProblem:
             return False
         stretches = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, limit=50)
+        stretches = self._with_outline(situation, stretches, int(round(minute)))
         return bool(stretches) and sum(s.intensity_kwm < limit for s in stretches) >= WORKABLE_EDGE_SHARE * len(stretches)
 
     def _fuel_breaks(self, situation: Situation, location_id: str, result: CycleResult, duration: int | None, *, squads_always: bool = True) -> int:
@@ -536,9 +547,15 @@ class OrchestratorAgent:
             if situation.initial_attack and not assignment.reserve:
                 along = (assignment.sector.bearing_deg + 90.0) % 360.0
                 lat, lon = destination(assignment.sector.lat, assignment.sector.lon, along, slot_shift(assignment.slot, 2.0 * situation.zone_radius_m))
-                site = black_site(clock, replace(assignment.sector, lat=lat, lon=lon), arrive, situation.work_minutes, situation.zone_radius_m)
+                stretch = replace(assignment.sector, lat=lat, lon=lon)
+                site = black_site(clock, stretch, arrive, situation.work_minutes, situation.zone_radius_m)
                 if site is not None:
                     result.assignments[agent.agent_id] = replace(assignment, site=site, stay_minutes=situation.work_minutes)
+                    continue
+                # a young fire has no black yet: its back and weak flanks are attacked at the edge, from just ahead of it, while that is safe
+                edge = edge_site(clock, stretch, arrive, situation.work_minutes, situation.zone_radius_m)
+                if edge is not None:
+                    result.assignments[agent.agent_id] = replace(assignment, site=edge[0], stay_minutes=edge[1])
                     continue
                 assignment = replace(assignment, reserve=True)  # no burned ground within its reach yet: it works ahead of the fire, while that is safe
             stay = stay_ahead(clock, assignment.sector.position, arrive, AHEAD_STAY_MIN)
@@ -897,8 +914,10 @@ class OrchestratorAgent:
                 vectors = self.client.get_vectors(situation.simulation_id, t_min=int(t_min))
             except ApiProblem:  # a server without vectors: units fall back to the fire's head
                 continue
-            sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, workability_of=self._sector_workability(situation))
+            workability = self._sector_workability(situation)
+            sectors = plan_sectors(vectors, zone_radius_m=situation.zone_radius_m, workability_of=workability)
             if sectors:
+                sectors = self._with_outline(situation, sectors, int(t_min), workability)
                 break
         fighters = [agent for agent in self.agents if agent.agent_id not in exclude]
         units = [(agent.agent_id, agent.tier.value) for agent in fighters]
@@ -909,8 +928,24 @@ class OrchestratorAgent:
         )
         # places are not dealt out here: the life planner decides who looks after whom (see `_plan_life`)
         no_effect = float(((situation.rules or {}).get("suppression") or {}).get("noEffectFromKwm") or DEFAULT_NO_EFFECT_KWM)
-        assigned = assign_units(units, sectors, [], budgets=budgets, concentration=concentration, need_m_of=lambda s: front_need_m(situation.zone_radius_m, s.intensity_kwm, no_effect))
+        assigned = assign_units(units, sectors, [], budgets=budgets, concentration=concentration, need_m_of=lambda s: front_need_m(situation.zone_radius_m, s.intensity_kwm, no_effect),
+                                rank=self._arrival)  # the nearest units take the front; the farthest are the ones left over
         return self._advised_sectors(assigned, fighters, units, sectors, situation, budgets, concentration)
+
+    def _with_outline(self, situation: Situation, sectors: list[Sector], minute: int, workability: Callable[[Sector], float] | None = None) -> list[Sector]:
+        """The vectors' stretches plus the flanks and back the vectors miss (``outline_sectors``), most dangerous first.
+
+        Without them a young fire was one sector, its head: past direct attack, so the units that got there first had nothing to do and waited kilometres
+        away while units an hour and a half out took the flanks later.
+        """
+        if not sectors or minute <= 0:
+            return sectors
+        try:
+            perimeters = self.client.get_perimeters(situation.simulation_id, t_min=minute)
+        except ApiProblem:
+            return sectors
+        added = outline_sectors(perimeters, situation.ignition, sectors, near_m=situation.zone_radius_m / 2.0, workability_of=workability)
+        return sorted([*sectors, *added], key=lambda s: s.danger, reverse=True) if added else sectors
 
     def _sector_workability(self, situation: Situation) -> Callable[[Sector], float] | None:
         """How workable the ground of a front stretch is for a crew on foot (``terrain.py``), or ``None`` when terrain is off or the location unknown."""
@@ -1373,7 +1408,7 @@ class OrchestratorAgent:
         """Units that cannot reach the fire do not vanish: they go as near as is safe and wait there (a ``stage_resources`` action per organization).
 
         The point is on the line from the fire to the unit's station, as near to the fire as the routing says the unit can get while avoiding the predicted
-        fire (800 m, then 1.6, 3.2 and 6.4 km out), and where the forecast fire never gets during the run. The unit does nothing there: the plan says so, and why.
+        fire (300 and 500 m, then 0.8, 1.6, 3.2 and 6.4 km out), and where the forecast fire never gets during the run. The unit does nothing there: the plan says so, and why.
         ``reserve``: these are plan B's forward reserve, held close to the fire to go in at the next decision (or to a new outbreak) within minutes.
         """
         if not lost:
