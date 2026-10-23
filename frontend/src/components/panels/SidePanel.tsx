@@ -11,7 +11,7 @@ import styles from './panels.module.css';
 export function SidePanel() {
   const tab = useAppStore((s) => s.tab);
   return (
-    <aside className={styles.panel}>
+    <aside className={styles.panel} data-tour="plans">
       {tab === 'incident' ? <IncidentPanel /> : null}
       {tab === 'plans' ? <PlansPanel /> : null}
       {tab === 'roads' ? <RoadsPanel /> : null}

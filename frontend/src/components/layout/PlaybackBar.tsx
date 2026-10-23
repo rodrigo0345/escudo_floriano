@@ -335,7 +335,7 @@ export function PlaybackBar() {
         ))}
       </div>
 
-      <div className={styles.timelineColumn}>
+      <div className={styles.timelineColumn} data-tour="timeline">
         {/* Interactive Event Track (Requirement 1.1) */}
         <div
           ref={trackRef}
