@@ -625,7 +625,7 @@ Also, every closure of both plans would end **before** it starts (the scenario s
 
 **Runtime data is tracked in git (verified).** `.gitignore` lists `data/engine-cache/`, `data/runs/`, `data/imagery/`, `data/tiles3d/`, but `main` contains 206 files (about 45 MB) under `data/` (`engine-cache`, `runs`, `agents-logs`).
 
-**The root `README.md` is empty (verified).** The entry points to the project today are `AGENTS.md`, this file and each vertical's README.
+**The root `README.md` is the project landing page** (what it is, quick start, what is implemented, honest limits). This file stays the deep architecture reference; each vertical's own README stays the vertical's detail.
 
 **From `agents/README.md` (open proposals for the spec and backend):**
 
