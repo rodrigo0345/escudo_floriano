@@ -4,7 +4,7 @@ import type { FacilityKind, WaterPointKind } from '@/api';
 import { Icon } from '@/components/common/Icon';
 import { LegendDots, SegmentedControl } from '@/components/common/SegmentedControl';
 import { windColorCss } from '@/domain/colors';
-import { useEngine, useEngineContext, useWorld } from '@/engine/EngineContext';
+import { useEngine, useWorld } from '@/engine/EngineContext';
 import { FACILITY_KIND_NAME, facilityColor } from '@/engine/layers/assetLayer';
 import { PLAN_KINDS, type PlanKind } from '@/engine/layers/planLayer';
 import { WATER_KINDS } from '@/engine/layers/waterLayer';
@@ -238,7 +238,6 @@ function OverlayBox() {
   const setThunderEnabled = useAppStore((s) => s.setThunderEnabled);
   const windDensity = useAppStore((s) => s.windDensity);
   const setWindDensity = useAppStore((s) => s.setWindDensity);
-  const { ensembleEnabled, setEnsembleEnabled } = useEngineContext();
   return (
     <section className={styles.layerSection}>
       <div className={styles.sectionHead}>
@@ -310,26 +309,6 @@ function OverlayBox() {
           ) : null}
           <InfoTip text={`Trovoada com relâmpagos e rajadas. ${VISUAL_ONLY}`} />
         </div>
-      </div>
-      <div className={styles.toggleGroup}>
-        <label className={styles.overlayRow}>
-          <input type="checkbox" checked={ensembleEnabled} onChange={(e) => setEnsembleEnabled(e.target.checked)} />
-          <span>Melhor e pior cenário</span>
-          <InfoTip text="Até onde o fogo chega no melhor e no pior caso, entre várias simulações com pequenas variações." />
-        </label>
-        {ensembleEnabled ? (
-          <div className={styles.overlayLegend}>
-            {/* the p10 (optimistic) dashed ring and the p90 (pessimistic) translucent area, in ensembleLayer's colours */}
-            <div className={styles.rangeLegend}>
-              <span>
-                <i className={styles.swatchBest} /> melhor caso
-              </span>
-              <span>
-                <i className={styles.swatchWorst} /> pior caso
-              </span>
-            </div>
-          </div>
-        ) : null}
       </div>
     </section>
   );

@@ -95,10 +95,15 @@ export function useMapPointer(): { tooltip: Tooltip | null; readout: TerrainRead
       if (!hit) return;
       const [lat, lon] = world.geo.toLatLon(hit.point.x, hit.point.z);
       const slot = s.pickIgnitionSlot;
-      const next = s.ignitions.map((ig, i) => (i === slot ? { ...ig, position: { lat, lon } } : ig));
+      // a fire moved off a built-in scenario is no longer that scenario's fire: drop the preset's place name for a generic one
+      // (a name the operator typed is theirs and stays), and the picker shows a custom scenario
+      const presetLabels = new Set((s.data?.scenarios ?? []).flatMap((sc) => [sc.name, ...sc.ignitions.map((ig) => ig.label)]));
+      const movedLabel = (label: string | undefined) => (!label || presetLabels.has(label) ? `Foco ${slot + 1}` : label);
+      const next = s.ignitions.map((ig, i) => (i === slot ? { ...ig, position: { lat, lon }, label: movedLabel(ig.label) } : ig));
       while (next.length <= slot) next.push({ position: { lat, lon }, label: `Foco ${next.length + 1}` });
       s.setIgnitions(next);
       world.fire.setIgnitions(next);
+      if (s.scenarioId && s.scenarioId !== 'custom') s.setScenario('custom');
       s.setPickIgnitionSlot(null);
       s.setHint('');
     };

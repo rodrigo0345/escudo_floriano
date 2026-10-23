@@ -461,6 +461,23 @@
   min-width: 0;
 }
 
+.form .ignitionRow .ignitionName {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.form .ignitionRow .ignitionName:hover,
+.form .ignitionRow .ignitionName:focus {
+  border-color: var(--line);
+  background: var(--bg2, rgba(255, 255, 255, 0.04));
+}
+
 .ignitionRow small {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -44,6 +44,8 @@ export interface AttackRow {
   safetyNotes: string;
   expectedEffect: string;
   dependsOnEvacuation: boolean;
+  /** The first vehicle of the action (its photo in the detail), or null for crews on foot. */
+  lead: { type: string; typeCode?: string; callsign?: string } | null;
 }
 
 export interface AttackResources {
@@ -110,9 +112,11 @@ export function attacksOf(plan: Plan, res: AttackResources, places?: ReadonlyMap
     let vehicles = 0;
     let station = '';
     let reinforcement = false;
+    let lead: AttackRow['lead'] = null;
     for (const r of resources) {
       const id = String(r.resourceId);
       const vehicle = r.resourceType === 'vehicle' ? vehicleOf.get(id) : undefined;
+      if (vehicle && !lead) lead = { type: vehicle.type, typeCode: vehicle.typeCode, callsign: vehicle.callsign };
       const pool = r.resourceType === 'personnel_pool' ? poolOf.get(id) : undefined;
       const from = stationOf.get(String(r.fromStationId ?? vehicle?.stationId ?? pool?.stationId ?? ''))?.name ?? '';
       names.push(vehicle?.callsign ?? (pool ? `Equipa a pé (${num(r.personnel)})` : id));
@@ -149,6 +153,7 @@ export function attacksOf(plan: Plan, res: AttackResources, places?: ReadonlyMap
       safetyNotes: String(action.safetyNotes ?? ''),
       expectedEffect: String(action.expectedEffect ?? ''),
       dependsOnEvacuation: ((action.dependsOn as string[] | undefined) ?? []).some((d) => d.startsWith('evap')),
+      lead,
     });
   }
   return rows.sort((a, b) => a.start - b.start || a.kind.localeCompare(b.kind));

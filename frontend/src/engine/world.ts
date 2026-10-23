@@ -23,6 +23,7 @@ import type { Pickable } from './picking';
 import type { SceneEngine } from './sceneEngine';
 import { SmokeSystem } from './smokeSystem';
 import { TerrainMesh } from './terrainMesh';
+import { groundSnap } from './vehicles/vehicleActor';
 
 export interface WorldInput {
   location: Location;
@@ -98,6 +99,7 @@ export class World {
     // while the city draws, the terrain sinks just under it (it fills any gap) and the overlays get their own pass, so buildings and trees never hide them
     this.city.onVisibleChange = (visible) => {
       this.terrain.setCityMode(visible);
+      groundSnap.offsetAt = visible ? (x, z) => this.city.groundOffset(x, z) : null; // ground vehicles stand on the tiles, not under them
       this.engine.setOverlayPass(visible ? { overlays: this.overlays, depthProxy: this.terrain.depthProxy } : null);
     };
     // the sky layers span the loaded map (8 km detail vs 22 km concelho), so rain and the cloud deck never cover the void beyond the terrain
@@ -191,6 +193,7 @@ export class World {
     this.units.clear();
     this.people.dispose();
     this.engine.setOverlayPass(null);
+    groundSnap.offsetAt = null;
     this.city.dispose();
     this.flames.dispose();
     this.ensemble.dispose();

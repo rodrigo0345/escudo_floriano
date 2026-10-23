@@ -176,7 +176,8 @@ export class SceneEngine {
 
     const hidden: THREE.Object3D[] = [];
     for (const child of this.scene.children) {
-      if (child.visible && !overlays.includes(child) && child !== depthProxy) {
+      // the lights stay on: the vehicles and aircraft among the overlays are lit meshes and would draw black without them
+      if (child.visible && !overlays.includes(child) && child !== depthProxy && !(child as THREE.Light).isLight) {
         child.visible = false;
         hidden.push(child);
       }

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useMapPointer } from '@/hooks/useMapPointer';
 import { useEngineContext } from '@/engine/EngineContext';
 import { SceneEngine } from '@/engine/sceneEngine';
+import { actorDisplay } from '@/engine/vehicles/vehicleActor';
 import { useAppStore } from '@/store/appStore';
 
 import { AlertToast } from './AlertToast';
@@ -39,10 +40,12 @@ export function Viewport() {
     ? `${cityEnabled && world.city.attribution ? `Cidade 3D: Google Maps · ${world.city.attribution} · ` : ''}Imagem: ${world.terrain.attribution || '—'} · Relevo: AWS Terrain Tiles · Espécies: ESA WorldCover 2021, Copernicus HRL, Sentinel-2 · Estradas/instalações: © OpenStreetMap · Meteo: Open-Meteo`
     : '';
 
-  // map-only view: the icons on the map step aside too (facilities, water points, vehicles, people, the plan's drawings); terrain, fire and smoke stay
+  // map-only view (photo mode): the icons step aside (facilities, water points, the plan's drawings, the vehicles' badges and tags), but the
+  // vehicles, aircraft, crews and evacuees keep moving and fighting the fire; terrain, fire and smoke stay
   useEffect(() => {
     if (!world) return;
-    for (const group of [world.assets.group, world.water.group, world.fleet.group, world.units.group, world.people.group, world.plan.group]) group.visible = !cleanView;
+    for (const group of [world.assets.group, world.water.group, world.plan.group]) group.visible = !cleanView;
+    actorDisplay.bare = cleanView;
   }, [world, cleanView]);
 
   if (cleanView) {

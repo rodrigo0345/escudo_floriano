@@ -15,7 +15,7 @@ const ICON: Partial<Record<FacilityKind, [code: string, color: string]>> = {
   inem: ['EM', '#2f6bb0'],
   hospital: ['H', '#2f6bb0'],
   health_centre: ['CS', '#3a78b8'],
-  town_hall: ['CM', '#6a5b4f'],
+  town_hall: ['CM', '#607d8b'], // the blue-grey Google Maps gives civic buildings
   school: ['E', '#6c4a8a'],
   care_home: ['L', '#8a3d63'],
   shelter: ['A', '#2f7f77'],
@@ -43,6 +43,8 @@ export const FACILITY_KIND_NAME: Record<FacilityKind, string> = {
 
 /** Map-style vector icons (Material Design, Apache 2.0, 24×24) for the civilian kinds that read better as a symbol than as a letter. */
 const GLYPH: Partial<Record<FacilityKind, string>> = {
+  // the columned civic building Google Maps uses for town halls (Material `account_balance`)
+  town_hall: 'M4 10v7h3v-7H4zm6 0v7h3v-7h-3zM2 22h19v-3H2v3zm14-12v7h3v-7h-3zm-4.5-9L2 6v2h19V6l-9.5-5z',
   school: 'M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-5.18V17h2V9L12 3z',
   shelter: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
   care_home:

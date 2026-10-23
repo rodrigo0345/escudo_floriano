@@ -57,9 +57,21 @@ public class PlanDispatchesTests
     }
 
     [Fact]
-    public void A_vehicle_in_two_tasks_at_the_same_time_stays_two_dispatches_so_the_conflict_is_reported()
+    public void A_later_order_re_tasks_a_vehicle_on_the_road_one_dispatch_that_follows_the_new_order()
     {
-        Assert.Equal(2, Build(Task("a", Vehicle("v1")), Task("b", Vehicle("v1"), at: 30)).Count);
+        // a wave at T+150 puts in a reserve a tanker still driving to its T+120 attack (90 min away): the later order wins
+        var reserve = new StageResourcesAction
+        {
+            Id = "reserve", Title = "reserve", OrganizationId = "org-1", ExpectedDurationMinutes = 30, StagingArea = new Target(Label: "staging"),
+            Trigger = new AtTimeTrigger(new TimeSpec(OffsetMinutes: 150)), Resources = new() { Vehicle("v1", eta: 70) },
+        };
+        Assert.Single(Build(Task("attack", Vehicle("v1", eta: 90), at: 120, stay: 240), reserve));
+    }
+
+    [Fact]
+    public void A_vehicle_in_two_tasks_that_start_together_stays_two_dispatches_so_the_conflict_is_reported()
+    {
+        Assert.Equal(2, Build(Task("a", Vehicle("v1")), Task("b", Vehicle("v1"))).Count);
     }
 
     [Fact]
